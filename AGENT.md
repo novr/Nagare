@@ -7,9 +7,9 @@
 ## コーディング規約（Coding Style Guidelines）
 
 * **Python:**
-  * **Formatter:** `Black` を使用し、コードのフォーマットを自動化する。
-  * **Linter:** `Flake8` と `isort` を使用し、コード品質とimportの順序を維持する。
+  * **Formatter & Linter:** `Ruff` を使用し、コードのフォーマット、リント、importの順序を統一的に管理する。
   * **型ヒント:** 原則としてすべての関数に型ヒントを付与する。
+  * **型チェック:** `Pyright` を使用して静的型チェックを行う。
 
 * **SQL:**
   * 可読性を高めるため、キーワードは大文字で記述する（`SELECT`, `FROM`, `WHERE`など）。
@@ -32,7 +32,18 @@
 * **テスト実行:**
   * **Python:** `pytest` を用いてAirflow DAGのユニットテストを実行する。
     ```bash
-    docker-compose exec airflow pytest
+    uv run pytest
+    ```
+  * **コード品質チェック:**
+    ```bash
+    # フォーマット
+    uv run ruff format src/
+
+    # リント
+    uv run ruff check --fix src/
+
+    # 型チェック
+    uv run pyright src/
     ```
   * **CI/CDでのチェック内容:**
     - すべてのプルリクエストで、Lint、Formatter、ユニットテストが自動実行される。
