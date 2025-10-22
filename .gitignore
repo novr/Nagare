@@ -56,3 +56,6 @@ superset_config.py
 
 # uv
 uv.lock
+
+# ai
+implementation_task.md
