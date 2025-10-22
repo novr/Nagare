@@ -39,7 +39,7 @@ uv sync --all-extras
 3. 環境変数の設定
 
 ```bash
-cp .env.example .env
+cp .env.sample .env
 # .envファイルを編集して必要な環境変数を設定
 ```
 
