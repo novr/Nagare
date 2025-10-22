@@ -75,22 +75,6 @@ uv run pytest
 uv run pytest --cov=src --cov-report=html
 ```
 
-## プロジェクト構成
-
-```
-Nagare/
-├── src/nagare/          # アプリケーションコード
-├── tests/               # テストコード
-├── docs/                # ドキュメント
-│   ├── 00_overview.md
-│   ├── 01_requirements/
-│   ├── 02_design/
-│   ├── 05_frontend/
-│   └── 99_glossary.md
-├── pyproject.toml       # プロジェクト設定（ruff、pyright等の設定も含む）
-└── AGENT.md             # リポジトリガイドライン
-```
-
 ## ドキュメント
 
 詳細なドキュメントは `docs/` ディレクトリを参照してください。
