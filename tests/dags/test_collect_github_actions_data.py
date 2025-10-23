@@ -1,0 +1,119 @@
+"""collect_github_actions_data.py DAGのユニットテスト"""
+
+from typing import Any
+
+
+def test_dag_imports() -> None:
+    """DAGファイルがインポートできることを確認"""
+    from nagare.dags import collect_github_actions_data
+
+    assert collect_github_actions_data.dag is not None
+
+
+def test_fetch_repositories_with_di(mock_airflow_context: dict[str, Any]) -> None:
+    """fetch_repositories_with_di関数が動作することを確認"""
+    from nagare.dags.collect_github_actions_data import fetch_repositories_with_di
+    from nagare.utils.factory import ClientFactory, set_factory
+    from tests.conftest import MockDatabaseClient
+
+    # モック用のFactoryを作成
+    class MockFactory(ClientFactory):
+        @staticmethod
+        def create_database_client() -> MockDatabaseClient:
+            return MockDatabaseClient()
+
+    # Factoryを差し替え
+    original_factory = ClientFactory()
+    set_factory(MockFactory())
+
+    try:
+        # 関数を実行
+        result = fetch_repositories_with_di(**mock_airflow_context)
+
+        # 結果を検証
+        assert len(result) == 2
+        assert result[0]["owner"] == "test-org"
+        assert result[0]["repo"] == "test-repo-1"
+
+    finally:
+        # 元に戻す
+        set_factory(original_factory)
+
+
+def test_fetch_workflow_runs_with_di(mock_airflow_context: dict[str, Any]) -> None:
+    """fetch_workflow_runs_with_di関数が動作することを確認"""
+    from nagare.dags.collect_github_actions_data import fetch_workflow_runs_with_di
+    from nagare.utils.factory import ClientFactory, set_factory
+    from tests.conftest import MockGitHubClient
+
+    # 前のタスクのデータを設定
+    ti = mock_airflow_context["ti"]
+    ti.xcom_data["repositories"] = [
+        {"owner": "test-org", "repo": "test-repo-1"},
+    ]
+
+    # モック用のFactoryを作成
+    class MockFactory(ClientFactory):
+        @staticmethod
+        def create_github_client() -> MockGitHubClient:
+            return MockGitHubClient()
+
+    # Factoryを差し替え
+    original_factory = ClientFactory()
+    set_factory(MockFactory())
+
+    try:
+        # 関数を実行
+        fetch_workflow_runs_with_di(**mock_airflow_context)
+
+        # XComに保存されたか確認
+        workflow_runs = ti.xcom_data.get("workflow_runs")
+        assert workflow_runs is not None
+        assert len(workflow_runs) == 1
+        assert workflow_runs[0]["id"] == 123456
+
+    finally:
+        # 元に戻す
+        set_factory(original_factory)
+
+
+def test_load_to_database_with_di(mock_airflow_context: dict[str, Any]) -> None:
+    """load_to_database_with_di関数が動作することを確認"""
+    from nagare.dags.collect_github_actions_data import load_to_database_with_di
+    from nagare.utils.factory import ClientFactory, set_factory
+    from tests.conftest import MockDatabaseClient
+
+    # 前のタスクのデータを設定
+    ti = mock_airflow_context["ti"]
+    ti.xcom_data["transformed_runs"] = [
+        {
+            "source_run_id": "123456",
+            "source": "github_actions",
+            "pipeline_name": "CI",
+            "status": "SUCCESS",
+        }
+    ]
+
+    # モック用のFactoryを作成
+    mock_db = MockDatabaseClient()
+
+    class MockFactory(ClientFactory):
+        @staticmethod
+        def create_database_client() -> MockDatabaseClient:
+            return mock_db
+
+    # Factoryを差し替え
+    original_factory = ClientFactory()
+    set_factory(MockFactory())
+
+    try:
+        # 関数を実行
+        load_to_database_with_di(**mock_airflow_context)
+
+        # upsert_pipeline_runsが呼ばれたことを確認
+        assert mock_db.upsert_pipeline_runs_called
+        assert len(mock_db.upserted_runs) == 1
+
+    finally:
+        # 元に戻す
+        set_factory(original_factory)
