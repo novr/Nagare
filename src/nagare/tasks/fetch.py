@@ -7,6 +7,7 @@ from typing import Any
 from airflow.models import TaskInstance
 
 from nagare.utils.protocols import DatabaseClientProtocol, GitHubClientProtocol
+from nagare.utils.xcom_utils import check_xcom_size
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,9 @@ def fetch_workflow_runs(github_client: GitHubClientProtocol, **context: Any) -> 
 
     logger.info(f"Total workflow runs fetched: {len(all_workflow_runs)}")
 
+    # XComサイズチェック
+    check_xcom_size(all_workflow_runs, "workflow_runs")
+
     # XComで次のタスクに渡す
     ti.xcom_push(key="workflow_runs", value=all_workflow_runs)
 
@@ -144,6 +148,9 @@ def fetch_workflow_run_jobs(
             continue
 
     logger.info(f"Total jobs fetched: {len(all_jobs)}")
+
+    # XComサイズチェック
+    check_xcom_size(all_jobs, "workflow_run_jobs")
 
     # XComで次のタスクに渡す
     ti.xcom_push(key="workflow_run_jobs", value=all_jobs)

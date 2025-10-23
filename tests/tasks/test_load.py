@@ -76,3 +76,28 @@ def test_load_to_database_with_jobs(
     assert mock_db_client.upsert_jobs_called
     assert len(mock_db_client.upserted_jobs) == 1
     assert mock_db_client.upserted_jobs[0]["source_job_id"] == "789"
+
+
+def test_load_to_database_uses_transaction(
+    mock_db_client: MockDatabaseClient, mock_airflow_context: dict[str, Any]
+) -> None:
+    """load_to_database関数がトランザクションを使用することを確認"""
+    from nagare.tasks.load import load_to_database
+
+    # 前のタスクのデータを設定
+    ti = mock_airflow_context["ti"]
+    ti.xcom_data["transformed_runs"] = [
+        {"source_run_id": "123", "status": "SUCCESS"}
+    ]
+    ti.xcom_data["transformed_jobs"] = [
+        {"source_job_id": "456", "source_run_id": "123", "status": "SUCCESS"}
+    ]
+
+    # モックを注入して実行
+    load_to_database(db=mock_db_client, **mock_airflow_context)
+
+    # トランザクションが使用されたことを確認
+    assert mock_db_client.transaction_called
+    assert mock_db_client.transaction_call_count == 1
+    assert mock_db_client.transaction_committed
+    assert not mock_db_client.transaction_rolled_back

@@ -17,8 +17,9 @@
   - TaskInstanceとexecution_dateを提供
 """
 
+from contextlib import contextmanager
 from datetime import datetime
-from typing import Any
+from typing import Any, Generator
 
 import pytest
 
@@ -41,6 +42,10 @@ class MockDatabaseClient:
         upsert_jobs_called: upsert_jobs()が呼ばれたかどうか
         upsert_jobs_call_count: upsert_jobs()の呼び出し回数
         upserted_jobs: upsert_jobs()に渡されたデータ
+        transaction_called: transaction()が呼ばれたかどうか
+        transaction_call_count: transaction()の呼び出し回数
+        transaction_committed: トランザクションがコミットされたかどうか
+        transaction_rolled_back: トランザクションがロールバックされたかどうか
         close_called: close()が呼ばれたかどうか
     """
 
@@ -58,6 +63,12 @@ class MockDatabaseClient:
         self.upsert_jobs_called = False
         self.upsert_jobs_call_count = 0
         self.upserted_jobs: list[dict[str, Any]] = []
+
+        # transaction tracking
+        self.transaction_called = False
+        self.transaction_call_count = 0
+        self.transaction_committed = False
+        self.transaction_rolled_back = False
 
         # close tracking
         self.close_called = False
@@ -90,6 +101,22 @@ class MockDatabaseClient:
         self.upsert_jobs_called = True
         self.upsert_jobs_call_count += 1
         self.upserted_jobs = jobs
+
+    @contextmanager
+    def transaction(self) -> Generator[None, None, None]:
+        """モックのトランザクション処理
+
+        Context managerとして使用。トランザクションの呼び出しと
+        コミット/ロールバックを追跡する。
+        """
+        self.transaction_called = True
+        self.transaction_call_count += 1
+        try:
+            yield
+            self.transaction_committed = True
+        except Exception:
+            self.transaction_rolled_back = True
+            raise
 
     def close(self) -> None:
         """モックのクローズ処理"""

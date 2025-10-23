@@ -7,7 +7,8 @@
 import json
 import logging
 import os
-from typing import Any
+from contextlib import contextmanager
+from typing import Any, Generator
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,29 @@ class MockDatabaseClient:
                 f"({job.get('repository_owner')}/{job.get('repository_name')}) "
                 f"- Job: {job.get('job_name')} - Status: {job.get('status')}"
             )
+
+    @contextmanager
+    def transaction(self) -> Generator[None, None, None]:
+        """トランザクションを開始する（モック実装）
+
+        Context managerとして使用。実際のトランザクションは行わず、
+        ログ出力のみ行う。
+
+        Yields:
+            None
+
+        Example:
+            with db.transaction():
+                db.upsert_pipeline_runs(runs)
+                db.upsert_jobs(jobs)
+        """
+        logger.debug("[MOCK] Transaction started")
+        try:
+            yield
+            logger.info("[MOCK] Transaction committed (no-op)")
+        except Exception as e:
+            logger.warning(f"[MOCK] Transaction rolled back (no-op): {e}")
+            raise
 
     def close(self) -> None:
         """データベース接続をクローズする（モック実装）

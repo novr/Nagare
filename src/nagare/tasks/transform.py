@@ -6,6 +6,8 @@ from typing import Any
 
 from airflow.models import TaskInstance
 
+from nagare.utils.xcom_utils import check_xcom_size
+
 logger = logging.getLogger(__name__)
 
 
@@ -56,6 +58,10 @@ def transform_data(**context: Any) -> None:
         logger.info(f"Transformed {len(transformed_jobs)} jobs")
     else:
         logger.warning("No jobs to transform")
+
+    # XComサイズチェック
+    check_xcom_size(transformed_runs, "transformed_runs")
+    check_xcom_size(transformed_jobs, "transformed_jobs")
 
     # XComで次のタスクに渡す
     ti.xcom_push(key="transformed_runs", value=transformed_runs)

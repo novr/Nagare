@@ -17,6 +17,7 @@
    - テスト内でアサーションが可能
 """
 
+from contextlib import AbstractContextManager
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
@@ -40,6 +41,22 @@ class DatabaseClientProtocol(Protocol):
 
     def upsert_jobs(self, jobs: list[dict[str, Any]]) -> None:
         """jobsテーブルにデータをUPSERTする"""
+        ...
+
+    def transaction(self) -> AbstractContextManager[None]:
+        """トランザクションを開始する
+
+        Context managerとして使用し、正常終了時はコミット、例外発生時はロールバック。
+
+        Yields:
+            None
+
+        Example:
+            with db.transaction():
+                db.upsert_pipeline_runs(runs)
+                db.upsert_jobs(jobs)
+                # 両方成功した場合のみコミット
+        """
         ...
 
     def close(self) -> None:

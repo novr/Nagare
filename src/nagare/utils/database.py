@@ -4,7 +4,8 @@ PostgreSQL接続とデータアクセス機能を提供する。
 """
 
 import logging
-from typing import Any
+from contextlib import AbstractContextManager, contextmanager
+from typing import Any, Generator
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,42 @@ class DatabaseClient:
         # ON CONFLICT (source_job_id, source) DO UPDATE SET ...
         raise NotImplementedError(
             "PostgreSQL upsert for jobs is not implemented yet. "
+            "Use MockDatabaseClient for development."
+        )
+
+    @contextmanager
+    def transaction(self) -> Generator[None, None, None]:
+        """トランザクションを開始する
+
+        Context managerとして使用し、正常終了時はコミット、例外発生時はロールバック。
+
+        Yields:
+            None
+
+        Raises:
+            NotImplementedError: PostgreSQL実装が未完了の場合
+
+        Example:
+            with db.transaction():
+                db.upsert_pipeline_runs(runs)
+                db.upsert_jobs(jobs)
+                # 両方成功した場合のみコミット
+        """
+        # TODO: 実際のPostgreSQL実装では以下のようになる
+        # session = self.session_factory()
+        # try:
+        #     yield
+        #     session.commit()
+        #     logger.debug("Transaction committed")
+        # except Exception as e:
+        #     session.rollback()
+        #     logger.error(f"Transaction rolled back: {e}")
+        #     raise
+        # finally:
+        #     session.close()
+
+        raise NotImplementedError(
+            "PostgreSQL transaction is not implemented yet. "
             "Use MockDatabaseClient for development."
         )
 

@@ -121,3 +121,47 @@ def test_context_manager() -> None:
         assert client is not None
 
     # with文を抜けた後もエラーが発生しないことを確認
+
+
+def test_transaction_commit() -> None:
+    """トランザクションが正常にコミットされることを確認"""
+    from nagare.utils.database_mock import MockDatabaseClient
+
+    client = MockDatabaseClient()
+
+    with client.transaction():
+        # トランザクション内で操作実行
+        client.upsert_pipeline_runs([{"source_run_id": "123", "status": "SUCCESS"}])
+
+    # トランザクションが正常に終了することを確認
+    # MockDatabaseClientではログ出力のみで実際のトランザクションは行わない
+
+
+def test_transaction_rollback_on_exception() -> None:
+    """例外発生時にトランザクションがロールバックされることを確認"""
+    from nagare.utils.database_mock import MockDatabaseClient
+
+    client = MockDatabaseClient()
+
+    with pytest.raises(ValueError, match="Test error"):
+        with client.transaction():
+            # トランザクション内で例外を発生させる
+            raise ValueError("Test error")
+
+    # 例外が正しく伝播することを確認
+
+
+def test_transaction_with_operations() -> None:
+    """トランザクション内で複数の操作が実行できることを確認"""
+    from nagare.utils.database_mock import MockDatabaseClient
+
+    client = MockDatabaseClient()
+
+    runs = [{"source_run_id": "123", "status": "SUCCESS"}]
+    jobs = [{"source_job_id": "456", "source_run_id": "123", "status": "SUCCESS"}]
+
+    with client.transaction():
+        client.upsert_pipeline_runs(runs)
+        client.upsert_jobs(jobs)
+
+    # エラーなく実行されることを確認（ログ出力のみ）
