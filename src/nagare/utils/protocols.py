@@ -38,6 +38,10 @@ class DatabaseClientProtocol(Protocol):
         """pipeline_runsテーブルにデータをUPSERTする"""
         ...
 
+    def upsert_jobs(self, jobs: list[dict[str, Any]]) -> None:
+        """jobsテーブルにデータをUPSERTする"""
+        ...
+
     def close(self) -> None:
         """データベース接続をクローズする"""
         ...

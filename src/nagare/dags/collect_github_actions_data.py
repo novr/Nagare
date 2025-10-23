@@ -11,7 +11,11 @@ from typing import Any
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
-from nagare.tasks.fetch import fetch_repositories, fetch_workflow_runs
+from nagare.tasks.fetch import (
+    fetch_repositories,
+    fetch_workflow_run_jobs,
+    fetch_workflow_runs,
+)
 from nagare.tasks.load import load_to_database
 from nagare.tasks.transform import transform_data
 from nagare.utils.factory import get_factory
@@ -41,6 +45,17 @@ def fetch_workflow_runs_with_di(**context: Any) -> None:
     factory = get_factory()
     with factory.create_github_client() as github_client:
         fetch_workflow_runs(github_client=github_client, **context)
+
+
+def fetch_workflow_run_jobs_with_di(**context: Any) -> None:
+    """fetch_workflow_run_jobsのラッパー関数（依存性注入）
+
+    Args:
+        **context: Airflowのコンテキスト
+    """
+    factory = get_factory()
+    with factory.create_github_client() as github_client:
+        fetch_workflow_run_jobs(github_client=github_client, **context)
 
 
 def load_to_database_with_di(**context: Any) -> None:
@@ -88,13 +103,19 @@ with DAG(
         python_callable=fetch_workflow_runs_with_di,
     )
 
-    # タスク3: データ変換
+    # タスク3: ジョブデータの取得
+    task_fetch_workflow_run_jobs = PythonOperator(
+        task_id="fetch_workflow_run_jobs",
+        python_callable=fetch_workflow_run_jobs_with_di,
+    )
+
+    # タスク4: データ変換
     task_transform_data = PythonOperator(
         task_id="transform_data",
         python_callable=transform_data,
     )
 
-    # タスク4: データベースへの保存
+    # タスク5: データベースへの保存
     task_load_to_database = PythonOperator(
         task_id="load_to_database",
         python_callable=load_to_database_with_di,
@@ -104,6 +125,7 @@ with DAG(
     (
         task_fetch_repositories
         >> task_fetch_workflow_runs
+        >> task_fetch_workflow_run_jobs
         >> task_transform_data
         >> task_load_to_database
     )  # type: ignore[expression-value]

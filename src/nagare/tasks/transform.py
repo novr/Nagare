@@ -12,34 +12,54 @@ logger = logging.getLogger(__name__)
 def transform_data(**context: Any) -> None:
     """GitHub APIから取得したデータを汎用データモデルに変換する
 
+    ワークフロー実行データとジョブデータの両方を変換する。
+
     Args:
         **context: Airflowのコンテキスト
     """
     ti: TaskInstance = context["ti"]
 
-    # 前のタスクからワークフロー実行データを取得
+    # ワークフロー実行データの変換
     workflow_runs: list[dict[str, Any]] = ti.xcom_pull(
         task_ids="fetch_workflow_runs", key="workflow_runs"
     )
 
-    if not workflow_runs:
-        logger.warning("No workflow runs to transform")
-        return
-
     transformed_runs: list[dict[str, Any]] = []
 
-    for run in workflow_runs:
-        try:
-            transformed_run = _transform_workflow_run(run)
-            transformed_runs.append(transformed_run)
-        except Exception as e:
-            logger.error(f"Failed to transform workflow run {run.get('id')}: {e}")
-            continue
+    if workflow_runs:
+        for run in workflow_runs:
+            try:
+                transformed_run = _transform_workflow_run(run)
+                transformed_runs.append(transformed_run)
+            except Exception as e:
+                logger.error(f"Failed to transform workflow run {run.get('id')}: {e}")
+                continue
+        logger.info(f"Transformed {len(transformed_runs)} workflow runs")
+    else:
+        logger.warning("No workflow runs to transform")
 
-    logger.info(f"Transformed {len(transformed_runs)} workflow runs")
+    # ジョブデータの変換
+    workflow_run_jobs: list[dict[str, Any]] = ti.xcom_pull(
+        task_ids="fetch_workflow_run_jobs", key="workflow_run_jobs"
+    )
+
+    transformed_jobs: list[dict[str, Any]] = []
+
+    if workflow_run_jobs:
+        for job in workflow_run_jobs:
+            try:
+                transformed_job = _transform_workflow_run_job(job)
+                transformed_jobs.append(transformed_job)
+            except Exception as e:
+                logger.error(f"Failed to transform job {job.get('id')}: {e}")
+                continue
+        logger.info(f"Transformed {len(transformed_jobs)} jobs")
+    else:
+        logger.warning("No jobs to transform")
 
     # XComで次のタスクに渡す
     ti.xcom_push(key="transformed_runs", value=transformed_runs)
+    ti.xcom_push(key="transformed_jobs", value=transformed_jobs)
 
 
 def _transform_workflow_run(run: dict[str, Any]) -> dict[str, Any]:
@@ -94,6 +114,59 @@ def _transform_workflow_run(run: dict[str, Any]) -> dict[str, Any]:
         "completed_at": completed_at,
         "duration_ms": duration_ms,
         "url": run.get("html_url"),
+    }
+
+
+def _transform_workflow_run_job(job: dict[str, Any]) -> dict[str, Any]:
+    """個別のジョブデータを変換する
+
+    Args:
+        job: GitHub APIから取得したジョブデータ
+
+    Returns:
+        汎用データモデル形式に変換されたデータ
+    """
+    # ステータスをマッピング
+    status_mapping = {
+        "completed": _map_conclusion_to_status(job.get("conclusion")),
+        "in_progress": "IN_PROGRESS",
+        "queued": "QUEUED",
+    }
+    job_status = job.get("status", "unknown")
+    status = status_mapping.get(job_status, "UNKNOWN")
+
+    # 実行時間を計算（ミリ秒）
+    started_at_str = job.get("started_at")
+    completed_at_str = job.get("completed_at")
+
+    started_at = (
+        datetime.fromisoformat(started_at_str.replace("Z", "+00:00"))
+        if started_at_str
+        else None
+    )
+    completed_at = (
+        datetime.fromisoformat(completed_at_str.replace("Z", "+00:00"))
+        if completed_at_str
+        else None
+    )
+
+    duration_ms = None
+    if started_at and completed_at:
+        duration_ms = int((completed_at - started_at).total_seconds() * 1000)
+
+    # 汎用データモデルに変換
+    return {
+        "source_job_id": str(job["id"]),
+        "source_run_id": str(job["run_id"]),
+        "source": "github_actions",
+        "job_name": job.get("name", "Unknown"),
+        "status": status,
+        "repository_owner": job.get("_repository_owner"),
+        "repository_name": job.get("_repository_name"),
+        "started_at": started_at,
+        "completed_at": completed_at,
+        "duration_ms": duration_ms,
+        "url": job.get("html_url"),
     }
 
 

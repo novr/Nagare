@@ -13,22 +13,32 @@ logger = logging.getLogger(__name__)
 def load_to_database(db: DatabaseClientProtocol, **context: Any) -> None:
     """変換されたデータをPostgreSQLに保存する
 
+    ワークフロー実行データとジョブデータの両方を保存する。
+
     Args:
         db: DatabaseClientインスタンス（必須、外部から注入される）
         **context: Airflowのコンテキスト
     """
     ti: TaskInstance = context["ti"]
 
-    # 前のタスクから変換済みデータを取得
+    # ワークフロー実行データの保存
     transformed_runs: list[dict[str, Any]] = ti.xcom_pull(
         task_ids="transform_data", key="transformed_runs"
     )
 
-    if not transformed_runs:
+    if transformed_runs:
+        db.upsert_pipeline_runs(transformed_runs)
+        logger.info(f"Successfully loaded {len(transformed_runs)} runs to database")
+    else:
         logger.warning("No transformed runs to load")
-        return
 
-    # データベースにUPSERT
-    db.upsert_pipeline_runs(transformed_runs)
+    # ジョブデータの保存
+    transformed_jobs: list[dict[str, Any]] = ti.xcom_pull(
+        task_ids="transform_data", key="transformed_jobs"
+    )
 
-    logger.info(f"Successfully loaded {len(transformed_runs)} runs to database")
+    if transformed_jobs:
+        db.upsert_jobs(transformed_jobs)
+        logger.info(f"Successfully loaded {len(transformed_jobs)} jobs to database")
+    else:
+        logger.warning("No transformed jobs to load")

@@ -38,3 +38,41 @@ def test_load_to_database_with_mock(
     assert mock_db_client.upsert_pipeline_runs_called
     assert len(mock_db_client.upserted_runs) == 1
     assert mock_db_client.upserted_runs[0]["source_run_id"] == "123456"
+
+
+def test_load_to_database_with_jobs(
+    mock_db_client: MockDatabaseClient, mock_airflow_context: dict[str, Any]
+) -> None:
+    """load_to_database関数がジョブデータもロードできることを確認"""
+    from nagare.tasks.load import load_to_database
+
+    # 前のタスクのデータを設定
+    ti = mock_airflow_context["ti"]
+    ti.xcom_data["transformed_runs"] = [
+        {
+            "source_run_id": "123456",
+            "source": "github_actions",
+            "status": "SUCCESS",
+        }
+    ]
+    ti.xcom_data["transformed_jobs"] = [
+        {
+            "source_job_id": "789",
+            "source_run_id": "123456",
+            "source": "github_actions",
+            "job_name": "build",
+            "status": "SUCCESS",
+        }
+    ]
+
+    # モックを注入して実行
+    load_to_database(db=mock_db_client, **mock_airflow_context)
+
+    # 検証: runsとjobsの両方が保存される
+    assert mock_db_client.upsert_pipeline_runs_called
+    assert len(mock_db_client.upserted_runs) == 1
+    assert mock_db_client.upserted_runs[0]["source_run_id"] == "123456"
+
+    assert mock_db_client.upsert_jobs_called
+    assert len(mock_db_client.upserted_jobs) == 1
+    assert mock_db_client.upserted_jobs[0]["source_job_id"] == "789"

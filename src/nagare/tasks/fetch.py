@@ -89,3 +89,61 @@ def fetch_workflow_runs(github_client: GitHubClientProtocol, **context: Any) -> 
 
     # XComで次のタスクに渡す
     ti.xcom_push(key="workflow_runs", value=all_workflow_runs)
+
+
+def fetch_workflow_run_jobs(
+    github_client: GitHubClientProtocol, **context: Any
+) -> None:
+    """各ワークフロー実行のジョブデータを取得する
+
+    Args:
+        github_client: GitHubClientインスタンス（必須、外部から注入される）
+        **context: Airflowのコンテキスト
+    """
+    ti: TaskInstance = context["ti"]
+
+    # 前のタスクからワークフロー実行リストを取得
+    workflow_runs: list[dict[str, Any]] = ti.xcom_pull(
+        task_ids="fetch_workflow_runs", key="workflow_runs"
+    )
+
+    if not workflow_runs:
+        logger.warning("No workflow runs found to fetch jobs")
+        ti.xcom_push(key="workflow_run_jobs", value=[])
+        return
+
+    all_jobs: list[dict[str, Any]] = []
+
+    for run in workflow_runs:
+        owner = run["_repository_owner"]
+        repo_name = run["_repository_name"]
+        run_id = run["id"]
+
+        try:
+            logger.info(
+                f"Fetching jobs for workflow run {run_id} ({owner}/{repo_name})..."
+            )
+            jobs = github_client.get_workflow_run_jobs(
+                owner=owner, repo=repo_name, run_id=run_id
+            )
+
+            # リポジトリ情報を各jobに追加
+            for job in jobs:
+                job["_repository_owner"] = owner
+                job["_repository_name"] = repo_name
+
+            all_jobs.extend(jobs)
+            logger.info(f"Fetched {len(jobs)} jobs from workflow run {run_id}")
+
+        except Exception as e:
+            # 特定のrunでエラーが発生しても、他のrunの処理は継続
+            logger.error(
+                f"Failed to fetch jobs for workflow run {run_id} "
+                f"({owner}/{repo_name}): {e}"
+            )
+            continue
+
+    logger.info(f"Total jobs fetched: {len(all_jobs)}")
+
+    # XComで次のタスクに渡す
+    ti.xcom_push(key="workflow_run_jobs", value=all_jobs)

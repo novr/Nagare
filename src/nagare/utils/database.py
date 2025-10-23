@@ -58,6 +58,23 @@ class DatabaseClient:
             "Use MockDatabaseClient for development."
         )
 
+    def upsert_jobs(self, jobs: list[dict[str, Any]]) -> None:
+        """jobsテーブルにデータをUPSERTする
+
+        Args:
+            jobs: ジョブデータのリスト
+
+        Raises:
+            NotImplementedError: PostgreSQL実装が未完了の場合
+        """
+        # TODO: PostgreSQLへのUPSERT実装
+        # INSERT INTO jobs (...) VALUES (...)
+        # ON CONFLICT (source_job_id, source) DO UPDATE SET ...
+        raise NotImplementedError(
+            "PostgreSQL upsert for jobs is not implemented yet. "
+            "Use MockDatabaseClient for development."
+        )
+
     def close(self) -> None:
         """データベース接続をクローズする"""
         # TODO: 接続プールのクローズ

@@ -56,7 +56,7 @@ def test_transform_data_with_workflow_runs(
 def test_transform_data_with_empty_workflow_runs(
     mock_airflow_context: dict[str, Any],
 ) -> None:
-    """空のワークフローリストの場合、処理がスキップされることを確認"""
+    """空のワークフローリストの場合、空リストがpushされることを確認"""
     from nagare.tasks.transform import transform_data
 
     ti = mock_airflow_context["ti"]
@@ -65,22 +65,24 @@ def test_transform_data_with_empty_workflow_runs(
     # 変換実行
     transform_data(**mock_airflow_context)
 
-    # transformed_runsがXComにpushされないことを確認
-    assert "transformed_runs" not in ti.xcom_data
+    # transformed_runsが空リストとしてpushされることを確認
+    assert ti.xcom_data["transformed_runs"] == []
+    assert ti.xcom_data["transformed_jobs"] == []
 
 
 def test_transform_data_with_no_workflow_runs(
     mock_airflow_context: dict[str, Any],
 ) -> None:
-    """workflow_runsがNoneの場合、処理がスキップされることを確認"""
+    """workflow_runsがNoneの場合、空リストがpushされることを確認"""
     from nagare.tasks.transform import transform_data
 
     # XComにデータをセットしない（Noneが返される）
     transform_data(**mock_airflow_context)
 
-    # transformed_runsがXComにpushされないことを確認
+    # transformed_runsが空リストとしてpushされることを確認
     ti = mock_airflow_context["ti"]
-    assert "transformed_runs" not in ti.xcom_data
+    assert ti.xcom_data["transformed_runs"] == []
+    assert ti.xcom_data["transformed_jobs"] == []
 
 
 def test_transform_workflow_run_status_mapping() -> None:
@@ -250,3 +252,48 @@ def test_transform_data_continues_on_error(
     assert len(transformed_runs) == 2
     assert transformed_runs[0]["source_run_id"] == "123"
     assert transformed_runs[1]["source_run_id"] == "456"
+
+
+def test_transform_data_with_jobs(
+    mock_airflow_context: dict[str, Any],
+) -> None:
+    """ジョブデータが正常に変換されることを確認"""
+    from nagare.tasks.transform import transform_data
+
+    ti = mock_airflow_context["ti"]
+
+    # XComにジョブデータをセット
+    ti.xcom_data["workflow_run_jobs"] = [
+        {
+            "id": 789,
+            "run_id": 123456,
+            "name": "build",
+            "status": "completed",
+            "conclusion": "success",
+            "started_at": "2024-01-01T00:00:00Z",
+            "completed_at": "2024-01-01T00:05:00Z",
+            "html_url": "https://github.com/test-org/test-repo/actions/runs/123456/jobs/789",
+            "_repository_owner": "test-org",
+            "_repository_name": "test-repo",
+        }
+    ]
+
+    # 変換実行
+    transform_data(**mock_airflow_context)
+
+    # 変換結果を確認
+    transformed_jobs = ti.xcom_data["transformed_jobs"]
+    assert len(transformed_jobs) == 1
+
+    job = transformed_jobs[0]
+    assert job["source_job_id"] == "789"
+    assert job["source_run_id"] == "123456"
+    assert job["source"] == "github_actions"
+    assert job["job_name"] == "build"
+    assert job["status"] == "SUCCESS"
+    assert job["repository_owner"] == "test-org"
+    assert job["repository_name"] == "test-repo"
+    assert job["url"] == "https://github.com/test-org/test-repo/actions/runs/123456/jobs/789"
+
+    # 実行時間の確認（5分 = 300,000ミリ秒）
+    assert job["duration_ms"] == 300000

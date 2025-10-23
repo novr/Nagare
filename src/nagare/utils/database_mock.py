@@ -60,6 +60,22 @@ class MockDatabaseClient:
                 f"- Status: {run.get('status')}"
             )
 
+    def upsert_jobs(self, jobs: list[dict[str, Any]]) -> None:
+        """jobsテーブルにデータをUPSERTする（モック実装）
+
+        実際にはデータを保存せず、ログ出力のみ行う。
+
+        Args:
+            jobs: ジョブデータのリスト
+        """
+        logger.info(f"[MOCK] Would upsert {len(jobs)} jobs")
+        for job in jobs:
+            logger.debug(
+                f"[MOCK] Would upsert job: {job.get('source_job_id')} "
+                f"({job.get('repository_owner')}/{job.get('repository_name')}) "
+                f"- Job: {job.get('job_name')} - Status: {job.get('status')}"
+            )
+
     def close(self) -> None:
         """データベース接続をクローズする（モック実装）
 

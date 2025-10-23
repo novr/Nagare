@@ -36,6 +36,18 @@ def test_upsert_pipeline_runs_not_implemented() -> None:
         client.upsert_pipeline_runs(runs)
 
 
+def test_upsert_jobs_not_implemented() -> None:
+    """本番モード: PostgreSQL実装が未完了のためNotImplementedErrorが発生"""
+    from nagare.utils.database import DatabaseClient
+
+    client = DatabaseClient()
+
+    jobs: list[dict[str, Any]] = [{"source_job_id": "789", "status": "SUCCESS"}]
+
+    with pytest.raises(NotImplementedError, match="PostgreSQL upsert for jobs"):
+        client.upsert_jobs(jobs)
+
+
 def test_close() -> None:
     """close()が正常に実行されることを確認"""
     from nagare.utils.database import DatabaseClient

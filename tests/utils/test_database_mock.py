@@ -74,6 +74,35 @@ def test_upsert_pipeline_runs() -> None:
     client.upsert_pipeline_runs(runs)
 
 
+def test_upsert_jobs() -> None:
+    """upsert_jobs()がログ出力のみ行うことを確認"""
+    from nagare.utils.database_mock import MockDatabaseClient
+
+    client = MockDatabaseClient()
+
+    jobs: list[dict[str, Any]] = [
+        {
+            "source_job_id": "789",
+            "source_run_id": "123",
+            "repository_owner": "test-org",
+            "repository_name": "test-repo",
+            "job_name": "build",
+            "status": "SUCCESS",
+        },
+        {
+            "source_job_id": "790",
+            "source_run_id": "456",
+            "repository_owner": "test-org",
+            "repository_name": "test-repo2",
+            "job_name": "test",
+            "status": "FAILURE",
+        },
+    ]
+
+    # エラーなく実行されることを確認（ログ出力のみ）
+    client.upsert_jobs(jobs)
+
+
 def test_close() -> None:
     """close()が正常に実行されることを確認"""
     from nagare.utils.database_mock import MockDatabaseClient

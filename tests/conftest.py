@@ -38,6 +38,9 @@ class MockDatabaseClient:
         upsert_pipeline_runs_called: upsert_pipeline_runs()が呼ばれたかどうか
         upsert_pipeline_runs_call_count: upsert_pipeline_runs()の呼び出し回数
         upserted_runs: upsert_pipeline_runs()に渡されたデータ
+        upsert_jobs_called: upsert_jobs()が呼ばれたかどうか
+        upsert_jobs_call_count: upsert_jobs()の呼び出し回数
+        upserted_jobs: upsert_jobs()に渡されたデータ
         close_called: close()が呼ばれたかどうか
     """
 
@@ -50,6 +53,11 @@ class MockDatabaseClient:
         self.upsert_pipeline_runs_called = False
         self.upsert_pipeline_runs_call_count = 0
         self.upserted_runs: list[dict[str, Any]] = []
+
+        # upsert_jobs tracking
+        self.upsert_jobs_called = False
+        self.upsert_jobs_call_count = 0
+        self.upserted_jobs: list[dict[str, Any]] = []
 
         # close tracking
         self.close_called = False
@@ -72,6 +80,16 @@ class MockDatabaseClient:
         self.upsert_pipeline_runs_called = True
         self.upsert_pipeline_runs_call_count += 1
         self.upserted_runs = runs
+
+    def upsert_jobs(self, jobs: list[dict[str, Any]]) -> None:
+        """モックのUPSERT処理（ジョブ）
+
+        Args:
+            jobs: UPSERTするジョブデータのリスト
+        """
+        self.upsert_jobs_called = True
+        self.upsert_jobs_call_count += 1
+        self.upserted_jobs = jobs
 
     def close(self) -> None:
         """モックのクローズ処理"""
