@@ -6,11 +6,11 @@ GitHub APIから取得し、PostgreSQLに保存する。
 
 import os
 from datetime import datetime, timedelta
-from typing import Any
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
+from nagare.constants import TaskIds
 from nagare.tasks.fetch import (
     fetch_repositories,
     fetch_workflow_run_jobs,
@@ -18,56 +18,7 @@ from nagare.tasks.fetch import (
 )
 from nagare.tasks.load import load_to_database
 from nagare.tasks.transform import transform_data
-from nagare.utils.factory import get_factory
-
-
-# タスクラッパー関数（依存性注入 + リソース管理）
-def fetch_repositories_with_di(**context: Any) -> list[dict[str, str]]:
-    """fetch_repositoriesのラッパー関数（依存性注入）
-
-    Args:
-        **context: Airflowのコンテキスト
-
-    Returns:
-        リポジトリ情報のリスト
-    """
-    factory = get_factory()
-    with factory.create_database_client() as db:
-        return fetch_repositories(db=db, **context)
-
-
-def fetch_workflow_runs_with_di(**context: Any) -> None:
-    """fetch_workflow_runsのラッパー関数（依存性注入）
-
-    Args:
-        **context: Airflowのコンテキスト
-    """
-    factory = get_factory()
-    with factory.create_github_client() as github_client:
-        fetch_workflow_runs(github_client=github_client, **context)
-
-
-def fetch_workflow_run_jobs_with_di(**context: Any) -> None:
-    """fetch_workflow_run_jobsのラッパー関数（依存性注入）
-
-    Args:
-        **context: Airflowのコンテキスト
-    """
-    factory = get_factory()
-    with factory.create_github_client() as github_client:
-        fetch_workflow_run_jobs(github_client=github_client, **context)
-
-
-def load_to_database_with_di(**context: Any) -> None:
-    """load_to_databaseのラッパー関数（依存性注入）
-
-    Args:
-        **context: Airflowのコンテキスト
-    """
-    factory = get_factory()
-    with factory.create_database_client() as db:
-        load_to_database(db=db, **context)
-
+from nagare.utils.dag_helpers import with_database_client, with_github_client
 
 # デフォルト引数
 default_args = {
@@ -93,32 +44,32 @@ with DAG(
 ) as dag:
     # タスク1: 監視対象リポジトリの取得
     task_fetch_repositories = PythonOperator(
-        task_id="fetch_repositories",
-        python_callable=fetch_repositories_with_di,
+        task_id=TaskIds.FETCH_REPOSITORIES,
+        python_callable=with_database_client(fetch_repositories),
     )
 
     # タスク2: ワークフロー実行データの取得
     task_fetch_workflow_runs = PythonOperator(
-        task_id="fetch_workflow_runs",
-        python_callable=fetch_workflow_runs_with_di,
+        task_id=TaskIds.FETCH_WORKFLOW_RUNS,
+        python_callable=with_github_client(fetch_workflow_runs),
     )
 
     # タスク3: ジョブデータの取得
     task_fetch_workflow_run_jobs = PythonOperator(
-        task_id="fetch_workflow_run_jobs",
-        python_callable=fetch_workflow_run_jobs_with_di,
+        task_id=TaskIds.FETCH_WORKFLOW_RUN_JOBS,
+        python_callable=with_github_client(fetch_workflow_run_jobs),
     )
 
     # タスク4: データ変換
     task_transform_data = PythonOperator(
-        task_id="transform_data",
+        task_id=TaskIds.TRANSFORM_DATA,
         python_callable=transform_data,
     )
 
     # タスク5: データベースへの保存
     task_load_to_database = PythonOperator(
-        task_id="load_to_database",
-        python_callable=load_to_database_with_di,
+        task_id=TaskIds.LOAD_TO_DATABASE,
+        python_callable=with_database_client(load_to_database),
     )
 
     # タスクの依存関係を定義

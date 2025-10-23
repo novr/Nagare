@@ -10,9 +10,10 @@ def test_dag_imports() -> None:
     assert collect_github_actions_data.dag is not None
 
 
-def test_fetch_repositories_with_di(mock_airflow_context: dict[str, Any]) -> None:
-    """fetch_repositories_with_di関数が動作することを確認"""
-    from nagare.dags.collect_github_actions_data import fetch_repositories_with_di
+def test_with_database_client_wrapper(mock_airflow_context: dict[str, Any]) -> None:
+    """with_database_clientヘルパー関数が動作することを確認"""
+    from nagare.tasks.fetch import fetch_repositories
+    from nagare.utils.dag_helpers import with_database_client
     from nagare.utils.factory import ClientFactory, set_factory
     from tests.conftest import MockDatabaseClient
 
@@ -27,8 +28,9 @@ def test_fetch_repositories_with_di(mock_airflow_context: dict[str, Any]) -> Non
     set_factory(MockFactory())
 
     try:
-        # 関数を実行
-        result = fetch_repositories_with_di(**mock_airflow_context)
+        # ヘルパー関数でラップして実行
+        wrapped_func = with_database_client(fetch_repositories)
+        result = wrapped_func(**mock_airflow_context)
 
         # 結果を検証
         assert len(result) == 2
@@ -40,9 +42,10 @@ def test_fetch_repositories_with_di(mock_airflow_context: dict[str, Any]) -> Non
         set_factory(original_factory)
 
 
-def test_fetch_workflow_runs_with_di(mock_airflow_context: dict[str, Any]) -> None:
-    """fetch_workflow_runs_with_di関数が動作することを確認"""
-    from nagare.dags.collect_github_actions_data import fetch_workflow_runs_with_di
+def test_with_github_client_wrapper(mock_airflow_context: dict[str, Any]) -> None:
+    """with_github_clientヘルパー関数が動作することを確認"""
+    from nagare.tasks.fetch import fetch_workflow_runs
+    from nagare.utils.dag_helpers import with_github_client
     from nagare.utils.factory import ClientFactory, set_factory
     from tests.conftest import MockGitHubClient
 
@@ -63,8 +66,9 @@ def test_fetch_workflow_runs_with_di(mock_airflow_context: dict[str, Any]) -> No
     set_factory(MockFactory())
 
     try:
-        # 関数を実行
-        fetch_workflow_runs_with_di(**mock_airflow_context)
+        # ヘルパー関数でラップして実行
+        wrapped_func = with_github_client(fetch_workflow_runs)
+        wrapped_func(**mock_airflow_context)
 
         # XComに保存されたか確認
         workflow_runs = ti.xcom_data.get("workflow_runs")
@@ -77,9 +81,10 @@ def test_fetch_workflow_runs_with_di(mock_airflow_context: dict[str, Any]) -> No
         set_factory(original_factory)
 
 
-def test_load_to_database_with_di(mock_airflow_context: dict[str, Any]) -> None:
-    """load_to_database_with_di関数が動作することを確認"""
-    from nagare.dags.collect_github_actions_data import load_to_database_with_di
+def test_with_database_client_load_wrapper(mock_airflow_context: dict[str, Any]) -> None:
+    """with_database_clientヘルパー関数がload_to_databaseで動作することを確認"""
+    from nagare.tasks.load import load_to_database
+    from nagare.utils.dag_helpers import with_database_client
     from nagare.utils.factory import ClientFactory, set_factory
     from tests.conftest import MockDatabaseClient
 
@@ -107,8 +112,9 @@ def test_load_to_database_with_di(mock_airflow_context: dict[str, Any]) -> None:
     set_factory(MockFactory())
 
     try:
-        # 関数を実行
-        load_to_database_with_di(**mock_airflow_context)
+        # ヘルパー関数でラップして実行
+        wrapped_func = with_database_client(load_to_database)
+        wrapped_func(**mock_airflow_context)
 
         # upsert_pipeline_runsが呼ばれたことを確認
         assert mock_db.upsert_pipeline_runs_called
