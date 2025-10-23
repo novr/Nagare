@@ -39,6 +39,9 @@ Thumbs.db
 .env.local
 .env.*.local
 
+# Docker secrets
+secrets/
+
 # Airflow
 airflow.db
 airflow.cfg

@@ -1,0 +1,198 @@
+services:
+  # PostgreSQLデータベース
+  postgres:
+    image: postgres:15-alpine
+    container_name: nagare-postgres
+    environment:
+      POSTGRES_USER: ${DATABASE_USER:-nagare_user}
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+      POSTGRES_DB: ${DATABASE_NAME:-nagare}
+    secrets:
+      - db_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${DATABASE_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-nagare_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nagare-network
+    restart: unless-stopped
+
+  # Airflow Webserver
+  airflow-webserver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nagare-airflow-webserver
+    command: airflow webserver
+    ports:
+      - "${AIRFLOW_WEBSERVER_PORT:-8080}:8080"
+    environment:
+      # Airflow Core設定
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+
+      # データベース接続
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${DATABASE_USER:-nagare_user}:${DATABASE_PASSWORD}@postgres:5432/${DATABASE_NAME:-nagare}
+
+      # Webserver設定
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'false'
+      AIRFLOW__WEBSERVER__SECRET_KEY_FILE: /run/secrets/airflow_secret_key
+
+      # GitHub認証情報
+      GITHUB_APP_ID: ${GITHUB_APP_ID}
+      GITHUB_APP_INSTALLATION_ID: ${GITHUB_APP_INSTALLATION_ID}
+      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY}
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+
+      # アプリケーション設定
+      USE_DB_MOCK: ${USE_DB_MOCK:-false}
+      REPOSITORIES_JSON: ${REPOSITORIES_JSON}
+      AIRFLOW_ALERT_EMAIL: ${AIRFLOW_ALERT_EMAIL:-admin@example.com}
+    secrets:
+      - airflow_secret_key
+    volumes:
+      - ./src:/opt/airflow/src:ro
+      - airflow_logs:/opt/airflow/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - nagare-network
+    restart: unless-stopped
+
+  # Airflow Scheduler
+  airflow-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nagare-airflow-scheduler
+    command: airflow scheduler
+    environment:
+      # Airflow Core設定
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+
+      # データベース接続
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${DATABASE_USER:-nagare_user}:${DATABASE_PASSWORD}@postgres:5432/${DATABASE_NAME:-nagare}
+
+      # GitHub認証情報
+      GITHUB_APP_ID: ${GITHUB_APP_ID}
+      GITHUB_APP_INSTALLATION_ID: ${GITHUB_APP_INSTALLATION_ID}
+      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY}
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+
+      # アプリケーション設定
+      USE_DB_MOCK: ${USE_DB_MOCK:-false}
+      REPOSITORIES_JSON: ${REPOSITORIES_JSON}
+      AIRFLOW_ALERT_EMAIL: ${AIRFLOW_ALERT_EMAIL:-admin@example.com}
+    volumes:
+      - ./src:/opt/airflow/src:ro
+      - airflow_logs:/opt/airflow/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "airflow", "jobs", "check", "--job-type", "SchedulerJob"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - nagare-network
+    restart: unless-stopped
+
+  # Airflow初期化（データベースマイグレーション）
+  airflow-init:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nagare-airflow-init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create \
+          --username ${AIRFLOW_ADMIN_USERNAME:-admin} \
+          --password ${AIRFLOW_ADMIN_PASSWORD:-admin} \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email ${AIRFLOW_ALERT_EMAIL:-admin@example.com} || true
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${DATABASE_USER:-nagare_user}:${DATABASE_PASSWORD}@postgres:5432/${DATABASE_NAME:-nagare}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - nagare-network
+
+  # Apache Superset
+  superset:
+    image: apache/superset:4.1.0
+    container_name: nagare-superset
+    environment:
+      SUPERSET_SECRET_KEY_FILE: /run/secrets/superset_secret_key
+      DATABASE_DB: ${DATABASE_NAME:-nagare}
+      DATABASE_HOST: postgres
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+      DATABASE_USER: ${DATABASE_USER:-nagare_user}
+      DATABASE_PORT: 5432
+      DATABASE_DIALECT: postgresql
+      SUPERSET_LOAD_EXAMPLES: 'no'
+    secrets:
+      - superset_secret_key
+    ports:
+      - "${SUPERSET_PORT:-8088}:8088"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - superset_data:/app/superset_home
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8088/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - nagare-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    name: nagare-postgres-data
+  airflow_logs:
+    name: nagare-airflow-logs
+  superset_data:
+    name: nagare-superset-data
+
+networks:
+  nagare-network:
+    name: nagare-network
+    driver: bridge
+
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt
+  airflow_secret_key:
+    file: ./secrets/airflow_secret_key.txt
+  superset_secret_key:
+    file: ./secrets/superset_secret_key.txt

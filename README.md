@@ -15,13 +15,91 @@ Kent Beck氏の警告「指標が目標になると、それは良い指標で�
 - **Apache Superset**: ダッシュボード・可視化
 - **PostgreSQL**: データベース
 
-## 開発環境のセットアップ
+## 環境構築
 
-### 前提条件
+### Docker環境での実行（推奨）
+
+Docker Composeを使用して、Airflow、PostgreSQL、Supersetを含む完全な環境を簡単に構築できます。
+
+#### 前提条件
+
+- [Docker](https://docs.docker.com/get-docker/) がインストールされていること
+- [Docker Compose](https://docs.docker.com/compose/install/) がインストールされていること
+
+#### セットアップ手順
+
+1. リポジトリをクローン
+
+```bash
+git clone <repository-url>
+cd Nagare
+```
+
+2. 環境変数の設定
+
+```bash
+cp .env.docker.sample .env
+# .envファイルを編集して必要な環境変数を設定
+```
+
+3. Secretsファイルの生成
+
+```bash
+./scripts/setup-secrets.sh
+```
+
+このスクリプトは以下のファイルを生成します：
+- `secrets/db_password.txt` - データベースパスワード
+- `secrets/airflow_secret_key.txt` - Airflow Secret Key
+- `secrets/superset_secret_key.txt` - Superset Secret Key
+
+4. Docker環境の起動
+
+```bash
+# バックグラウンドで起動
+docker compose up -d
+
+# ログを確認
+docker compose logs -f
+```
+
+5. サービスへのアクセス
+
+- **Airflow UI**: http://localhost:8080
+  - ユーザー名: `admin`
+  - パスワード: `.env`の`AIRFLOW_ADMIN_PASSWORD`
+- **Superset**: http://localhost:8088
+- **PostgreSQL**: `localhost:5432`
+
+#### Docker環境の管理
+
+```bash
+# 停止
+docker compose stop
+
+# 再起動
+docker compose restart
+
+# 完全削除（データも削除）
+docker compose down -v
+
+# ログ確認
+docker compose logs -f [service-name]
+
+# サービスのステータス確認
+docker compose ps
+```
+
+### ローカル開発環境のセットアップ
+
+uvを使用したローカル開発環境の構築方法です。
+
+#### 前提条件
 
 - [uv](https://github.com/astral-sh/uv) がインストールされていること
+- Python 3.11
 
-### セットアップ手順
+#### セットアップ手順
 
 1. リポジトリをクローン
 
