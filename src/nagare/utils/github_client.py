@@ -10,7 +10,55 @@ from typing import Any
 
 from github import Auth, Github, GithubException, GithubRetry
 
+from nagare.constants import GitHubConfig
+
 logger = logging.getLogger(__name__)
+
+
+def _format_github_error_message(
+    e: GithubException, context: str, owner: str = "", repo: str = "", run_id: int = 0
+) -> str:
+    """GitHub APIエラーメッセージをフォーマットする
+
+    Args:
+        e: GithubException
+        context: エラーコンテキスト（例: "fetching workflow runs"）
+        owner: リポジトリのオーナー
+        repo: リポジトリ名
+        run_id: ワークフロー実行ID（ジョブ取得の場合）
+
+    Returns:
+        フォーマットされたエラーメッセージ
+    """
+    # リポジトリ情報の構築
+    repo_info = f"{owner}/{repo}" if owner and repo else ""
+    run_info = f" for run {run_id}" if run_id else ""
+
+    # ステータスコード別のメッセージ
+    if e.status == 401:
+        return (
+            f"Authentication failed while {context}{run_info}. "
+            f"Check your GitHub credentials (token or app configuration)."
+        )
+    elif e.status == 403:
+        return (
+            f"Access forbidden while {context}{run_info}. "
+            f"Check repository permissions or rate limits."
+        )
+    elif e.status == 404:
+        resource = f"workflow run {run_id}" if run_id else f"repository {repo_info}"
+        check_item = "run ID" if run_id else "repository name"
+        return (
+            f"{resource.capitalize()} not found while {context}. "
+            f"Check the {check_item} or access permissions."
+        )
+    else:
+        # その他のエラー
+        error_data = (
+            e.data.get("message", str(e.data)) if isinstance(e.data, dict) else e.data
+        )
+        target = f"{repo_info}{run_info}" if repo_info or run_id else context
+        return f"Failed {context} for {target}: HTTP {e.status} - {error_data}"
 
 
 class GitHubClient:
@@ -118,9 +166,9 @@ class GitHubClient:
 
         # リトライ設定（指数バックオフ）
         retry = GithubRetry(
-            total=3,
-            backoff_factor=1.0,  # 1秒、2秒、4秒と指数バックオフ
-            status_forcelist=[429, 500, 502, 503, 504],
+            total=GitHubConfig.RETRY_TOTAL,
+            backoff_factor=GitHubConfig.RETRY_BACKOFF_FACTOR,
+            status_forcelist=GitHubConfig.RETRY_STATUS_FORCELIST,
         )
 
         # GitHubクライアントの初期化
@@ -129,11 +177,13 @@ class GitHubClient:
             auth=auth,
             base_url=base_url,
             retry=retry,
-            per_page=100,  # デフォルトのページサイズ
+            per_page=GitHubConfig.PER_PAGE,
         )
 
         # リポジトリオブジェクトのキャッシュ（API呼び出し削減）
-        self._repo_cache: dict[str, Any] = {}
+        self._repo_cache: dict[str, Any] | None = (
+            {} if GitHubConfig.ENABLE_REPO_CACHE else None
+        )
 
     def _get_repository(self, owner: str, repo: str) -> Any:
         """リポジトリオブジェクトを取得（キャッシュ使用）
@@ -146,9 +196,15 @@ class GitHubClient:
             PyGithubのRepositoryオブジェクト
         """
         repo_key = f"{owner}/{repo}"
-        if repo_key not in self._repo_cache:
-            self._repo_cache[repo_key] = self.github.get_repo(repo_key)
-        return self._repo_cache[repo_key]
+
+        # キャッシュが有効な場合はキャッシュを使用
+        if self._repo_cache is not None:
+            if repo_key not in self._repo_cache:
+                self._repo_cache[repo_key] = self.github.get_repo(repo_key)
+            return self._repo_cache[repo_key]
+
+        # キャッシュ無効の場合は毎回取得
+        return self.github.get_repo(repo_key)
 
     def get_workflow_runs(
         self,
@@ -223,34 +279,10 @@ class GitHubClient:
             return all_runs
 
         except GithubException as e:
-            # ステータスコード別に適切なエラーメッセージを生成
-            if e.status == 401:
-                error_msg = (
-                    f"Authentication failed for {owner}/{repo}. "
-                    f"Check your GitHub credentials (token or app configuration)."
-                )
-            elif e.status == 403:
-                error_msg = (
-                    f"Access forbidden to {owner}/{repo}. "
-                    f"Check repository permissions or rate limits."
-                )
-            elif e.status == 404:
-                error_msg = (
-                    f"Repository {owner}/{repo} not found. "
-                    f"Check the repository name or access permissions."
-                )
-            else:
-                # エラーデータを抽出
-                error_data = (
-                    e.data.get("message", str(e.data))
-                    if isinstance(e.data, dict)
-                    else e.data
-                )
-                error_msg = (
-                    f"Failed to fetch workflow runs for {owner}/{repo}: "
-                    f"HTTP {e.status} - {error_data}"
-                )
-
+            # 共通関数を使ってエラーメッセージを生成
+            error_msg = _format_github_error_message(
+                e, context="fetching workflow runs", owner=owner, repo=repo
+            )
             logger.error(error_msg)
             raise GithubException(e.status, e.data, e.headers) from e
 
@@ -314,56 +346,12 @@ class GitHubClient:
             return all_jobs
 
         except GithubException as e:
-            # ステータスコード別に適切なエラーメッセージを生成
-            if e.status == 401:
-                error_msg = (
-                    f"Authentication failed for workflow run {run_id}. "
-                    f"Check your GitHub credentials (token or app configuration)."
-                )
-            elif e.status == 403:
-                error_msg = (
-                    f"Access forbidden to workflow run {run_id}. "
-                    f"Check repository permissions or rate limits."
-                )
-            elif e.status == 404:
-                error_msg = (
-                    f"Workflow run {run_id} not found in {owner}/{repo}. "
-                    f"Check the run ID or repository access permissions."
-                )
-            else:
-                # エラーデータを抽出
-                error_data = (
-                    e.data.get("message", str(e.data))
-                    if isinstance(e.data, dict)
-                    else e.data
-                )
-                error_msg = (
-                    f"Failed to fetch jobs for run {run_id}: "
-                    f"HTTP {e.status} - {error_data}"
-                )
-
+            # 共通関数を使ってエラーメッセージを生成
+            error_msg = _format_github_error_message(
+                e, context="fetching jobs", owner=owner, repo=repo, run_id=run_id
+            )
             logger.error(error_msg)
             raise GithubException(e.status, e.data, e.headers) from e
-
-    def get_rate_limit(self) -> dict[str, Any]:
-        """現在のAPIレート制限状況を取得する
-
-        Returns:
-            レート制限情報の辞書
-        """
-        rate_limit = self.github.get_rate_limit()
-        return {
-            "core": {
-                "limit": rate_limit.core.limit,  # type: ignore[attr-defined]
-                "remaining": rate_limit.core.remaining,  # type: ignore[attr-defined]
-                "reset": rate_limit.core.reset.isoformat(),  # type: ignore[attr-defined]
-            },
-            "search": {
-                "limit": rate_limit.search.limit,  # type: ignore[attr-defined]
-                "remaining": rate_limit.search.remaining,  # type: ignore[attr-defined]
-                "reset": rate_limit.search.reset.isoformat(),  # type: ignore[attr-defined]
-            },
-        }
 
     def close(self) -> None:
         """GitHubクライアントをクローズする"""
