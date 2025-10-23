@@ -13,6 +13,27 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
+def _validate_required_fields(
+    data: dict[str, Any], required_fields: list[str], data_type: str
+) -> None:
+    """必須フィールドの存在を検証する
+
+    Args:
+        data: 検証対象のデータ
+        required_fields: 必須フィールドのリスト
+        data_type: データの種類（エラーメッセージ用）
+
+    Raises:
+        KeyError: 必須フィールドが欠落している場合
+    """
+    missing_fields = [field for field in required_fields if field not in data]
+    if missing_fields:
+        raise KeyError(
+            f"Missing required fields in {data_type}: {missing_fields}. "
+            f"Available fields: {list(data.keys())}"
+        )
+
+
 def _transform_items_with_error_handling(
     items: list[T],
     transform_func: Callable[[T], dict[str, Any]],
@@ -124,7 +145,17 @@ def _transform_workflow_run(run: dict[str, Any]) -> dict[str, Any]:
 
     Returns:
         汎用データモデル形式に変換されたデータ
+
+    Raises:
+        KeyError: 必須フィールドが欠落している場合
     """
+    # 必須フィールドの検証
+    _validate_required_fields(
+        run,
+        required_fields=["id", "_repository_owner", "_repository_name"],
+        data_type="workflow run",
+    )
+
     # ステータスをマッピング
     status_mapping = {
         "completed": _map_conclusion_to_status(run.get("conclusion")),
@@ -154,14 +185,15 @@ def _transform_workflow_run(run: dict[str, Any]) -> dict[str, Any]:
         duration_ms = int((completed_at - started_at).total_seconds() * 1000)
 
     # 汎用データモデルに変換
+    # 必須フィールドは既にバリデーション済みなので安全にアクセス可能
     return {
         "source_run_id": str(run["id"]),
         "source": "github_actions",
         "pipeline_name": run.get("name", "Unknown"),
         "status": status,
         "trigger_event": run.get("event", "UNKNOWN"),
-        "repository_owner": run.get("_repository_owner"),
-        "repository_name": run.get("_repository_name"),
+        "repository_owner": run["_repository_owner"],
+        "repository_name": run["_repository_name"],
         "branch_name": run.get("head_branch"),
         "commit_sha": run.get("head_sha"),
         "started_at": started_at,
@@ -179,7 +211,17 @@ def _transform_workflow_run_job(job: dict[str, Any]) -> dict[str, Any]:
 
     Returns:
         汎用データモデル形式に変換されたデータ
+
+    Raises:
+        KeyError: 必須フィールドが欠落している場合
     """
+    # 必須フィールドの検証
+    _validate_required_fields(
+        job,
+        required_fields=["id", "run_id", "_repository_owner", "_repository_name"],
+        data_type="job",
+    )
+
     # ステータスをマッピング
     status_mapping = {
         "completed": _map_conclusion_to_status(job.get("conclusion")),
@@ -209,14 +251,15 @@ def _transform_workflow_run_job(job: dict[str, Any]) -> dict[str, Any]:
         duration_ms = int((completed_at - started_at).total_seconds() * 1000)
 
     # 汎用データモデルに変換
+    # 必須フィールドは既にバリデーション済みなので安全にアクセス可能
     return {
         "source_job_id": str(job["id"]),
         "source_run_id": str(job["run_id"]),
         "source": "github_actions",
         "job_name": job.get("name", "Unknown"),
         "status": status,
-        "repository_owner": job.get("_repository_owner"),
-        "repository_name": job.get("_repository_name"),
+        "repository_owner": job["_repository_owner"],
+        "repository_name": job["_repository_name"],
         "started_at": started_at,
         "completed_at": completed_at,
         "duration_ms": duration_ms,

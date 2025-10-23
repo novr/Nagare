@@ -117,7 +117,18 @@ def fetch_workflow_runs(github_client: GitHubClientProtocol, **context: Any) -> 
     created_after = execution_date - timedelta(hours=2)  # 余裕を持って2時間前から
 
     def process_repository(repo: dict[str, str]) -> list[dict[str, Any]]:
-        """リポジトリからワークフロー実行データを取得"""
+        """リポジトリからワークフロー実行データを取得
+
+        Raises:
+            KeyError: 必須フィールド(owner, repo)が欠落している場合
+        """
+        # 必須フィールドの検証
+        if "owner" not in repo or "repo" not in repo:
+            raise KeyError(
+                f"Repository data missing required fields. "
+                f"Expected: ['owner', 'repo'], Found: {list(repo.keys())}"
+            )
+
         owner = repo["owner"]
         repo_name = repo["repo"]
 
@@ -170,7 +181,20 @@ def fetch_workflow_run_jobs(
         return
 
     def process_workflow_run(run: dict[str, Any]) -> list[dict[str, Any]]:
-        """ワークフロー実行からジョブデータを取得"""
+        """ワークフロー実行からジョブデータを取得
+
+        Raises:
+            KeyError: 必須フィールドが欠落している場合
+        """
+        # 必須フィールドの検証
+        required_fields = ["id", "_repository_owner", "_repository_name"]
+        missing_fields = [f for f in required_fields if f not in run]
+        if missing_fields:
+            raise KeyError(
+                f"Workflow run data missing required fields: {missing_fields}. "
+                f"Available fields: {list(run.keys())}"
+            )
+
         owner = run["_repository_owner"]
         repo_name = run["_repository_name"]
         run_id = run["id"]

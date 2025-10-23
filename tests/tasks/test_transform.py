@@ -98,6 +98,8 @@ def test_transform_workflow_run_status_mapping() -> None:
         "conclusion": "success",
         "created_at": "2024-01-01T00:00:00Z",
         "updated_at": "2024-01-01T00:01:00Z",
+        "_repository_owner": "test-org",
+        "_repository_name": "test-repo",
     }
     result = _transform_workflow_run(run)
     assert result["status"] == "SUCCESS"
@@ -118,6 +120,8 @@ def test_transform_workflow_run_status_mapping() -> None:
         "status": "in_progress",
         "created_at": "2024-01-01T00:00:00Z",
         "updated_at": "2024-01-01T00:01:00Z",
+        "_repository_owner": "test-org",
+        "_repository_name": "test-repo",
     }
     result = _transform_workflow_run(run)
     assert result["status"] == "IN_PROGRESS"
@@ -146,6 +150,8 @@ def test_transform_workflow_run_duration_calculation() -> None:
         "conclusion": "success",
         "run_started_at": "2024-01-01T00:00:00Z",
         "updated_at": "2024-01-01T00:05:30Z",  # 5分30秒後
+        "_repository_owner": "test-org",
+        "_repository_name": "test-repo",
     }
     result = _transform_workflow_run(run)
     assert result["duration_ms"] == 330000  # 5分30秒 = 330秒 = 330,000ミリ秒
@@ -157,12 +163,19 @@ def test_transform_workflow_run_duration_calculation() -> None:
         "conclusion": "success",
         "created_at": "2024-01-01T00:00:00Z",
         "updated_at": "2024-01-01T00:02:00Z",  # 2分後
+        "_repository_owner": "test-org",
+        "_repository_name": "test-repo",
     }
     result = _transform_workflow_run(run)
     assert result["duration_ms"] == 120000  # 2分 = 120秒 = 120,000ミリ秒
 
     # 時刻情報がない場合はNone
-    run = {"id": 3, "status": "queued"}
+    run = {
+        "id": 3,
+        "status": "queued",
+        "_repository_owner": "test-org",
+        "_repository_name": "test-repo",
+    }
     result = _transform_workflow_run(run)
     assert result["duration_ms"] is None
 
@@ -173,11 +186,13 @@ def test_transform_workflow_run_handles_missing_fields() -> None:
         _transform_workflow_run,  # type: ignore[reportPrivateUsage]
     )
 
-    # 最小限のフィールドのみ
+    # 最小限のフィールドのみ（必須フィールド: id, _repository_owner, _repository_name）
     run = {
         "id": 999,
         "status": "completed",
         "conclusion": "success",
+        "_repository_owner": "test-org",
+        "_repository_name": "test-repo",
     }
 
     result = _transform_workflow_run(run)
@@ -187,8 +202,8 @@ def test_transform_workflow_run_handles_missing_fields() -> None:
     assert result["pipeline_name"] == "Unknown"
     assert result["status"] == "SUCCESS"
     assert result["trigger_event"] == "UNKNOWN"
-    assert result["repository_owner"] is None
-    assert result["repository_name"] is None
+    assert result["repository_owner"] == "test-org"
+    assert result["repository_name"] == "test-repo"
     assert result["branch_name"] is None
     assert result["commit_sha"] is None
     assert result["started_at"] is None
@@ -221,7 +236,7 @@ def test_transform_data_continues_on_error(
 
     ti = mock_airflow_context["ti"]
 
-    # 2つのrun: 1つは正常、1つはidフィールドがない（KeyError発生）
+    # 3つのrun: 2つは正常、1つはidフィールドがない（KeyError発生）
     ti.xcom_data["workflow_runs"] = [
         {
             "id": 123,
@@ -229,11 +244,15 @@ def test_transform_data_continues_on_error(
             "conclusion": "success",
             "created_at": "2024-01-01T00:00:00Z",
             "updated_at": "2024-01-01T00:01:00Z",
+            "_repository_owner": "test-org",
+            "_repository_name": "test-repo",
         },
         {
             # idフィールドがない -> KeyError
             "status": "completed",
             "conclusion": "success",
+            "_repository_owner": "test-org",
+            "_repository_name": "test-repo",
         },
         {
             "id": 456,
@@ -241,6 +260,8 @@ def test_transform_data_continues_on_error(
             "conclusion": "failure",
             "created_at": "2024-01-01T00:00:00Z",
             "updated_at": "2024-01-01T00:02:00Z",
+            "_repository_owner": "test-org",
+            "_repository_name": "test-repo",
         },
     ]
 
@@ -252,6 +273,76 @@ def test_transform_data_continues_on_error(
     assert len(transformed_runs) == 2
     assert transformed_runs[0]["source_run_id"] == "123"
     assert transformed_runs[1]["source_run_id"] == "456"
+
+
+def test_transform_workflow_run_missing_required_fields() -> None:
+    """必須フィールドが欠落している場合にKeyErrorが発生することを確認"""
+    import pytest
+
+    from nagare.tasks.transform import (
+        _transform_workflow_run,  # type: ignore[reportPrivateUsage]
+    )
+
+    # idフィールドが欠落
+    run_missing_id = {
+        "status": "completed",
+        "conclusion": "success",
+        "_repository_owner": "test-org",
+        "_repository_name": "test-repo",
+    }
+    with pytest.raises(KeyError, match="Missing required fields"):
+        _transform_workflow_run(run_missing_id)
+
+    # _repository_ownerフィールドが欠落
+    run_missing_owner = {
+        "id": 123,
+        "status": "completed",
+        "conclusion": "success",
+        "_repository_name": "test-repo",
+    }
+    with pytest.raises(KeyError, match="Missing required fields"):
+        _transform_workflow_run(run_missing_owner)
+
+    # _repository_nameフィールドが欠落
+    run_missing_name = {
+        "id": 123,
+        "status": "completed",
+        "conclusion": "success",
+        "_repository_owner": "test-org",
+    }
+    with pytest.raises(KeyError, match="Missing required fields"):
+        _transform_workflow_run(run_missing_name)
+
+
+def test_transform_job_missing_required_fields() -> None:
+    """ジョブデータで必須フィールドが欠落している場合にKeyErrorが発生することを確認"""
+    import pytest
+
+    from nagare.tasks.transform import (
+        _transform_workflow_run_job,  # type: ignore[reportPrivateUsage]
+    )
+
+    # idフィールドが欠落
+    job_missing_id = {
+        "run_id": 123,
+        "status": "completed",
+        "conclusion": "success",
+        "_repository_owner": "test-org",
+        "_repository_name": "test-repo",
+    }
+    with pytest.raises(KeyError, match="Missing required fields"):
+        _transform_workflow_run_job(job_missing_id)
+
+    # run_idフィールドが欠落
+    job_missing_run_id = {
+        "id": 789,
+        "status": "completed",
+        "conclusion": "success",
+        "_repository_owner": "test-org",
+        "_repository_name": "test-repo",
+    }
+    with pytest.raises(KeyError, match="Missing required fields"):
+        _transform_workflow_run_job(job_missing_run_id)
 
 
 def test_transform_data_with_jobs(
