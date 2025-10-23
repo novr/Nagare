@@ -1,12 +1,14 @@
 """データ取得タスク"""
 
 import logging
+from collections.abc import Callable
 from datetime import datetime, timedelta
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
 
 from airflow.models import TaskInstance
 from github import GithubException
 
+from nagare.constants import FetchConfig, TaskIds, XComKeys
 from nagare.utils.protocols import DatabaseClientProtocol, GitHubClientProtocol
 from nagare.utils.xcom_utils import check_xcom_size
 
@@ -51,8 +53,8 @@ def _process_items_with_error_handling(
         except (KeyError, ValueError, TypeError) as e:
             # データ処理エラー（予期しないレスポンス形式など）
             logger.error(
-                f"Data processing error while {operation_name.lower()} for {item_desc}: "
-                f"{type(e).__name__}: {e}"
+                f"Data processing error while {operation_name.lower()} for "
+                f"{item_desc}: {type(e).__name__}: {e}"
             )
             continue
         except Exception as e:
@@ -89,7 +91,7 @@ def fetch_repositories(
 
     # XComで次のタスクに渡す
     ti: TaskInstance = context["ti"]
-    ti.xcom_push(key="repositories", value=repositories)
+    ti.xcom_push(key=XComKeys.REPOSITORIES, value=repositories)
 
     return repositories
 
@@ -105,7 +107,7 @@ def fetch_workflow_runs(github_client: GitHubClientProtocol, **context: Any) -> 
 
     # 前のタスクからリポジトリリストを取得
     repositories: list[dict[str, str]] = ti.xcom_pull(
-        task_ids="fetch_repositories", key="repositories"
+        task_ids=TaskIds.FETCH_REPOSITORIES, key=XComKeys.REPOSITORIES
     )
 
     if not repositories:
@@ -114,7 +116,7 @@ def fetch_workflow_runs(github_client: GitHubClientProtocol, **context: Any) -> 
 
     # 前回実行時刻から今回実行時刻までのデータを取得
     execution_date: datetime = context["execution_date"]
-    created_after = execution_date - timedelta(hours=2)  # 余裕を持って2時間前から
+    created_after = execution_date - timedelta(hours=FetchConfig.LOOKBACK_HOURS)
 
     def process_repository(repo: dict[str, str]) -> list[dict[str, Any]]:
         """リポジトリからワークフロー実行データを取得
@@ -153,10 +155,10 @@ def fetch_workflow_runs(github_client: GitHubClientProtocol, **context: Any) -> 
     logger.info(f"Total workflow runs fetched: {len(all_workflow_runs)}")
 
     # XComサイズチェック
-    check_xcom_size(all_workflow_runs, "workflow_runs")
+    check_xcom_size(all_workflow_runs, XComKeys.WORKFLOW_RUNS)
 
     # XComで次のタスクに渡す
-    ti.xcom_push(key="workflow_runs", value=all_workflow_runs)
+    ti.xcom_push(key=XComKeys.WORKFLOW_RUNS, value=all_workflow_runs)
 
 
 def fetch_workflow_run_jobs(
@@ -172,12 +174,12 @@ def fetch_workflow_run_jobs(
 
     # 前のタスクからワークフロー実行リストを取得
     workflow_runs: list[dict[str, Any]] = ti.xcom_pull(
-        task_ids="fetch_workflow_runs", key="workflow_runs"
+        task_ids=TaskIds.FETCH_WORKFLOW_RUNS, key=XComKeys.WORKFLOW_RUNS
     )
 
     if not workflow_runs:
         logger.warning("No workflow runs found to fetch jobs")
-        ti.xcom_push(key="workflow_run_jobs", value=[])
+        ti.xcom_push(key=XComKeys.WORKFLOW_RUN_JOBS, value=[])
         return
 
     def process_workflow_run(run: dict[str, Any]) -> list[dict[str, Any]]:
@@ -213,14 +215,17 @@ def fetch_workflow_run_jobs(
     all_jobs = _process_items_with_error_handling(
         items=workflow_runs,
         process_func=process_workflow_run,
-        item_descriptor=lambda r: f"workflow run {r['id']} ({r['_repository_owner']}/{r['_repository_name']})",
+        item_descriptor=lambda r: (
+            f"workflow run {r['id']} "
+            f"({r['_repository_owner']}/{r['_repository_name']})"
+        ),
         operation_name="Fetching jobs",
     )
 
     logger.info(f"Total jobs fetched: {len(all_jobs)}")
 
     # XComサイズチェック
-    check_xcom_size(all_jobs, "workflow_run_jobs")
+    check_xcom_size(all_jobs, XComKeys.WORKFLOW_RUN_JOBS)
 
     # XComで次のタスクに渡す
-    ti.xcom_push(key="workflow_run_jobs", value=all_jobs)
+    ti.xcom_push(key=XComKeys.WORKFLOW_RUN_JOBS, value=all_jobs)

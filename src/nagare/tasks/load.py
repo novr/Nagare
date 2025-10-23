@@ -5,6 +5,7 @@ from typing import Any
 
 from airflow.models import TaskInstance
 
+from nagare.constants import TaskIds, XComKeys
 from nagare.utils.protocols import DatabaseClientProtocol
 
 logger = logging.getLogger(__name__)
@@ -27,12 +28,12 @@ def load_to_database(db: DatabaseClientProtocol, **context: Any) -> None:
 
     # ワークフロー実行データの取得
     transformed_runs: list[dict[str, Any]] = ti.xcom_pull(
-        task_ids="transform_data", key="transformed_runs"
+        task_ids=TaskIds.TRANSFORM_DATA, key=XComKeys.TRANSFORMED_RUNS
     )
 
     # ジョブデータの取得
     transformed_jobs: list[dict[str, Any]] = ti.xcom_pull(
-        task_ids="transform_data", key="transformed_jobs"
+        task_ids=TaskIds.TRANSFORM_DATA, key=XComKeys.TRANSFORMED_JOBS
     )
 
     # データがない場合は早期リターン

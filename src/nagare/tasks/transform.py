@@ -1,11 +1,19 @@
 """データ変換タスク"""
 
 import logging
-from datetime import datetime
-from typing import Any, Callable, TypeVar
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 from airflow.models import TaskInstance
 
+from nagare.constants import (
+    GITHUB_CONCLUSION_TO_STATUS,
+    GitHubStatus,
+    PipelineStatus,
+    TaskIds,
+    XComKeys,
+)
+from nagare.utils.datetime_utils import calculate_duration_ms, parse_iso_datetime
 from nagare.utils.xcom_utils import check_xcom_size
 
 logger = logging.getLogger(__name__)
@@ -35,9 +43,9 @@ def _validate_required_fields(
 
 
 def _transform_items_with_error_handling(
-    items: list[T],
-    transform_func: Callable[[T], dict[str, Any]],
-    item_descriptor: Callable[[T], str],
+    items: list[dict[str, Any]],
+    transform_func: Callable[[dict[str, Any]], dict[str, Any]],
+    item_descriptor: Callable[[dict[str, Any]], str],
     item_type: str,
 ) -> list[dict[str, Any]]:
     """各アイテムを変換し、エラーハンドリングを行う共通ヘルパー
@@ -96,7 +104,7 @@ def transform_data(**context: Any) -> None:
 
     # ワークフロー実行データの変換
     workflow_runs: list[dict[str, Any]] = ti.xcom_pull(
-        task_ids="fetch_workflow_runs", key="workflow_runs"
+        task_ids=TaskIds.FETCH_WORKFLOW_RUNS, key=XComKeys.WORKFLOW_RUNS
     )
 
     if workflow_runs:
@@ -113,7 +121,7 @@ def transform_data(**context: Any) -> None:
 
     # ジョブデータの変換
     workflow_run_jobs: list[dict[str, Any]] = ti.xcom_pull(
-        task_ids="fetch_workflow_run_jobs", key="workflow_run_jobs"
+        task_ids=TaskIds.FETCH_WORKFLOW_RUN_JOBS, key=XComKeys.WORKFLOW_RUN_JOBS
     )
 
     if workflow_run_jobs:
@@ -129,12 +137,12 @@ def transform_data(**context: Any) -> None:
         transformed_jobs = []
 
     # XComサイズチェック
-    check_xcom_size(transformed_runs, "transformed_runs")
-    check_xcom_size(transformed_jobs, "transformed_jobs")
+    check_xcom_size(transformed_runs, XComKeys.TRANSFORMED_RUNS)
+    check_xcom_size(transformed_jobs, XComKeys.TRANSFORMED_JOBS)
 
     # XComで次のタスクに渡す
-    ti.xcom_push(key="transformed_runs", value=transformed_runs)
-    ti.xcom_push(key="transformed_jobs", value=transformed_jobs)
+    ti.xcom_push(key=XComKeys.TRANSFORMED_RUNS, value=transformed_runs)
+    ti.xcom_push(key=XComKeys.TRANSFORMED_JOBS, value=transformed_jobs)
 
 
 def _transform_workflow_run(run: dict[str, Any]) -> dict[str, Any]:
@@ -157,32 +165,23 @@ def _transform_workflow_run(run: dict[str, Any]) -> dict[str, Any]:
     )
 
     # ステータスをマッピング
-    status_mapping = {
-        "completed": _map_conclusion_to_status(run.get("conclusion")),
-        "in_progress": "IN_PROGRESS",
-        "queued": "QUEUED",
-    }
     run_status = run.get("status", "unknown")
-    status = status_mapping.get(run_status, "UNKNOWN")
+    if run_status == GitHubStatus.COMPLETED:
+        status = _map_conclusion_to_status(run.get("conclusion"))
+    elif run_status == GitHubStatus.IN_PROGRESS:
+        status = PipelineStatus.IN_PROGRESS
+    elif run_status == GitHubStatus.QUEUED:
+        status = PipelineStatus.QUEUED
+    else:
+        status = PipelineStatus.UNKNOWN
 
     # 実行時間を計算（ミリ秒）
     started_at_str = run.get("run_started_at") or run.get("created_at")
     completed_at_str = run.get("updated_at")
 
-    started_at = (
-        datetime.fromisoformat(started_at_str.replace("Z", "+00:00"))
-        if started_at_str
-        else None
-    )
-    completed_at = (
-        datetime.fromisoformat(completed_at_str.replace("Z", "+00:00"))
-        if completed_at_str
-        else None
-    )
-
-    duration_ms = None
-    if started_at and completed_at:
-        duration_ms = int((completed_at - started_at).total_seconds() * 1000)
+    started_at = parse_iso_datetime(started_at_str)
+    completed_at = parse_iso_datetime(completed_at_str)
+    duration_ms = calculate_duration_ms(started_at, completed_at)
 
     # 汎用データモデルに変換
     # 必須フィールドは既にバリデーション済みなので安全にアクセス可能
@@ -223,32 +222,23 @@ def _transform_workflow_run_job(job: dict[str, Any]) -> dict[str, Any]:
     )
 
     # ステータスをマッピング
-    status_mapping = {
-        "completed": _map_conclusion_to_status(job.get("conclusion")),
-        "in_progress": "IN_PROGRESS",
-        "queued": "QUEUED",
-    }
     job_status = job.get("status", "unknown")
-    status = status_mapping.get(job_status, "UNKNOWN")
+    if job_status == GitHubStatus.COMPLETED:
+        status = _map_conclusion_to_status(job.get("conclusion"))
+    elif job_status == GitHubStatus.IN_PROGRESS:
+        status = PipelineStatus.IN_PROGRESS
+    elif job_status == GitHubStatus.QUEUED:
+        status = PipelineStatus.QUEUED
+    else:
+        status = PipelineStatus.UNKNOWN
 
     # 実行時間を計算（ミリ秒）
     started_at_str = job.get("started_at")
     completed_at_str = job.get("completed_at")
 
-    started_at = (
-        datetime.fromisoformat(started_at_str.replace("Z", "+00:00"))
-        if started_at_str
-        else None
-    )
-    completed_at = (
-        datetime.fromisoformat(completed_at_str.replace("Z", "+00:00"))
-        if completed_at_str
-        else None
-    )
-
-    duration_ms = None
-    if started_at and completed_at:
-        duration_ms = int((completed_at - started_at).total_seconds() * 1000)
+    started_at = parse_iso_datetime(started_at_str)
+    completed_at = parse_iso_datetime(completed_at_str)
+    duration_ms = calculate_duration_ms(started_at, completed_at)
 
     # 汎用データモデルに変換
     # 必須フィールドは既にバリデーション済みなので安全にアクセス可能
@@ -267,7 +257,7 @@ def _transform_workflow_run_job(job: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _map_conclusion_to_status(conclusion: str | None) -> str:
+def _map_conclusion_to_status(conclusion: str | None) -> PipelineStatus:
     """GitHub Actionsのconclusionをステータスにマッピングする
 
     Args:
@@ -276,11 +266,10 @@ def _map_conclusion_to_status(conclusion: str | None) -> str:
     Returns:
         汎用ステータス
     """
-    mapping = {
-        "success": "SUCCESS",
-        "failure": "FAILURE",
-        "cancelled": "CANCELLED",
-        "skipped": "SKIPPED",
-        "timed_out": "TIMEOUT",
-    }
-    return mapping.get(conclusion or "", "UNKNOWN")
+    if not conclusion:
+        return PipelineStatus.UNKNOWN
+
+    # 辞書のキーとして使用するため、conclusionをそのまま使う
+    # GitHubConclusionのenumはstr型を継承しているため、
+    # 文字列として直接使用可能
+    return GITHUB_CONCLUSION_TO_STATUS.get(conclusion, PipelineStatus.UNKNOWN)  # type: ignore[arg-type]
