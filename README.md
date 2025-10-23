@@ -38,8 +38,9 @@ cd Nagare
 2. 環境変数の設定
 
 ```bash
-cp .env.docker.sample .env
+cp .env.sample .env
 # .envファイルを編集して必要な環境変数を設定
+# Docker環境用の設定値を使用（DATABASE_HOST=postgres等）
 ```
 
 3. Secretsファイルの生成
