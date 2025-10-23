@@ -4,8 +4,9 @@ PostgreSQL接続とデータアクセス機能を提供する。
 """
 
 import logging
-from contextlib import AbstractContextManager, contextmanager
-from typing import Any, Generator
+from collections.abc import Generator
+from contextlib import contextmanager
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
