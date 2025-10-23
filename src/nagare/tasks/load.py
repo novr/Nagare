@@ -42,31 +42,49 @@ def load_to_database(db: DatabaseClientProtocol, **context: Any) -> None:
 
     # トランザクション内で両方のデータを保存
     # 片方が失敗した場合は両方ロールバックされる
+    runs_count = len(transformed_runs) if transformed_runs else 0
+    jobs_count = len(transformed_jobs) if transformed_jobs else 0
+
     try:
         with db.transaction():
             if transformed_runs:
-                db.upsert_pipeline_runs(transformed_runs)
-                logger.info(
-                    f"Successfully loaded {len(transformed_runs)} runs to database"
-                )
+                try:
+                    db.upsert_pipeline_runs(transformed_runs)
+                    logger.info(
+                        f"Successfully loaded {len(transformed_runs)} runs to database"
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to upsert pipeline runs: {type(e).__name__}: {e}"
+                    )
+                    raise
             else:
                 logger.warning("No transformed runs to load")
 
             if transformed_jobs:
-                db.upsert_jobs(transformed_jobs)
-                logger.info(
-                    f"Successfully loaded {len(transformed_jobs)} jobs to database"
-                )
+                try:
+                    db.upsert_jobs(transformed_jobs)
+                    logger.info(
+                        f"Successfully loaded {len(transformed_jobs)} jobs to database"
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to upsert jobs: {type(e).__name__}: {e}"
+                    )
+                    raise
             else:
                 logger.warning("No transformed jobs to load")
 
             # トランザクション正常終了
-            runs_count = len(transformed_runs) if transformed_runs else 0
-            jobs_count = len(transformed_jobs) if transformed_jobs else 0
             logger.info(
                 "Transaction completed successfully: "
                 f"{runs_count} runs, {jobs_count} jobs"
             )
     except Exception as e:
-        logger.error(f"Failed to load data to database (transaction rolled back): {e}")
+        logger.error(
+            f"Failed to load data to database (transaction rolled back): "
+            f"{type(e).__name__}: {e}. "
+            f"Attempted to save {runs_count} runs and {jobs_count} jobs.",
+            exc_info=True,
+        )
         raise

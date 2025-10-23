@@ -2,14 +2,69 @@
 
 import logging
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 from airflow.models import TaskInstance
+from github import GithubException
 
 from nagare.utils.protocols import DatabaseClientProtocol, GitHubClientProtocol
 from nagare.utils.xcom_utils import check_xcom_size
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
+
+
+def _process_items_with_error_handling(
+    items: list[T],
+    process_func: Callable[[T], list[dict[str, Any]]],
+    item_descriptor: Callable[[T], str],
+    operation_name: str,
+) -> list[dict[str, Any]]:
+    """各アイテムを処理し、エラーハンドリングを行う共通ヘルパー
+
+    Args:
+        items: 処理対象のアイテムリスト
+        process_func: 各アイテムを処理する関数
+        item_descriptor: アイテムを説明する文字列を返す関数
+        operation_name: 操作名（ログ用）
+
+    Returns:
+        処理結果の集約リスト
+    """
+    results: list[dict[str, Any]] = []
+
+    for item in items:
+        item_desc = item_descriptor(item)
+        try:
+            logger.info(f"{operation_name} for {item_desc}...")
+            item_results = process_func(item)
+            results.extend(item_results)
+            logger.info(f"Fetched {len(item_results)} items from {item_desc}")
+        except GithubException as e:
+            # GitHub API固有のエラー（レート制限、認証エラーなど）
+            logger.error(
+                f"GitHub API error while {operation_name.lower()} for {item_desc}: "
+                f"Status {e.status}, Message: {e.data.get('message', str(e))}"
+            )
+            continue
+        except (KeyError, ValueError, TypeError) as e:
+            # データ処理エラー（予期しないレスポンス形式など）
+            logger.error(
+                f"Data processing error while {operation_name.lower()} for {item_desc}: "
+                f"{type(e).__name__}: {e}"
+            )
+            continue
+        except Exception as e:
+            # その他の予期しないエラー
+            logger.error(
+                f"Unexpected error while {operation_name.lower()} for {item_desc}: "
+                f"{type(e).__name__}: {e}",
+                exc_info=True,
+            )
+            continue
+
+    return results
 
 
 def fetch_repositories(
@@ -61,30 +116,28 @@ def fetch_workflow_runs(github_client: GitHubClientProtocol, **context: Any) -> 
     execution_date: datetime = context["execution_date"]
     created_after = execution_date - timedelta(hours=2)  # 余裕を持って2時間前から
 
-    all_workflow_runs: list[dict[str, Any]] = []
-
-    for repo in repositories:
+    def process_repository(repo: dict[str, str]) -> list[dict[str, Any]]:
+        """リポジトリからワークフロー実行データを取得"""
         owner = repo["owner"]
         repo_name = repo["repo"]
 
-        try:
-            logger.info(f"Fetching workflow runs for {owner}/{repo_name}...")
-            runs = github_client.get_workflow_runs(
-                owner=owner, repo=repo_name, created_after=created_after
-            )
+        runs = github_client.get_workflow_runs(
+            owner=owner, repo=repo_name, created_after=created_after
+        )
 
-            # リポジトリ情報を各runに追加
-            for run in runs:
-                run["_repository_owner"] = owner
-                run["_repository_name"] = repo_name
+        # リポジトリ情報を各runに追加
+        for run in runs:
+            run["_repository_owner"] = owner
+            run["_repository_name"] = repo_name
 
-            all_workflow_runs.extend(runs)
-            logger.info(f"Fetched {len(runs)} runs from {owner}/{repo_name}")
+        return runs
 
-        except Exception as e:
-            # 特定のリポジトリでエラーが発生しても、他のリポジトリの処理は継続
-            logger.error(f"Failed to fetch workflow runs for {owner}/{repo_name}: {e}")
-            continue
+    all_workflow_runs = _process_items_with_error_handling(
+        items=repositories,
+        process_func=process_repository,
+        item_descriptor=lambda r: f"{r['owner']}/{r['repo']}",
+        operation_name="Fetching workflow runs",
+    )
 
     logger.info(f"Total workflow runs fetched: {len(all_workflow_runs)}")
 
@@ -116,36 +169,29 @@ def fetch_workflow_run_jobs(
         ti.xcom_push(key="workflow_run_jobs", value=[])
         return
 
-    all_jobs: list[dict[str, Any]] = []
-
-    for run in workflow_runs:
+    def process_workflow_run(run: dict[str, Any]) -> list[dict[str, Any]]:
+        """ワークフロー実行からジョブデータを取得"""
         owner = run["_repository_owner"]
         repo_name = run["_repository_name"]
         run_id = run["id"]
 
-        try:
-            logger.info(
-                f"Fetching jobs for workflow run {run_id} ({owner}/{repo_name})..."
-            )
-            jobs = github_client.get_workflow_run_jobs(
-                owner=owner, repo=repo_name, run_id=run_id
-            )
+        jobs = github_client.get_workflow_run_jobs(
+            owner=owner, repo=repo_name, run_id=run_id
+        )
 
-            # リポジトリ情報を各jobに追加
-            for job in jobs:
-                job["_repository_owner"] = owner
-                job["_repository_name"] = repo_name
+        # リポジトリ情報を各jobに追加
+        for job in jobs:
+            job["_repository_owner"] = owner
+            job["_repository_name"] = repo_name
 
-            all_jobs.extend(jobs)
-            logger.info(f"Fetched {len(jobs)} jobs from workflow run {run_id}")
+        return jobs
 
-        except Exception as e:
-            # 特定のrunでエラーが発生しても、他のrunの処理は継続
-            logger.error(
-                f"Failed to fetch jobs for workflow run {run_id} "
-                f"({owner}/{repo_name}): {e}"
-            )
-            continue
+    all_jobs = _process_items_with_error_handling(
+        items=workflow_runs,
+        process_func=process_workflow_run,
+        item_descriptor=lambda r: f"workflow run {r['id']} ({r['_repository_owner']}/{r['_repository_name']})",
+        operation_name="Fetching jobs",
+    )
 
     logger.info(f"Total jobs fetched: {len(all_jobs)}")
 

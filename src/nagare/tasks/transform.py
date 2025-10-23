@@ -2,13 +2,65 @@
 
 import logging
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 from airflow.models import TaskInstance
 
 from nagare.utils.xcom_utils import check_xcom_size
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
+
+
+def _transform_items_with_error_handling(
+    items: list[T],
+    transform_func: Callable[[T], dict[str, Any]],
+    item_descriptor: Callable[[T], str],
+    item_type: str,
+) -> list[dict[str, Any]]:
+    """各アイテムを変換し、エラーハンドリングを行う共通ヘルパー
+
+    Args:
+        items: 変換対象のアイテムリスト
+        transform_func: 各アイテムを変換する関数
+        item_descriptor: アイテムを説明する文字列を返す関数
+        item_type: アイテムの種類（ログ用）
+
+    Returns:
+        変換結果のリスト
+    """
+    results: list[dict[str, Any]] = []
+
+    for item in items:
+        item_desc = item_descriptor(item)
+        try:
+            transformed = transform_func(item)
+            results.append(transformed)
+        except KeyError as e:
+            # 必須フィールドの欠落
+            logger.error(
+                f"Missing required field in {item_type} {item_desc}: {e}. "
+                f"Available keys: {list(item.keys())}"
+            )
+            continue
+        except (ValueError, TypeError) as e:
+            # データ型や値の変換エラー
+            logger.error(
+                f"Data conversion error in {item_type} {item_desc}: "
+                f"{type(e).__name__}: {e}"
+            )
+            continue
+        except Exception as e:
+            # その他の予期しないエラー
+            logger.error(
+                f"Unexpected error transforming {item_type} {item_desc}: "
+                f"{type(e).__name__}: {e}",
+                exc_info=True,
+            )
+            continue
+
+    return results
 
 
 def transform_data(**context: Any) -> None:
@@ -26,38 +78,34 @@ def transform_data(**context: Any) -> None:
         task_ids="fetch_workflow_runs", key="workflow_runs"
     )
 
-    transformed_runs: list[dict[str, Any]] = []
-
     if workflow_runs:
-        for run in workflow_runs:
-            try:
-                transformed_run = _transform_workflow_run(run)
-                transformed_runs.append(transformed_run)
-            except Exception as e:
-                logger.error(f"Failed to transform workflow run {run.get('id')}: {e}")
-                continue
+        transformed_runs = _transform_items_with_error_handling(
+            items=workflow_runs,
+            transform_func=_transform_workflow_run,
+            item_descriptor=lambda r: f"{r.get('id', 'unknown')}",
+            item_type="workflow run",
+        )
         logger.info(f"Transformed {len(transformed_runs)} workflow runs")
     else:
         logger.warning("No workflow runs to transform")
+        transformed_runs = []
 
     # ジョブデータの変換
     workflow_run_jobs: list[dict[str, Any]] = ti.xcom_pull(
         task_ids="fetch_workflow_run_jobs", key="workflow_run_jobs"
     )
 
-    transformed_jobs: list[dict[str, Any]] = []
-
     if workflow_run_jobs:
-        for job in workflow_run_jobs:
-            try:
-                transformed_job = _transform_workflow_run_job(job)
-                transformed_jobs.append(transformed_job)
-            except Exception as e:
-                logger.error(f"Failed to transform job {job.get('id')}: {e}")
-                continue
+        transformed_jobs = _transform_items_with_error_handling(
+            items=workflow_run_jobs,
+            transform_func=_transform_workflow_run_job,
+            item_descriptor=lambda j: f"{j.get('id', 'unknown')}",
+            item_type="job",
+        )
         logger.info(f"Transformed {len(transformed_jobs)} jobs")
     else:
         logger.warning("No jobs to transform")
+        transformed_jobs = []
 
     # XComサイズチェック
     check_xcom_size(transformed_runs, "transformed_runs")
