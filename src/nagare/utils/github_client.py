@@ -486,35 +486,44 @@ class GitHubClient:
                 raise GithubException(e.status, e.data, e.headers) from e
 
     def get_organization_repositories(
-        self, org_name: str, max_results: int = 100
-    ) -> list[dict[str, Any]]:
-        """組織のリポジトリ一覧を取得する
+        self, org_name: str, page: int = 1, per_page: int = 30
+    ) -> dict[str, Any]:
+        """組織のリポジトリ一覧を取得する（ページング対応）
 
         Args:
             org_name: 組織名
-            max_results: 取得する最大件数（デフォルト: 100）
+            page: ページ番号（1から開始）
+            per_page: 1ページあたりの件数（デフォルト: 30、最大: 100）
 
         Returns:
-            リポジトリ情報のリスト（辞書形式）
+            辞書形式:
+            - repos: リポジトリ情報のリスト
+            - page: 現在のページ番号
+            - per_page: 1ページあたりの件数
+            - has_next: 次のページがあるか
 
         Raises:
             GithubException: GitHub API呼び出しエラー
-            ValueError: max_resultsが不正な値の場合
+            ValueError: pageまたはper_pageが不正な値の場合
         """
-        if max_results <= 0:
-            raise ValueError(f"max_results must be positive, got: {max_results}")
+        if page < 1:
+            raise ValueError(f"page must be >= 1, got: {page}")
+        if per_page < 1 or per_page > 100:
+            raise ValueError(f"per_page must be between 1 and 100, got: {per_page}")
 
         try:
             org = self.github.get_organization(org_name)
-            repos = org.get_repos()
+            repos_paginated = org.get_repos()
 
+            # ページング処理: PyGithubのPaginatedListを使用
             all_repos: list[dict[str, Any]] = []
+            start_idx = (page - 1) * per_page
+            end_idx = start_idx + per_page
 
-            for i, repo in enumerate(repos):
-                if i >= max_results:
-                    logger.warning(
-                        f"Reached max_results limit ({max_results}) for org {org_name}"
-                    )
+            for i, repo in enumerate(repos_paginated):
+                if i < start_idx:
+                    continue
+                if i >= end_idx:
                     break
 
                 repo_dict = {
@@ -530,12 +539,32 @@ class GitHubClient:
                     "updated_at": (
                         repo.updated_at.isoformat() if repo.updated_at else None
                     ),
-                    "has_actions": True,  # GitHub Actionsは全リポジトリで利用可能
+                    "has_actions": True,
                 }
                 all_repos.append(repo_dict)
 
-            logger.info(f"Fetched {len(all_repos)} repositories for org {org_name}")
-            return all_repos
+            # 次のページがあるかチェック
+            has_next = False
+            try:
+                # 次のページの最初のアイテムを確認
+                for i, _ in enumerate(repos_paginated):
+                    if i == end_idx:
+                        has_next = True
+                        break
+            except StopIteration:
+                has_next = False
+
+            logger.info(
+                f"Fetched {len(all_repos)} repositories for org {org_name} "
+                f"(page {page}, per_page {per_page})"
+            )
+
+            return {
+                "repos": all_repos,
+                "page": page,
+                "per_page": per_page,
+                "has_next": has_next,
+            }
 
         except GithubException as e:
             error_msg = f"Failed to fetch repositories for organization '{org_name}': HTTP {e.status}"
@@ -545,35 +574,44 @@ class GitHubClient:
             raise GithubException(e.status, e.data, e.headers) from e
 
     def get_user_repositories(
-        self, username: str, max_results: int = 100
-    ) -> list[dict[str, Any]]:
-        """ユーザーのリポジトリ一覧を取得する
+        self, username: str, page: int = 1, per_page: int = 30
+    ) -> dict[str, Any]:
+        """ユーザーのリポジトリ一覧を取得する（ページング対応）
 
         Args:
             username: ユーザー名
-            max_results: 取得する最大件数（デフォルト: 100）
+            page: ページ番号（1から開始）
+            per_page: 1ページあたりの件数（デフォルト: 30、最大: 100）
 
         Returns:
-            リポジトリ情報のリスト（辞書形式）
+            辞書形式:
+            - repos: リポジトリ情報のリスト
+            - page: 現在のページ番号
+            - per_page: 1ページあたりの件数
+            - has_next: 次のページがあるか
 
         Raises:
             GithubException: GitHub API呼び出しエラー
-            ValueError: max_resultsが不正な値の場合
+            ValueError: pageまたはper_pageが不正な値の場合
         """
-        if max_results <= 0:
-            raise ValueError(f"max_results must be positive, got: {max_results}")
+        if page < 1:
+            raise ValueError(f"page must be >= 1, got: {page}")
+        if per_page < 1 or per_page > 100:
+            raise ValueError(f"per_page must be between 1 and 100, got: {per_page}")
 
         try:
             user = self.github.get_user(username)
-            repos = user.get_repos()
+            repos_paginated = user.get_repos()
 
+            # ページング処理
             all_repos: list[dict[str, Any]] = []
+            start_idx = (page - 1) * per_page
+            end_idx = start_idx + per_page
 
-            for i, repo in enumerate(repos):
-                if i >= max_results:
-                    logger.warning(
-                        f"Reached max_results limit ({max_results}) for user {username}"
-                    )
+            for i, repo in enumerate(repos_paginated):
+                if i < start_idx:
+                    continue
+                if i >= end_idx:
                     break
 
                 repo_dict = {
@@ -593,8 +631,27 @@ class GitHubClient:
                 }
                 all_repos.append(repo_dict)
 
-            logger.info(f"Fetched {len(all_repos)} repositories for user {username}")
-            return all_repos
+            # 次のページがあるかチェック
+            has_next = False
+            try:
+                for i, _ in enumerate(repos_paginated):
+                    if i == end_idx:
+                        has_next = True
+                        break
+            except StopIteration:
+                has_next = False
+
+            logger.info(
+                f"Fetched {len(all_repos)} repositories for user {username} "
+                f"(page {page}, per_page {per_page})"
+            )
+
+            return {
+                "repos": all_repos,
+                "page": page,
+                "per_page": per_page,
+                "has_next": has_next,
+            }
 
         except GithubException as e:
             error_msg = f"Failed to fetch repositories for user '{username}': HTTP {e.status}"
@@ -604,32 +661,47 @@ class GitHubClient:
             raise GithubException(e.status, e.data, e.headers) from e
 
     def search_repositories(
-        self, query: str, max_results: int = 30
-    ) -> list[dict[str, Any]]:
-        """リポジトリを検索する
+        self, query: str, page: int = 1, per_page: int = 30
+    ) -> dict[str, Any]:
+        """リポジトリを検索する（ページング対応）
 
         Args:
             query: 検索クエリ（例: "org:myorg", "user:username", "language:python"）
-            max_results: 取得する最大件数（デフォルト: 30）
+            page: ページ番号（1から開始）
+            per_page: 1ページあたりの件数（デフォルト: 30、最大: 100）
 
         Returns:
-            リポジトリ情報のリスト（辞書形式）
+            辞書形式:
+            - repos: リポジトリ情報のリスト
+            - page: 現在のページ番号
+            - per_page: 1ページあたりの件数
+            - total_count: 検索結果総数（GitHub APIから取得）
+            - has_next: 次のページがあるか
 
         Raises:
             GithubException: GitHub API呼び出しエラー
-            ValueError: max_resultsが不正な値の場合
+            ValueError: pageまたはper_pageが不正な値の場合
         """
-        if max_results <= 0:
-            raise ValueError(f"max_results must be positive, got: {max_results}")
+        if page < 1:
+            raise ValueError(f"page must be >= 1, got: {page}")
+        if per_page < 1 or per_page > 100:
+            raise ValueError(f"per_page must be between 1 and 100, got: {per_page}")
 
         try:
-            repos = self.github.search_repositories(query=query)
+            repos_paginated = self.github.search_repositories(query=query)
 
+            # 総数を取得（GitHubの検索APIは総数を提供）
+            total_count = repos_paginated.totalCount
+
+            # ページング処理
             all_repos: list[dict[str, Any]] = []
+            start_idx = (page - 1) * per_page
+            end_idx = start_idx + per_page
 
-            for i, repo in enumerate(repos):
-                if i >= max_results:
-                    logger.warning(f"Reached max_results limit ({max_results}) for search")
+            for i, repo in enumerate(repos_paginated):
+                if i < start_idx:
+                    continue
+                if i >= end_idx:
                     break
 
                 repo_dict = {
@@ -649,8 +721,22 @@ class GitHubClient:
                 }
                 all_repos.append(repo_dict)
 
-            logger.info(f"Found {len(all_repos)} repositories for query: {query}")
-            return all_repos
+            # 次のページがあるかチェック
+            has_next = (page * per_page) < total_count
+
+            logger.info(
+                f"Found {len(all_repos)} repositories for query '{query}' "
+                f"(page {page}/{(total_count + per_page - 1) // per_page}, "
+                f"total: {total_count})"
+            )
+
+            return {
+                "repos": all_repos,
+                "page": page,
+                "per_page": per_page,
+                "total_count": total_count,
+                "has_next": has_next,
+            }
 
         except GithubException as e:
             error_msg = f"Failed to search repositories with query '{query}': HTTP {e.status}"

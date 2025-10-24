@@ -50,15 +50,24 @@ def get_github_client():
         return None
 
 
-def fetch_github_repositories(search_type: str, search_value: str):
-    """GitHubからリポジトリを取得する
+def fetch_github_repositories(
+    search_type: str, search_value: str, page: int = 1, per_page: int = 30
+):
+    """GitHubからリポジトリを取得する（ページング対応）
 
     Args:
         search_type: "organization", "user", "search"のいずれか
         search_value: 組織名、ユーザー名、または検索クエリ
+        page: ページ番号（1から開始）
+        per_page: 1ページあたりの件数
 
     Returns:
-        リポジトリ情報のリスト、またはエラー時はNone
+        辞書形式の検索結果、またはエラー時はNone
+        - repos: リポジトリリスト
+        - page: ページ番号
+        - per_page: 1ページあたりの件数
+        - has_next: 次のページがあるか
+        - total_count: 総数（search_repositoriesのみ）
     """
     github_client = get_github_client()
     if not github_client:
@@ -66,16 +75,22 @@ def fetch_github_repositories(search_type: str, search_value: str):
 
     try:
         if search_type == "organization":
-            repos = github_client.get_organization_repositories(search_value, max_results=100)
+            result = github_client.get_organization_repositories(
+                search_value, page=page, per_page=per_page
+            )
         elif search_type == "user":
-            repos = github_client.get_user_repositories(search_value, max_results=100)
+            result = github_client.get_user_repositories(
+                search_value, page=page, per_page=per_page
+            )
         elif search_type == "search":
-            repos = github_client.search_repositories(search_value, max_results=50)
+            result = github_client.search_repositories(
+                search_value, page=page, per_page=per_page
+            )
         else:
             st.error(f"不正な検索タイプ: {search_type}")
             return None
 
-        return repos
+        return result
     except GithubException as e:
         st.error(f"GitHub APIエラー: {e}")
         return None
@@ -390,16 +405,35 @@ elif page == "📦 リポジトリ管理":
     with st.expander("🔍 GitHubから検索して追加", expanded=False):
         st.markdown("**GitHub APIからリポジトリを検索**")
 
-        search_type = st.radio(
-            "検索方法",
-            ["organization", "user", "search"],
-            format_func=lambda x: {
-                "organization": "組織名で検索",
-                "user": "ユーザー名で検索",
-                "search": "キーワード検索"
-            }[x],
-            horizontal=True
-        )
+        # ページング用のセッションステート初期化
+        if "gh_search_page" not in st.session_state:
+            st.session_state.gh_search_page = 1
+        if "gh_search_result" not in st.session_state:
+            st.session_state.gh_search_result = None
+        if "gh_search_params" not in st.session_state:
+            st.session_state.gh_search_params = {}
+
+        # 検索条件
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            search_type = st.radio(
+                "検索方法",
+                ["organization", "user", "search"],
+                format_func=lambda x: {
+                    "organization": "組織名で検索",
+                    "user": "ユーザー名で検索",
+                    "search": "キーワード検索"
+                }[x],
+                horizontal=True,
+                key="search_type_radio"
+            )
+        with col2:
+            per_page = st.selectbox(
+                "表示件数",
+                options=[10, 20, 30, 50],
+                index=2,
+                key="per_page_select"
+            )
 
         if search_type in ["organization", "user"]:
             search_value = st.text_input(
@@ -417,13 +451,35 @@ elif page == "📦 リポジトリ管理":
 
         search_button = st.button("検索", type="primary", key="search_github")
 
+        # 新規検索の場合
         if search_button and search_value:
+            st.session_state.gh_search_page = 1
+            st.session_state.gh_search_params = {
+                "search_type": search_type,
+                "search_value": search_value,
+                "per_page": per_page
+            }
             with st.spinner("GitHubから取得中..."):
-                repos = fetch_github_repositories(search_type, search_value)
+                result = fetch_github_repositories(
+                    search_type, search_value, page=1, per_page=per_page
+                )
+                st.session_state.gh_search_result = result
+
+        # 検索結果表示
+        result = st.session_state.gh_search_result
+        if result and "repos" in result:
+            repos = result["repos"]
+            current_page = result["page"]
+            has_next = result["has_next"]
+            total_count = result.get("total_count")
+
+            # ヘッダー情報
+            if total_count is not None:
+                st.success(f"検索結果: 全{total_count}件 （ページ {current_page}）")
+            else:
+                st.success(f"{len(repos)}件のリポジトリが見つかりました （ページ {current_page}）")
 
             if repos:
-                st.success(f"{len(repos)}件のリポジトリが見つかりました")
-
                 # リポジトリ選択用のセッションステート
                 if "selected_repos" not in st.session_state:
                     st.session_state.selected_repos = set()
@@ -435,7 +491,7 @@ elif page == "📦 リポジトリ管理":
                     with col1:
                         is_selected = st.checkbox(
                             "選択",
-                            key=f"select_{repo['full_name']}",
+                            key=f"select_{repo['full_name']}_{current_page}",
                             label_visibility="collapsed"
                         )
                         if is_selected:
@@ -461,7 +517,7 @@ elif page == "📦 リポジトリ管理":
                             st.caption(" • ".join(meta_info))
 
                     with col3:
-                        if st.button("追加", key=f"add_{repo['full_name']}"):
+                        if st.button("追加", key=f"add_{repo['full_name']}_{current_page}"):
                             try:
                                 success, message = add_repository(repo['full_name'], "github_actions")
                                 if success:
@@ -474,10 +530,46 @@ elif page == "📦 リポジトリ管理":
 
                     st.divider()
 
+                # ページングボタン
+                col1, col2, col3 = st.columns([1, 2, 1])
+                with col1:
+                    if current_page > 1:
+                        if st.button("⬅️ 前のページ", key="prev_page"):
+                            params = st.session_state.gh_search_params
+                            st.session_state.gh_search_page = current_page - 1
+                            with st.spinner("読み込み中..."):
+                                result = fetch_github_repositories(
+                                    params["search_type"],
+                                    params["search_value"],
+                                    page=current_page - 1,
+                                    per_page=params["per_page"]
+                                )
+                                st.session_state.gh_search_result = result
+                            st.rerun()
+
+                with col2:
+                    st.markdown(f"<center>ページ {current_page}</center>", unsafe_allow_html=True)
+
+                with col3:
+                    if has_next:
+                        if st.button("次のページ ➡️", key="next_page"):
+                            params = st.session_state.gh_search_params
+                            st.session_state.gh_search_page = current_page + 1
+                            with st.spinner("読み込み中..."):
+                                result = fetch_github_repositories(
+                                    params["search_type"],
+                                    params["search_value"],
+                                    page=current_page + 1,
+                                    per_page=params["per_page"]
+                                )
+                                st.session_state.gh_search_result = result
+                            st.rerun()
+
                 # 一括追加ボタン
                 if st.session_state.selected_repos:
+                    st.divider()
                     st.markdown(f"**選択中: {len(st.session_state.selected_repos)}件**")
-                    if st.button("選択したリポジトリを一括追加", type="primary"):
+                    if st.button("選択したリポジトリを一括追加", type="primary", key="batch_add"):
                         success_count = 0
                         error_count = 0
                         for repo_name in st.session_state.selected_repos:
@@ -493,12 +585,14 @@ elif page == "📦 リポジトリ管理":
                         if success_count > 0:
                             st.success(f"{success_count}件のリポジトリを追加しました")
                         if error_count > 0:
-                            st.warning(f"{error_count}件のリポジトリは追加できませんでした（既存または エラー）")
+                            st.warning(f"{error_count}件のリポジトリは追加できませんでした（既存またはエラー）")
 
                         st.session_state.selected_repos.clear()
                         st.rerun()
-            elif repos is not None:
-                st.info("リポジトリが見つかりませんでした")
+            else:
+                st.info("このページにリポジトリがありません")
+        elif result is not None:
+            st.info("リポジトリが見つかりませんでした")
 
     st.divider()
 
