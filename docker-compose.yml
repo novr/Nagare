@@ -193,11 +193,17 @@ services:
     ports:
       - "${STREAMLIT_PORT:-8501}:8501"
     environment:
+      # データベース接続
       DATABASE_HOST: postgres
       DATABASE_PORT: 5432
       DATABASE_NAME: ${DATABASE_NAME:-nagare}
       DATABASE_USER: ${DATABASE_USER:-nagare_user}
       DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+      # GitHub認証情報（リポジトリ検索用）
+      GITHUB_APP_ID: ${GITHUB_APP_ID}
+      GITHUB_APP_INSTALLATION_ID: ${GITHUB_APP_INSTALLATION_ID}
+      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY}
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
     depends_on:
       postgres:
         condition: service_healthy

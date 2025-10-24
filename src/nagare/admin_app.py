@@ -12,7 +12,10 @@ from datetime import datetime
 
 import pandas as pd
 import streamlit as st
+from github import GithubException
 from sqlalchemy import create_engine, text
+
+from nagare.utils.github_client import GitHubClient
 
 # ページ設定
 st.set_page_config(
@@ -34,6 +37,51 @@ def get_database_engine():
 
     db_url = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
     return create_engine(db_url, pool_pre_ping=True)
+
+
+@st.cache_resource
+def get_github_client():
+    """GitHubクライアントを取得する"""
+    try:
+        return GitHubClient()
+    except ValueError as e:
+        st.error(f"GitHub認証エラー: {e}")
+        st.info("GitHub API機能を使用するには、環境変数を設定してください。")
+        return None
+
+
+def fetch_github_repositories(search_type: str, search_value: str):
+    """GitHubからリポジトリを取得する
+
+    Args:
+        search_type: "organization", "user", "search"のいずれか
+        search_value: 組織名、ユーザー名、または検索クエリ
+
+    Returns:
+        リポジトリ情報のリスト、またはエラー時はNone
+    """
+    github_client = get_github_client()
+    if not github_client:
+        return None
+
+    try:
+        if search_type == "organization":
+            repos = github_client.get_organization_repositories(search_value, max_results=100)
+        elif search_type == "user":
+            repos = github_client.get_user_repositories(search_value, max_results=100)
+        elif search_type == "search":
+            repos = github_client.search_repositories(search_value, max_results=50)
+        else:
+            st.error(f"不正な検索タイプ: {search_type}")
+            return None
+
+        return repos
+    except GithubException as e:
+        st.error(f"GitHub APIエラー: {e}")
+        return None
+    except Exception as e:
+        st.error(f"予期しないエラー: {e}")
+        return None
 
 
 def get_repositories():
@@ -309,8 +357,8 @@ if page == "📊 ダッシュボード":
 elif page == "📦 リポジトリ管理":
     st.header("📦 リポジトリ管理")
 
-    # リポジトリ追加フォーム
-    with st.expander("➕ リポジトリを追加", expanded=False):
+    # リポジトリ追加フォーム（手動入力）
+    with st.expander("➕ リポジトリを手動で追加", expanded=False):
         with st.form("add_repository_form"):
             col1, col2 = st.columns([3, 1])
             with col1:
@@ -337,6 +385,120 @@ elif page == "📦 リポジトリ管理":
                         st.error(f"追加エラー: {e}")
                 else:
                     st.error("リポジトリ名を 'owner/repo' 形式で入力してください")
+
+    # GitHubから検索して追加
+    with st.expander("🔍 GitHubから検索して追加", expanded=False):
+        st.markdown("**GitHub APIからリポジトリを検索**")
+
+        search_type = st.radio(
+            "検索方法",
+            ["organization", "user", "search"],
+            format_func=lambda x: {
+                "organization": "組織名で検索",
+                "user": "ユーザー名で検索",
+                "search": "キーワード検索"
+            }[x],
+            horizontal=True
+        )
+
+        if search_type in ["organization", "user"]:
+            search_value = st.text_input(
+                f"{search_type.capitalize()}名を入力",
+                placeholder="organization-name" if search_type == "organization" else "username",
+                key=f"{search_type}_input"
+            )
+        else:
+            search_value = st.text_input(
+                "検索クエリ",
+                placeholder="例: org:myorg language:python",
+                help="GitHub検索構文を使用できます",
+                key="search_input"
+            )
+
+        search_button = st.button("検索", type="primary", key="search_github")
+
+        if search_button and search_value:
+            with st.spinner("GitHubから取得中..."):
+                repos = fetch_github_repositories(search_type, search_value)
+
+            if repos:
+                st.success(f"{len(repos)}件のリポジトリが見つかりました")
+
+                # リポジトリ選択用のセッションステート
+                if "selected_repos" not in st.session_state:
+                    st.session_state.selected_repos = set()
+
+                # リポジトリ一覧表示
+                for repo in repos:
+                    col1, col2, col3 = st.columns([1, 6, 2])
+
+                    with col1:
+                        is_selected = st.checkbox(
+                            "選択",
+                            key=f"select_{repo['full_name']}",
+                            label_visibility="collapsed"
+                        )
+                        if is_selected:
+                            st.session_state.selected_repos.add(repo['full_name'])
+                        elif repo['full_name'] in st.session_state.selected_repos:
+                            st.session_state.selected_repos.remove(repo['full_name'])
+
+                    with col2:
+                        private_badge = "🔒" if repo.get("private") else "🌐"
+                        st.markdown(f"**{private_badge} [{repo['full_name']}]({repo['html_url']})**")
+                        if repo.get("description"):
+                            st.caption(repo["description"])
+
+                        # メタ情報
+                        meta_info = []
+                        if repo.get("language"):
+                            meta_info.append(f"🔤 {repo['language']}")
+                        if repo.get("stargazers_count") is not None:
+                            meta_info.append(f"⭐ {repo['stargazers_count']}")
+                        if repo.get("forks_count") is not None:
+                            meta_info.append(f"🍴 {repo['forks_count']}")
+                        if meta_info:
+                            st.caption(" • ".join(meta_info))
+
+                    with col3:
+                        if st.button("追加", key=f"add_{repo['full_name']}"):
+                            try:
+                                success, message = add_repository(repo['full_name'], "github_actions")
+                                if success:
+                                    st.success(message)
+                                    st.rerun()
+                                else:
+                                    st.warning(message)
+                            except Exception as e:
+                                st.error(f"追加エラー: {e}")
+
+                    st.divider()
+
+                # 一括追加ボタン
+                if st.session_state.selected_repos:
+                    st.markdown(f"**選択中: {len(st.session_state.selected_repos)}件**")
+                    if st.button("選択したリポジトリを一括追加", type="primary"):
+                        success_count = 0
+                        error_count = 0
+                        for repo_name in st.session_state.selected_repos:
+                            try:
+                                success, _ = add_repository(repo_name, "github_actions")
+                                if success:
+                                    success_count += 1
+                                else:
+                                    error_count += 1
+                            except Exception:
+                                error_count += 1
+
+                        if success_count > 0:
+                            st.success(f"{success_count}件のリポジトリを追加しました")
+                        if error_count > 0:
+                            st.warning(f"{error_count}件のリポジトリは追加できませんでした（既存または エラー）")
+
+                        st.session_state.selected_repos.clear()
+                        st.rerun()
+            elif repos is not None:
+                st.info("リポジトリが見つかりませんでした")
 
     st.divider()
 

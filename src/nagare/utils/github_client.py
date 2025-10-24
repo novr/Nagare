@@ -353,6 +353,178 @@ class GitHubClient:
             logger.error(error_msg)
             raise GithubException(e.status, e.data, e.headers) from e
 
+    def get_organization_repositories(
+        self, org_name: str, max_results: int = 100
+    ) -> list[dict[str, Any]]:
+        """組織のリポジトリ一覧を取得する
+
+        Args:
+            org_name: 組織名
+            max_results: 取得する最大件数（デフォルト: 100）
+
+        Returns:
+            リポジトリ情報のリスト（辞書形式）
+
+        Raises:
+            GithubException: GitHub API呼び出しエラー
+            ValueError: max_resultsが不正な値の場合
+        """
+        if max_results <= 0:
+            raise ValueError(f"max_results must be positive, got: {max_results}")
+
+        try:
+            org = self.github.get_organization(org_name)
+            repos = org.get_repos()
+
+            all_repos: list[dict[str, Any]] = []
+
+            for i, repo in enumerate(repos):
+                if i >= max_results:
+                    logger.warning(
+                        f"Reached max_results limit ({max_results}) for org {org_name}"
+                    )
+                    break
+
+                repo_dict = {
+                    "name": repo.name,
+                    "full_name": repo.full_name,
+                    "owner": repo.owner.login,
+                    "description": repo.description,
+                    "private": repo.private,
+                    "html_url": repo.html_url,
+                    "stargazers_count": repo.stargazers_count,
+                    "forks_count": repo.forks_count,
+                    "language": repo.language,
+                    "updated_at": (
+                        repo.updated_at.isoformat() if repo.updated_at else None
+                    ),
+                    "has_actions": True,  # GitHub Actionsは全リポジトリで利用可能
+                }
+                all_repos.append(repo_dict)
+
+            logger.info(f"Fetched {len(all_repos)} repositories for org {org_name}")
+            return all_repos
+
+        except GithubException as e:
+            error_msg = f"Failed to fetch repositories for organization '{org_name}': HTTP {e.status}"
+            if e.status == 404:
+                error_msg = f"Organization '{org_name}' not found or not accessible"
+            logger.error(error_msg)
+            raise GithubException(e.status, e.data, e.headers) from e
+
+    def get_user_repositories(
+        self, username: str, max_results: int = 100
+    ) -> list[dict[str, Any]]:
+        """ユーザーのリポジトリ一覧を取得する
+
+        Args:
+            username: ユーザー名
+            max_results: 取得する最大件数（デフォルト: 100）
+
+        Returns:
+            リポジトリ情報のリスト（辞書形式）
+
+        Raises:
+            GithubException: GitHub API呼び出しエラー
+            ValueError: max_resultsが不正な値の場合
+        """
+        if max_results <= 0:
+            raise ValueError(f"max_results must be positive, got: {max_results}")
+
+        try:
+            user = self.github.get_user(username)
+            repos = user.get_repos()
+
+            all_repos: list[dict[str, Any]] = []
+
+            for i, repo in enumerate(repos):
+                if i >= max_results:
+                    logger.warning(
+                        f"Reached max_results limit ({max_results}) for user {username}"
+                    )
+                    break
+
+                repo_dict = {
+                    "name": repo.name,
+                    "full_name": repo.full_name,
+                    "owner": repo.owner.login,
+                    "description": repo.description,
+                    "private": repo.private,
+                    "html_url": repo.html_url,
+                    "stargazers_count": repo.stargazers_count,
+                    "forks_count": repo.forks_count,
+                    "language": repo.language,
+                    "updated_at": (
+                        repo.updated_at.isoformat() if repo.updated_at else None
+                    ),
+                    "has_actions": True,
+                }
+                all_repos.append(repo_dict)
+
+            logger.info(f"Fetched {len(all_repos)} repositories for user {username}")
+            return all_repos
+
+        except GithubException as e:
+            error_msg = f"Failed to fetch repositories for user '{username}': HTTP {e.status}"
+            if e.status == 404:
+                error_msg = f"User '{username}' not found or not accessible"
+            logger.error(error_msg)
+            raise GithubException(e.status, e.data, e.headers) from e
+
+    def search_repositories(
+        self, query: str, max_results: int = 30
+    ) -> list[dict[str, Any]]:
+        """リポジトリを検索する
+
+        Args:
+            query: 検索クエリ（例: "org:myorg", "user:username", "language:python"）
+            max_results: 取得する最大件数（デフォルト: 30）
+
+        Returns:
+            リポジトリ情報のリスト（辞書形式）
+
+        Raises:
+            GithubException: GitHub API呼び出しエラー
+            ValueError: max_resultsが不正な値の場合
+        """
+        if max_results <= 0:
+            raise ValueError(f"max_results must be positive, got: {max_results}")
+
+        try:
+            repos = self.github.search_repositories(query=query)
+
+            all_repos: list[dict[str, Any]] = []
+
+            for i, repo in enumerate(repos):
+                if i >= max_results:
+                    logger.warning(f"Reached max_results limit ({max_results}) for search")
+                    break
+
+                repo_dict = {
+                    "name": repo.name,
+                    "full_name": repo.full_name,
+                    "owner": repo.owner.login,
+                    "description": repo.description,
+                    "private": repo.private,
+                    "html_url": repo.html_url,
+                    "stargazers_count": repo.stargazers_count,
+                    "forks_count": repo.forks_count,
+                    "language": repo.language,
+                    "updated_at": (
+                        repo.updated_at.isoformat() if repo.updated_at else None
+                    ),
+                    "has_actions": True,
+                }
+                all_repos.append(repo_dict)
+
+            logger.info(f"Found {len(all_repos)} repositories for query: {query}")
+            return all_repos
+
+        except GithubException as e:
+            error_msg = f"Failed to search repositories with query '{query}': HTTP {e.status}"
+            logger.error(error_msg)
+            raise GithubException(e.status, e.data, e.headers) from e
+
     def close(self) -> None:
         """GitHubクライアントをクローズする"""
         self.github.close()
