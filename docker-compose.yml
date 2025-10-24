@@ -182,6 +182,37 @@ services:
       - nagare-network
     restart: unless-stopped
 
+  # Streamlit管理画面
+  streamlit-admin:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nagare-streamlit-admin
+    entrypoint: []
+    command: ["streamlit", "run", "/opt/airflow/src/nagare/admin_app.py", "--server.port", "8501", "--server.address", "0.0.0.0"]
+    ports:
+      - "${STREAMLIT_PORT:-8501}:8501"
+    environment:
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_NAME: ${DATABASE_NAME:-nagare}
+      DATABASE_USER: ${DATABASE_USER:-nagare_user}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./src:/opt/airflow/src:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - nagare-network
+    restart: unless-stopped
+
 volumes:
   postgres_data:
     name: nagare-postgres-data

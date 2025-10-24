@@ -1,0 +1,447 @@
+#!/usr/bin/env python3
+"""Streamlit管理画面
+
+リポジトリの追加・削除・有効化/無効化、データ収集状況の確認を行うWeb UI。
+
+Usage:
+    streamlit run src/nagare/admin_app.py --server.port 8501
+"""
+
+import os
+from datetime import datetime
+
+import pandas as pd
+import streamlit as st
+from sqlalchemy import create_engine, text
+
+# ページ設定
+st.set_page_config(
+    page_title="Nagare 管理画面",
+    page_icon="🌊",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+
+@st.cache_resource
+def get_database_engine():
+    """データベースエンジンを取得する"""
+    db_host = os.getenv("DATABASE_HOST", "localhost")
+    db_port = os.getenv("DATABASE_PORT", "5432")
+    db_name = os.getenv("DATABASE_NAME", "nagare")
+    db_user = os.getenv("DATABASE_USER", "nagare_user")
+    db_password = os.getenv("DATABASE_PASSWORD", "")
+
+    db_url = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+    return create_engine(db_url, pool_pre_ping=True)
+
+
+def get_repositories():
+    """リポジトリ一覧を取得する"""
+    engine = get_database_engine()
+    query = text(
+        """
+        SELECT id, repository_name, source, active, created_at, updated_at
+        FROM repositories
+        ORDER BY active DESC, repository_name
+        """
+    )
+    with engine.connect() as conn:
+        result = conn.execute(query)
+        rows = result.fetchall()
+        if rows:
+            return pd.DataFrame(
+                rows,
+                columns=["ID", "リポジトリ名", "ソース", "有効", "作成日時", "更新日時"],
+            )
+        return pd.DataFrame(
+            columns=["ID", "リポジトリ名", "ソース", "有効", "作成日時", "更新日時"]
+        )
+
+
+def add_repository(repo_name: str, source: str = "github_actions"):
+    """リポジトリを追加する"""
+    engine = get_database_engine()
+    source_repo_id = repo_name.replace("/", "_")
+
+    with engine.begin() as conn:
+        # 既存チェック
+        result = conn.execute(
+            text(
+                """
+                SELECT id, active FROM repositories
+                WHERE repository_name = :repo_name AND source = :source
+                """
+            ),
+            {"repo_name": repo_name, "source": source},
+        )
+        existing = result.fetchone()
+
+        if existing:
+            if existing.active:
+                return False, f"リポジトリ '{repo_name}' は既に登録されています"
+            else:
+                # 無効状態のリポジトリを有効化
+                conn.execute(
+                    text(
+                        """
+                        UPDATE repositories
+                        SET active = TRUE, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = :id
+                        """
+                    ),
+                    {"id": existing.id},
+                )
+                return True, f"リポジトリ '{repo_name}' を有効化しました (ID: {existing.id})"
+
+        # 新規追加
+        result = conn.execute(
+            text(
+                """
+                INSERT INTO repositories (source_repository_id, source, repository_name, active)
+                VALUES (:source_repo_id, :source, :repo_name, TRUE)
+                RETURNING id
+                """
+            ),
+            {
+                "source_repo_id": source_repo_id,
+                "source": source,
+                "repo_name": repo_name,
+            },
+        )
+        repo_id = result.fetchone()[0]
+        return True, f"リポジトリ '{repo_name}' を追加しました (ID: {repo_id})"
+
+
+def toggle_repository(repo_id: int, active: bool):
+    """リポジトリの有効/無効を切り替える"""
+    engine = get_database_engine()
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                UPDATE repositories
+                SET active = :active, updated_at = CURRENT_TIMESTAMP
+                WHERE id = :id
+                """
+            ),
+            {"id": repo_id, "active": active},
+        )
+    status = "有効化" if active else "無効化"
+    return True, f"リポジトリ (ID: {repo_id}) を{status}しました"
+
+
+def get_statistics():
+    """統計情報を取得する"""
+    engine = get_database_engine()
+
+    with engine.connect() as conn:
+        # リポジトリ統計
+        result = conn.execute(
+            text(
+                """
+                SELECT
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE active = TRUE) as active_count,
+                    COUNT(*) FILTER (WHERE active = FALSE) as inactive_count
+                FROM repositories
+                """
+            )
+        )
+        repo_stats = result.fetchone()
+
+        # パイプライン実行統計（直近24時間）
+        result = conn.execute(
+            text(
+                """
+                SELECT
+                    COUNT(*) as total_runs,
+                    COUNT(*) FILTER (WHERE status = 'success') as success_count,
+                    COUNT(*) FILTER (WHERE status = 'failure') as failure_count,
+                    AVG(duration_ms) as avg_duration
+                FROM pipeline_runs
+                WHERE started_at >= NOW() - INTERVAL '24 hours'
+                """
+            )
+        )
+        pipeline_stats = result.fetchone()
+
+        return {
+            "repositories": {
+                "total": repo_stats.total if repo_stats else 0,
+                "active": repo_stats.active_count if repo_stats else 0,
+                "inactive": repo_stats.inactive_count if repo_stats else 0,
+            },
+            "pipeline_runs": {
+                "total": pipeline_stats.total_runs if pipeline_stats else 0,
+                "success": pipeline_stats.success_count if pipeline_stats else 0,
+                "failure": pipeline_stats.failure_count if pipeline_stats else 0,
+                "avg_duration_sec": (
+                    float(pipeline_stats.avg_duration) / 1000
+                    if pipeline_stats and pipeline_stats.avg_duration
+                    else 0
+                ),
+            },
+        }
+
+
+def get_recent_pipeline_runs(limit: int = 10):
+    """最近のパイプライン実行履歴を取得する"""
+    engine = get_database_engine()
+    query = text(
+        """
+        SELECT
+            pr.id,
+            r.repository_name,
+            pr.pipeline_name,
+            pr.status,
+            pr.started_at,
+            pr.duration_ms
+        FROM pipeline_runs pr
+        JOIN repositories r ON pr.repository_id = r.id
+        ORDER BY pr.started_at DESC
+        LIMIT :limit
+        """
+    )
+    with engine.connect() as conn:
+        result = conn.execute(query, {"limit": limit})
+        rows = result.fetchall()
+        if rows:
+            return pd.DataFrame(
+                rows,
+                columns=[
+                    "ID",
+                    "リポジトリ",
+                    "パイプライン名",
+                    "ステータス",
+                    "開始時刻",
+                    "実行時間(ms)",
+                ],
+            )
+        return pd.DataFrame(
+            columns=[
+                "ID",
+                "リポジトリ",
+                "パイプライン名",
+                "ステータス",
+                "開始時刻",
+                "実行時間(ms)",
+            ]
+        )
+
+
+# メインUI
+st.title("🌊 Nagare 管理画面")
+st.markdown("CI/CD監視システムの管理インターフェース")
+
+# サイドバー
+with st.sidebar:
+    st.header("ナビゲーション")
+    page = st.radio(
+        "ページ選択",
+        ["📊 ダッシュボード", "📦 リポジトリ管理", "📈 実行履歴"],
+        label_visibility="collapsed",
+    )
+
+    st.divider()
+    st.caption("Powered by Streamlit")
+
+# ダッシュボード
+if page == "📊 ダッシュボード":
+    st.header("📊 ダッシュボード")
+
+    try:
+        stats = get_statistics()
+
+        # メトリクス表示
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.metric(
+                "登録リポジトリ",
+                stats["repositories"]["total"],
+                delta=f"有効: {stats['repositories']['active']}",
+            )
+
+        with col2:
+            st.metric(
+                "パイプライン実行（24h）",
+                stats["pipeline_runs"]["total"],
+                delta=f"成功: {stats['pipeline_runs']['success']}",
+            )
+
+        with col3:
+            avg_duration = stats["pipeline_runs"]["avg_duration_sec"]
+            st.metric(
+                "平均実行時間（24h）",
+                f"{avg_duration:.1f}秒" if avg_duration > 0 else "N/A",
+            )
+
+        st.divider()
+
+        # 最近の実行履歴
+        st.subheader("最近のパイプライン実行")
+        recent_runs = get_recent_pipeline_runs(20)
+
+        if not recent_runs.empty:
+            # ステータスに色を付ける
+            def highlight_status(row):
+                if row["ステータス"] == "success":
+                    return ["background-color: #d4edda"] * len(row)
+                elif row["ステータス"] == "failure":
+                    return ["background-color: #f8d7da"] * len(row)
+                else:
+                    return [""] * len(row)
+
+            st.dataframe(
+                recent_runs.style.apply(highlight_status, axis=1),
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.info("まだパイプライン実行履歴がありません")
+
+    except Exception as e:
+        st.error(f"データ取得エラー: {e}")
+
+# リポジトリ管理
+elif page == "📦 リポジトリ管理":
+    st.header("📦 リポジトリ管理")
+
+    # リポジトリ追加フォーム
+    with st.expander("➕ リポジトリを追加", expanded=False):
+        with st.form("add_repository_form"):
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                new_repo = st.text_input(
+                    "リポジトリ名",
+                    placeholder="owner/repo",
+                    help="GitHub リポジトリを 'owner/repo' 形式で入力",
+                )
+            with col2:
+                source = st.selectbox("ソース", ["github_actions"], disabled=True)
+
+            submitted = st.form_submit_button("追加", type="primary")
+
+            if submitted:
+                if new_repo and "/" in new_repo:
+                    try:
+                        success, message = add_repository(new_repo, source)
+                        if success:
+                            st.success(message)
+                            st.rerun()
+                        else:
+                            st.warning(message)
+                    except Exception as e:
+                        st.error(f"追加エラー: {e}")
+                else:
+                    st.error("リポジトリ名を 'owner/repo' 形式で入力してください")
+
+    st.divider()
+
+    # リポジトリ一覧
+    st.subheader("登録済みリポジトリ")
+
+    try:
+        repos_df = get_repositories()
+
+        if not repos_df.empty:
+            # フィルタ
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                status_filter = st.selectbox(
+                    "ステータスフィルタ", ["すべて", "有効のみ", "無効のみ"]
+                )
+
+            if status_filter == "有効のみ":
+                repos_df = repos_df[repos_df["有効"] == True]
+            elif status_filter == "無効のみ":
+                repos_df = repos_df[repos_df["有効"] == False]
+
+            st.caption(f"全{len(repos_df)}件")
+
+            # リポジトリ一覧表示と操作
+            for idx, row in repos_df.iterrows():
+                with st.container():
+                    col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
+
+                    with col1:
+                        status_icon = "✅" if row["有効"] else "⚪"
+                        st.markdown(f"**{status_icon} {row['リポジトリ名']}**")
+                        st.caption(f"ID: {row['ID']} | ソース: {row['ソース']}")
+
+                    with col2:
+                        st.caption(f"作成: {row['作成日時'].strftime('%Y-%m-%d %H:%M')}")
+
+                    with col3:
+                        st.caption(f"更新: {row['更新日時'].strftime('%Y-%m-%d %H:%M')}")
+
+                    with col4:
+                        if row["有効"]:
+                            if st.button("無効化", key=f"disable_{row['ID']}"):
+                                try:
+                                    success, message = toggle_repository(
+                                        row["ID"], False
+                                    )
+                                    st.success(message)
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"エラー: {e}")
+                        else:
+                            if st.button("有効化", key=f"enable_{row['ID']}"):
+                                try:
+                                    success, message = toggle_repository(row["ID"], True)
+                                    st.success(message)
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"エラー: {e}")
+
+                    st.divider()
+        else:
+            st.info("登録されているリポジトリがありません。上のフォームから追加してください。")
+
+    except Exception as e:
+        st.error(f"リポジトリ取得エラー: {e}")
+
+# 実行履歴
+elif page == "📈 実行履歴":
+    st.header("📈 パイプライン実行履歴")
+
+    try:
+        # 表示件数選択
+        limit = st.slider("表示件数", min_value=10, max_value=100, value=50, step=10)
+
+        runs_df = get_recent_pipeline_runs(limit)
+
+        if not runs_df.empty:
+            # ステータスフィルタ
+            status_filter = st.multiselect(
+                "ステータスフィルタ",
+                options=runs_df["ステータス"].unique(),
+                default=runs_df["ステータス"].unique(),
+            )
+
+            filtered_df = runs_df[runs_df["ステータス"].isin(status_filter)]
+
+            st.caption(f"全{len(filtered_df)}件（フィルタ後）")
+
+            # データ表示
+            def color_status(val):
+                if val == "success":
+                    return "background-color: #d4edda"
+                elif val == "failure":
+                    return "background-color: #f8d7da"
+                else:
+                    return ""
+
+            st.dataframe(
+                filtered_df.style.applymap(color_status, subset=["ステータス"]),
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.info("実行履歴がありません")
+
+    except Exception as e:
+        st.error(f"データ取得エラー: {e}")
