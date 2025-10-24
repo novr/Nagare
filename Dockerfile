@@ -21,6 +21,7 @@ WORKDIR /opt/airflow
 # アプリケーションコードと依存関係ファイルをコピー
 COPY --chown=airflow:root pyproject.toml README.md ./
 COPY --chown=airflow:root src/ ./src/
+COPY --chown=airflow:root scripts/ ./scripts/
 
 # 追加の依存関係をインストール（本番環境用、editable installなし）
 # Airflowは既にベースイメージに含まれているため、
