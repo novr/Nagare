@@ -22,7 +22,7 @@ def _process_items_with_error_handling(
     process_func: Callable[[T], list[dict[str, Any]]],
     item_descriptor: Callable[[T], str],
     operation_name: str,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """各アイテムを処理し、エラーハンドリングを行う共通ヘルパー
 
     Args:
@@ -32,9 +32,15 @@ def _process_items_with_error_handling(
         operation_name: 操作名（ログ用）
 
     Returns:
-        処理結果の集約リスト
+        タプル: (処理結果の集約リスト, エラー統計情報)
     """
     results: list[dict[str, Any]] = []
+    error_stats = {
+        "total_items": len(items),
+        "successful": 0,
+        "failed": 0,
+        "errors": [],
+    }
 
     for item in items:
         item_desc = item_descriptor(item)
@@ -43,30 +49,65 @@ def _process_items_with_error_handling(
             item_results = process_func(item)
             results.extend(item_results)
             logger.info(f"Fetched {len(item_results)} items from {item_desc}")
+            error_stats["successful"] += 1
         except GithubException as e:
             # GitHub API固有のエラー（レート制限、認証エラーなど）
-            logger.error(
+            error_msg = (
                 f"GitHub API error while {operation_name.lower()} for {item_desc}: "
-                f"Status {e.status}, Message: {e.data.get('message', str(e))}"
+                f"Status {e.status}, Message: {e.data.get('message', str(e)) if isinstance(e.data, dict) else e.data}"
             )
+            logger.error(error_msg)
+            error_stats["failed"] += 1
+            error_stats["errors"].append({
+                "item": item_desc,
+                "error_type": "GithubException",
+                "status": e.status,
+                "message": str(e.data),
+            })
             continue
         except (KeyError, ValueError, TypeError) as e:
             # データ処理エラー（予期しないレスポンス形式など）
-            logger.error(
+            error_msg = (
                 f"Data processing error while {operation_name.lower()} for "
                 f"{item_desc}: {type(e).__name__}: {e}"
             )
+            logger.error(error_msg)
+            error_stats["failed"] += 1
+            error_stats["errors"].append({
+                "item": item_desc,
+                "error_type": type(e).__name__,
+                "message": str(e),
+            })
             continue
         except Exception as e:
             # その他の予期しないエラー
-            logger.error(
+            error_msg = (
                 f"Unexpected error while {operation_name.lower()} for {item_desc}: "
-                f"{type(e).__name__}: {e}",
-                exc_info=True,
+                f"{type(e).__name__}: {e}"
             )
+            logger.error(error_msg, exc_info=True)
+            error_stats["failed"] += 1
+            error_stats["errors"].append({
+                "item": item_desc,
+                "error_type": type(e).__name__,
+                "message": str(e),
+            })
             continue
 
-    return results
+    # サマリーログ
+    success_rate = (error_stats["successful"] / error_stats["total_items"] * 100) if error_stats["total_items"] > 0 else 0
+    logger.info(
+        f"{operation_name} summary: {error_stats['successful']}/{error_stats['total_items']} successful "
+        f"({success_rate:.1f}%), {error_stats['failed']} failed"
+    )
+
+    if error_stats["failed"] > 0:
+        logger.warning(
+            f"{operation_name} completed with {error_stats['failed']} failures. "
+            f"Check logs for details."
+        )
+
+    return results, error_stats
 
 
 def fetch_repositories(
@@ -145,7 +186,7 @@ def fetch_workflow_runs(github_client: GitHubClientProtocol, **context: Any) -> 
 
         return runs
 
-    all_workflow_runs = _process_items_with_error_handling(
+    all_workflow_runs, error_stats = _process_items_with_error_handling(
         items=repositories,
         process_func=process_repository,
         item_descriptor=lambda r: f"{r['owner']}/{r['repo']}",
@@ -154,11 +195,21 @@ def fetch_workflow_runs(github_client: GitHubClientProtocol, **context: Any) -> 
 
     logger.info(f"Total workflow runs fetched: {len(all_workflow_runs)}")
 
+    # エラー統計をXComに保存（モニタリング用）
+    ti.xcom_push(key=f"{XComKeys.WORKFLOW_RUNS}_error_stats", value=error_stats)
+
     # XComサイズチェック
     check_xcom_size(all_workflow_runs, XComKeys.WORKFLOW_RUNS)
 
     # XComで次のタスクに渡す
     ti.xcom_push(key=XComKeys.WORKFLOW_RUNS, value=all_workflow_runs)
+
+    # 全てのリポジトリで失敗した場合はエラーを投げる
+    if error_stats["successful"] == 0 and error_stats["total_items"] > 0:
+        raise RuntimeError(
+            f"All {error_stats['total_items']} repositories failed to fetch workflow runs. "
+            f"Check logs for details."
+        )
 
 
 def fetch_workflow_run_jobs(
@@ -212,7 +263,7 @@ def fetch_workflow_run_jobs(
 
         return jobs
 
-    all_jobs = _process_items_with_error_handling(
+    all_jobs, error_stats = _process_items_with_error_handling(
         items=workflow_runs,
         process_func=process_workflow_run,
         item_descriptor=lambda r: (
@@ -224,8 +275,18 @@ def fetch_workflow_run_jobs(
 
     logger.info(f"Total jobs fetched: {len(all_jobs)}")
 
+    # エラー統計をXComに保存（モニタリング用）
+    ti.xcom_push(key=f"{XComKeys.WORKFLOW_RUN_JOBS}_error_stats", value=error_stats)
+
     # XComサイズチェック
     check_xcom_size(all_jobs, XComKeys.WORKFLOW_RUN_JOBS)
 
     # XComで次のタスクに渡す
     ti.xcom_push(key=XComKeys.WORKFLOW_RUN_JOBS, value=all_jobs)
+
+    # 全てのワークフロー実行で失敗した場合でも、部分的な成功があれば継続
+    if error_stats["successful"] == 0 and error_stats["total_items"] > 0:
+        logger.error(
+            f"All {error_stats['total_items']} workflow runs failed to fetch jobs. "
+            f"However, continuing with empty jobs list."
+        )

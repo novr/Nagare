@@ -5,10 +5,11 @@ PyGithubを使用したGitHub APIクライアント
 
 import logging
 import os
+import time
 from datetime import datetime
 from typing import Any
 
-from github import Auth, Github, GithubException, GithubRetry
+from github import Auth, Github, GithubException, GithubRetry, RateLimitExceededException
 
 from nagare.constants import GitHubConfig
 
@@ -206,6 +207,81 @@ class GitHubClient:
         # キャッシュ無効の場合は毎回取得
         return self.github.get_repo(repo_key)
 
+    def check_rate_limit(self) -> dict[str, Any]:
+        """GitHub API rate limitの状態を確認する
+
+        Returns:
+            rate limit情報の辞書
+            - core: コアAPIの情報
+            - search: 検索APIの情報
+        """
+        rate_limit = self.github.get_rate_limit()
+
+        core = rate_limit.core
+        search = rate_limit.search
+
+        rate_info = {
+            "core": {
+                "limit": core.limit,
+                "remaining": core.remaining,
+                "reset": core.reset.isoformat() if core.reset else None,
+                "used": core.limit - core.remaining,
+            },
+            "search": {
+                "limit": search.limit,
+                "remaining": search.remaining,
+                "reset": search.reset.isoformat() if search.reset else None,
+                "used": search.limit - search.remaining,
+            },
+        }
+
+        # ログ出力
+        logger.info(
+            f"GitHub API rate limit - Core: {core.remaining}/{core.limit}, "
+            f"Search: {search.remaining}/{search.limit}"
+        )
+
+        # 残りが少ない場合は警告
+        if core.remaining < core.limit * 0.1:  # 10%未満
+            logger.warning(
+                f"GitHub API rate limit running low: {core.remaining}/{core.limit} remaining"
+            )
+
+        return rate_info
+
+    def wait_for_rate_limit_reset(self, resource: str = "core") -> None:
+        """Rate limit resetまで待機する
+
+        Args:
+            resource: "core" または "search"
+        """
+        rate_limit = self.github.get_rate_limit()
+
+        if resource == "core":
+            reset_time = rate_limit.core.reset
+            remaining = rate_limit.core.remaining
+        elif resource == "search":
+            reset_time = rate_limit.search.reset
+            remaining = rate_limit.search.remaining
+        else:
+            logger.error(f"Unknown resource type: {resource}")
+            return
+
+        if remaining > 0:
+            logger.info(f"Rate limit not exceeded for {resource}: {remaining} remaining")
+            return
+
+        # リセットまでの待機時間を計算
+        wait_seconds = (reset_time - datetime.now(reset_time.tzinfo)).total_seconds()
+        wait_seconds = max(wait_seconds, 0) + 5  # 安全のため5秒追加
+
+        logger.warning(
+            f"Rate limit exceeded for {resource}. "
+            f"Waiting {wait_seconds:.0f} seconds until reset at {reset_time.isoformat()}"
+        )
+
+        time.sleep(wait_seconds)
+
     def get_workflow_runs(
         self,
         owner: str,
@@ -231,60 +307,88 @@ class GitHubClient:
         if max_results <= 0:
             raise ValueError(f"max_results must be positive, got: {max_results}")
 
-        try:
-            # リポジトリオブジェクトを取得（キャッシュ使用）
-            repository = self._get_repository(owner, repo)
+        retry_count = 0
+        max_retries = 3
 
-            # ワークフロー実行を取得
-            # PyGithubのget_workflow_runsは自動でページネーションを処理
-            if created_after:
-                workflow_runs = repository.get_workflow_runs(
-                    created=f">={created_after.isoformat()}"
-                )
-            else:
-                workflow_runs = repository.get_workflow_runs()
+        while retry_count <= max_retries:
+            try:
+                # Rate limit確認
+                rate_info = self.check_rate_limit()
+                if rate_info["core"]["remaining"] < 10:
+                    logger.warning("Rate limit low, waiting for reset...")
+                    self.wait_for_rate_limit_reset("core")
 
-            all_runs: list[dict[str, Any]] = []
+                # リポジトリオブジェクトを取得（キャッシュ使用）
+                repository = self._get_repository(owner, repo)
 
-            # 各ワークフロー実行を辞書形式に変換（最大件数まで）
-            for i, run in enumerate(workflow_runs):
-                if i >= max_results:
-                    logger.warning(
-                        f"Reached max_results limit ({max_results}) for {owner}/{repo}"
+                # ワークフロー実行を取得
+                # PyGithubのget_workflow_runsは自動でページネーションを処理
+                if created_after:
+                    workflow_runs = repository.get_workflow_runs(
+                        created=f">={created_after.isoformat()}"
                     )
-                    break
-                # PyGithubのWorkflowRunオブジェクトを辞書に変換
-                run_dict = {
-                    "id": run.id,
-                    "name": run.name,
-                    "head_branch": run.head_branch,
-                    "head_sha": run.head_sha,
-                    "status": run.status,
-                    "conclusion": run.conclusion,
-                    "event": run.event,
-                    "created_at": (
-                        run.created_at.isoformat() if run.created_at else None
-                    ),
-                    "updated_at": (
-                        run.updated_at.isoformat() if run.updated_at else None
-                    ),
-                    "run_started_at": (
-                        run.run_started_at.isoformat() if run.run_started_at else None
-                    ),
-                    "html_url": run.html_url,
-                }
-                all_runs.append(run_dict)
+                else:
+                    workflow_runs = repository.get_workflow_runs()
 
-            logger.info(f"Fetched {len(all_runs)} workflow runs for {owner}/{repo}")
-            return all_runs
+                all_runs: list[dict[str, Any]] = []
 
-        except GithubException as e:
-            # 共通関数を使ってエラーメッセージを生成
-            error_msg = _format_github_error_message(
-                e, context="fetching workflow runs", owner=owner, repo=repo
-            )
-            logger.error(error_msg)
-            raise GithubException(e.status, e.data, e.headers) from e
+                # 各ワークフロー実行を辞書形式に変換（最大件数まで）
+                for i, run in enumerate(workflow_runs):
+                    if i >= max_results:
+                        logger.warning(
+                            f"Reached max_results limit ({max_results}) for {owner}/{repo}"
+                        )
+                        break
+                    # PyGithubのWorkflowRunオブジェクトを辞書に変換
+                    run_dict = {
+                        "id": run.id,
+                        "name": run.name,
+                        "head_branch": run.head_branch,
+                        "head_sha": run.head_sha,
+                        "status": run.status,
+                        "conclusion": run.conclusion,
+                        "event": run.event,
+                        "created_at": (
+                            run.created_at.isoformat() if run.created_at else None
+                        ),
+                        "updated_at": (
+                            run.updated_at.isoformat() if run.updated_at else None
+                        ),
+                        "run_started_at": (
+                            run.run_started_at.isoformat() if run.run_started_at else None
+                        ),
+                        "html_url": run.html_url,
+                    }
+                    all_runs.append(run_dict)
+
+                logger.info(f"Fetched {len(all_runs)} workflow runs for {owner}/{repo}")
+                return all_runs
+
+            except RateLimitExceededException:
+                logger.warning(f"Rate limit exceeded, waiting for reset (retry {retry_count}/{max_retries})")
+                self.wait_for_rate_limit_reset("core")
+                retry_count += 1
+                if retry_count > max_retries:
+                    raise
+
+            except GithubException as e:
+                # 一時的なエラー (502, 503, 504) の場合はリトライ
+                if e.status in [502, 503, 504] and retry_count < max_retries:
+                    wait_time = 2 ** retry_count  # 指数バックオフ
+                    logger.warning(
+                        f"Temporary error {e.status}, retrying in {wait_time}s "
+                        f"(retry {retry_count}/{max_retries})"
+                    )
+                    time.sleep(wait_time)
+                    retry_count += 1
+                    continue
+
+                # その他のエラーは即座に例外を投げる
+                error_msg = _format_github_error_message(
+                    e, context="fetching workflow runs", owner=owner, repo=repo
+                )
+                logger.error(error_msg)
+                raise GithubException(e.status, e.data, e.headers) from e
 
     def get_workflow_run_jobs(
         self, owner: str, repo: str, run_id: int, max_results: int = 1000
@@ -307,51 +411,79 @@ class GitHubClient:
         if max_results <= 0:
             raise ValueError(f"max_results must be positive, got: {max_results}")
 
-        try:
-            # リポジトリオブジェクトを取得（キャッシュ使用）
-            repository = self._get_repository(owner, repo)
+        retry_count = 0
+        max_retries = 3
 
-            # ワークフロー実行を取得
-            workflow_run = repository.get_workflow_run(run_id)
+        while retry_count <= max_retries:
+            try:
+                # Rate limit確認
+                rate_info = self.check_rate_limit()
+                if rate_info["core"]["remaining"] < 10:
+                    logger.warning("Rate limit low, waiting for reset...")
+                    self.wait_for_rate_limit_reset("core")
 
-            # ジョブ一覧を取得
-            jobs = workflow_run.jobs()
+                # リポジトリオブジェクトを取得（キャッシュ使用）
+                repository = self._get_repository(owner, repo)
 
-            all_jobs: list[dict[str, Any]] = []
+                # ワークフロー実行を取得
+                workflow_run = repository.get_workflow_run(run_id)
 
-            for i, job in enumerate(jobs):
-                if i >= max_results:
+                # ジョブ一覧を取得
+                jobs = workflow_run.jobs()
+
+                all_jobs: list[dict[str, Any]] = []
+
+                for i, job in enumerate(jobs):
+                    if i >= max_results:
+                        logger.warning(
+                            f"Reached max_results limit ({max_results}) "
+                            f"for workflow run {run_id}"
+                        )
+                        break
+                    job_dict = {
+                        "id": job.id,
+                        "run_id": job.run_id,
+                        "name": job.name,
+                        "status": job.status,
+                        "conclusion": job.conclusion,
+                        "started_at": (
+                            job.started_at.isoformat() if job.started_at else None
+                        ),
+                        "completed_at": (
+                            job.completed_at.isoformat() if job.completed_at else None
+                        ),
+                        "html_url": job.html_url,
+                    }
+                    all_jobs.append(job_dict)
+
+                logger.info(f"Fetched {len(all_jobs)} jobs for workflow run {run_id}")
+                return all_jobs
+
+            except RateLimitExceededException:
+                logger.warning(f"Rate limit exceeded, waiting for reset (retry {retry_count}/{max_retries})")
+                self.wait_for_rate_limit_reset("core")
+                retry_count += 1
+                if retry_count > max_retries:
+                    raise
+
+            except GithubException as e:
+                # 一時的なエラー (502, 503, 504) の場合はリトライ
+                if e.status in [502, 503, 504] and retry_count < max_retries:
+                    wait_time = 2 ** retry_count  # 指数バックオフ
                     logger.warning(
-                        f"Reached max_results limit ({max_results}) "
-                        f"for workflow run {run_id}"
+                        f"Temporary error {e.status}, retrying in {wait_time}s "
+                        f"(retry {retry_count}/{max_retries})"
                     )
-                    break
-                job_dict = {
-                    "id": job.id,
-                    "run_id": job.run_id,
-                    "name": job.name,
-                    "status": job.status,
-                    "conclusion": job.conclusion,
-                    "started_at": (
-                        job.started_at.isoformat() if job.started_at else None
-                    ),
-                    "completed_at": (
-                        job.completed_at.isoformat() if job.completed_at else None
-                    ),
-                    "html_url": job.html_url,
-                }
-                all_jobs.append(job_dict)
+                    time.sleep(wait_time)
+                    retry_count += 1
+                    continue
 
-            logger.info(f"Fetched {len(all_jobs)} jobs for workflow run {run_id}")
-            return all_jobs
-
-        except GithubException as e:
-            # 共通関数を使ってエラーメッセージを生成
-            error_msg = _format_github_error_message(
-                e, context="fetching jobs", owner=owner, repo=repo, run_id=run_id
-            )
-            logger.error(error_msg)
-            raise GithubException(e.status, e.data, e.headers) from e
+                # その他のエラーは即座に例外を投げる
+                error_msg = _format_github_error_message(
+                    e, context="fetching jobs", owner=owner, repo=repo, run_id=run_id
+                )
+                logger.error(error_msg)
+                raise GithubException(e.status, e.data, e.headers) from e
 
     def get_organization_repositories(
         self, org_name: str, max_results: int = 100
