@@ -226,6 +226,7 @@ uv run pytest --cov=src --cov-report=html
 **セットアップガイド**
 - [データベースセットアップ](docs/03_setup/database_setup.md)
 - [Streamlit管理画面](docs/03_setup/streamlit_admin.md)
+- [Supersetダッシュボード設定](docs/03_setup/superset_dashboard.md)
 
 **運用ガイド**
 - [エラーハンドリング](docs/04_operation/error_handling.md)
