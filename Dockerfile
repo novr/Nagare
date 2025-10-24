@@ -18,16 +18,14 @@ USER airflow
 # 作業ディレクトリを設定
 WORKDIR /opt/airflow
 
-# Pythonの依存関係ファイルをコピー（キャッシュ最適化のため先にコピー）
-COPY --chown=airflow:root pyproject.toml ./
+# アプリケーションコードと依存関係ファイルをコピー
+COPY --chown=airflow:root pyproject.toml README.md ./
+COPY --chown=airflow:root src/ ./src/
 
-# 追加の依存関係をインストール
+# 追加の依存関係をインストール（本番環境用、editable installなし）
 # Airflowは既にベースイメージに含まれているため、
 # pyproject.tomlのdependenciesには本番環境に必要な依存関係のみを記載
-RUN pip install --no-cache-dir -e .
-
-# アプリケーションコードをコピー
-COPY --chown=airflow:root src/ ./src/
+RUN pip install --no-cache-dir .
 
 # PYTHONPATH設定（srcディレクトリをインポートパスに追加）
 ENV PYTHONPATH="${PYTHONPATH}:/opt/airflow/src"
