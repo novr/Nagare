@@ -112,7 +112,11 @@ cd Nagare
 2. 依存関係をインストール
 
 ```bash
-uv sync --all-extras
+# ローカル開発環境用（Airflow/Supersetを含む）
+uv sync --extra local --extra dev
+
+# または、本番環境用の最小限の依存関係のみ
+uv sync --extra dev
 ```
 
 3. 環境変数の設定

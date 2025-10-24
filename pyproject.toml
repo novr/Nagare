@@ -7,15 +7,22 @@ authors = [
     { name = "novr (Nobuhisa Komiya)", email = "dev.novr@gmail.com" }
 ]
 requires-python = ">=3.11,<3.12"
+# 本番環境（Docker）で必要な依存関係のみ
+# Airflow/Supersetはベースイメージに含まれるため除外
 dependencies = [
-    "apache-airflow>=2.10.0",
-    "apache-superset>=4.1.0",
     "psycopg2-binary>=2.9.9",
     "sqlalchemy>=1.4,<2.0",
     "pygithub>=2.5.0",
 ]
 
 [project.optional-dependencies]
+# ローカル開発環境用（Airflow/Supersetを含む）
+local = [
+    "apache-airflow>=2.10.0",
+    "apache-superset>=4.1.0",
+]
+
+# 開発ツール
 dev = [
     "pytest>=8.0.0",
     "pytest-cov>=6.0.0",

@@ -19,20 +19,15 @@ USER airflow
 WORKDIR /opt/airflow
 
 # Pythonの依存関係ファイルをコピー（キャッシュ最適化のため先にコピー）
-COPY --chown=airflow:root pyproject.toml uv.lock ./
+COPY --chown=airflow:root pyproject.toml ./
 
-# uvをインストール
-RUN pip install --no-cache-dir uv
-
-# 依存関係をインストール（本番環境用）
-# uvを使用してロックファイルから正確な依存関係をインストール
-RUN uv pip install --system --no-cache -r uv.lock
+# 追加の依存関係をインストール
+# Airflowは既にベースイメージに含まれているため、
+# pyproject.tomlのdependenciesには本番環境に必要な依存関係のみを記載
+RUN pip install --no-cache-dir -e .
 
 # アプリケーションコードをコピー
 COPY --chown=airflow:root src/ ./src/
-
-# Airflow DAGsディレクトリへのシンボリックリンクを作成
-RUN ln -s /opt/airflow/src/nagare/dags /opt/airflow/dags
 
 # PYTHONPATH設定（srcディレクトリをインポートパスに追加）
 ENV PYTHONPATH="${PYTHONPATH}:/opt/airflow/src"
@@ -40,8 +35,8 @@ ENV PYTHONPATH="${PYTHONPATH}:/opt/airflow/src"
 # Airflowのホームディレクトリ
 ENV AIRFLOW_HOME=/opt/airflow
 
-# DAGsディレクトリのパス
-ENV AIRFLOW__CORE__DAGS_FOLDER=/opt/airflow/dags
+# DAGsディレクトリのパス（srcディレクトリ内を直接指定）
+ENV AIRFLOW__CORE__DAGS_FOLDER=/opt/airflow/src/nagare/dags
 
 # ヘルスチェック用のエントリーポイント
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \

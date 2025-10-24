@@ -31,11 +31,15 @@ services:
     command: airflow webserver
     ports:
       - "${AIRFLOW_WEBSERVER_PORT:-8080}:8080"
+    deploy:
+      resources:
+        limits:
+          memory: 2G
     environment:
       # Airflow Core設定
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
-      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/src/nagare/dags
 
       # データベース接続
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${DATABASE_USER:-nagare_user}:${DATABASE_PASSWORD}@postgres:5432/${DATABASE_NAME:-nagare}
@@ -81,11 +85,15 @@ services:
       dockerfile: Dockerfile
     container_name: nagare-airflow-scheduler
     command: airflow scheduler
+    deploy:
+      resources:
+        limits:
+          memory: 2G
     environment:
       # Airflow Core設定
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
-      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/src/nagare/dags
 
       # データベース接続
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${DATABASE_USER:-nagare_user}:${DATABASE_PASSWORD}@postgres:5432/${DATABASE_NAME:-nagare}
@@ -146,10 +154,10 @@ services:
 
   # Apache Superset
   superset:
-    image: apache/superset:4.1.0
+    image: apache/superset:latest
     container_name: nagare-superset
     environment:
-      SUPERSET_SECRET_KEY_FILE: /run/secrets/superset_secret_key
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY}
       DATABASE_DB: ${DATABASE_NAME:-nagare}
       DATABASE_HOST: postgres
       DATABASE_PASSWORD: ${DATABASE_PASSWORD}
@@ -157,8 +165,6 @@ services:
       DATABASE_PORT: 5432
       DATABASE_DIALECT: postgresql
       SUPERSET_LOAD_EXAMPLES: 'no'
-    secrets:
-      - superset_secret_key
     ports:
       - "${SUPERSET_PORT:-8088}:8088"
     depends_on:
