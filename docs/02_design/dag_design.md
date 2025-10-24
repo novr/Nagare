@@ -92,49 +92,133 @@ task1 >> task2 >> task3 >> task4
 
 ## 4. エラーハンドリングルール
 
-### 4.1. リトライ戦略
+### 4.1. GitHub API Rate Limit対策
 
-**リトライ設定の基準**
+**Rate Limit監視（実装済み）**
+- GitHub API呼び出し前に自動的にRate Limitを確認
+- 残数が10%未満の場合、WARNINGログを出力
+- 残数が10リクエスト未満の場合、自動的にリセット時刻まで待機
+
+**自動待機処理（実装済み）**
+```python
+# Rate Limit情報の取得
+rate_info = github_client.check_rate_limit()
+# {
+#   "core": {"limit": 5000, "remaining": 4523, "reset": "2025-10-24T14:00:00Z"},
+#   "search": {"limit": 30, "remaining": 25, "reset": "2025-10-24T13:01:00Z"}
+# }
+
+# 残数が少ない場合は自動待機
+if rate_info["core"]["remaining"] < 10:
+    github_client.wait_for_rate_limit_reset("core")
+```
+
+**Rate Limit超過時の動作**
+- リセット時刻までの待機時間を計算し、ログに記録
+- 自動的にスリープし、リセット後に処理を再開
+- リトライカウントは消費しない（Rate Limit待機は通常動作）
+
+### 4.2. リトライ戦略
+
+**リトライ設定の基準（実装済み）**
 
 | 処理内容 | リトライ回数 | 間隔 | バックオフ |
 |---------|------------|------|----------|
 | DBアクセス | 3回 | 5分 | なし |
-| GitHub API | 3回 | 1分 | 指数（1,2,4分） |
+| GitHub API（一時的エラー） | 3回 | 1秒 | 指数（1,2,4秒） |
+| Rate Limit超過 | 無制限 | リセットまで | なし |
 | データ変換 | 0回 | - | - |
 
-**リトライの例外**
-- データ変換エラーはリトライしない（ログ記録のみ）
-- 認証エラーはリトライしない（即座に失敗）
-
-### 4.2. 部分的な失敗の許容
-
-**原則**
-- 1つのリソース（リポジトリ）の失敗が全体に影響しない
-- エラーは記録し、処理を継続
-
-**実装パターン**
+**指数バックオフの実装（実装済み）**
 ```python
-for resource in resources:
+retry_count = 0
+max_retries = 3
+
+while retry_count <= max_retries:
     try:
-        process(resource)
-    except Exception as e:
-        logger.error(f"Failed to process {resource}: {e}")
-        continue  # 他のリソースは処理継続
+        return github_client.get_workflow_runs(owner, repo)
+    except GithubException as e:
+        if e.status in [502, 503, 504] and retry_count < max_retries:
+            wait_time = 2 ** retry_count  # 1秒、2秒、4秒
+            logger.warning(f"Temporary error {e.status}, retrying in {wait_time}s")
+            time.sleep(wait_time)
+            retry_count += 1
+            continue
+        raise
 ```
 
-### 4.3. アラート条件
+**リトライ対象エラー**
+- 502 Bad Gateway（サーバー一時的エラー）
+- 503 Service Unavailable（サービス一時停止）
+- 504 Gateway Timeout（タイムアウト）
+- RateLimitExceededException（Rate Limit超過）
+
+**リトライの例外**
+- 401 Unauthorized（認証エラー）: 即座に失敗
+- 404 Not Found（リソース未発見）: 即座に失敗、ログ記録
+- データ変換エラー: リトライしない（ログ記録のみ）
+
+### 4.3. 部分的な失敗の許容
+
+**原則（実装済み）**
+- 1つのリソース（リポジトリ、ワークフロー実行）の失敗が全体に影響しない
+- エラーは詳細に記録し、処理を継続
+- エラー統計をXComに保存し、モニタリングに活用
+
+**実装パターン（実装済み）**
+```python
+results = []
+error_stats = {
+    "total_items": len(items),
+    "successful": 0,
+    "failed": 0,
+    "errors": [],
+}
+
+for item in items:
+    try:
+        result = process(item)
+        results.extend(result)
+        error_stats["successful"] += 1
+    except GithubException as e:
+        logger.error(f"GitHub API error: {e}")
+        error_stats["failed"] += 1
+        error_stats["errors"].append({
+            "item": item,
+            "error_type": "GithubException",
+            "status": e.status,
+            "message": str(e.data),
+        })
+        continue  # 他のリソースは処理継続
+
+# エラー統計をXComに保存
+ti.xcom_push(key=f"{key}_error_stats", value=error_stats)
+```
+
+**全失敗時の動作**
+- ワークフロー実行取得: RuntimeErrorを投げてタスク失敗
+- ジョブ取得: エラーログのみ、空リストで継続
+
+### 4.4. アラート条件
 
 - DAGが連続3回失敗: メール/Slack通知
 - タスク実行時間が通常の2倍超過: 警告
-- API呼び出し数が制限の80%到達: 警告
+- Rate Limitが10%未満: WARNINGログ（自動対応）
+- 部分的失敗率が50%超過: WARNINGログ
+
+詳細は[エラーハンドリングガイド](../04_operation/error_handling.md)を参照。
 
 ## 5. パフォーマンス設計ルール
 
 ### 5.1. API呼び出しの制約
 
-**GitHub API制約**
-- 15,000リクエスト/時間の制限を遵守
-- PyGithubがレート制限を自動処理
+**GitHub API制約（実装済み）**
+- Personal Access Token: 5,000リクエスト/時間（Core API）
+- GitHub Apps: 5,000リクエスト/時間（Core API）
+- Search API: 30リクエスト/分
+- 自動的にRate Limit監視と待機処理を実施
+- `check_rate_limit()`で残数を確認
+- `wait_for_rate_limit_reset()`で自動待機
 
 **並列度の制限**
 - MVP版では並列処理を行わない
