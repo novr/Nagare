@@ -34,7 +34,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2G
+          memory: 4G
     environment:
       # Airflow Core設定
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
@@ -47,6 +47,11 @@ services:
       # Webserver設定
       AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'false'
       AIRFLOW__WEBSERVER__SECRET_KEY_FILE: /run/secrets/airflow_secret_key
+      AIRFLOW__WEBSERVER__WORKERS: 1
+      AIRFLOW__WEBSERVER__WORKER_REFRESH_INTERVAL: 1800
+      AIRFLOW__WEBSERVER__WORKER_CLASS: sync
+      AIRFLOW__WEBSERVER__WEB_SERVER_MASTER_TIMEOUT: 300
+      AIRFLOW__WEBSERVER__WEB_SERVER_WORKER_TIMEOUT: 300
 
       # GitHub認証情報
       GITHUB_APP_ID: ${GITHUB_APP_ID}
