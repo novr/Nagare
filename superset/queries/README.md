@@ -1,108 +1,84 @@
-# Superset SQL Queries
+# Nagare Superset ダッシュボード セットアップガイド
 
-Supersetで使用するVirtual Dataset用のSQLクエリ集。
+## 1. データベース接続の設定
 
-## クエリ一覧
+1. Supersetにアクセス: http://localhost:8088
+2. ログイン情報:
+   - Username: `admin`
+   - Password: `admin`
 
-| ファイル名 | Dataset名 | 説明 | 推奨チャート |
-|-----------|----------|------|------------|
-| `pipeline_daily_success_rate.sql` | pipeline_daily_success_rate | パイプライン実行の日次成功率 | Line Chart |
-| `pipeline_daily_duration.sql` | pipeline_daily_duration | パイプライン実行時間の日次統計 | Line Chart |
-| `job_duration_ranking.sql` | job_duration_ranking | ジョブ別実行時間ランキング | Bar Chart (横) |
-| `repository_performance_summary.sql` | repository_performance_summary | リポジトリ別パフォーマンスサマリー | Table, Pie Chart |
-| `failing_jobs_ranking.sql` | failing_jobs_ranking | 失敗が多いジョブのランキング | Table |
+3. データベース接続を追加:
+   - Settings → Database Connections → + Database
+   - Database name: `Nagare PostgreSQL`
+   - SQLAlchemy URI: `postgresql://nagare_user:your_secure_password_here@postgres:5432/nagare`
+   - Test Connection → Connect
 
-## 使用方法
+## 2. 利用可能なビュー
 
-### 1. Superset SQL Labでクエリを実行
+PostgreSQLに以下のビューが作成されています：
 
-```bash
-# Supersetにアクセス
-open http://localhost:8088
+### v_pipeline_overview
+リポジトリごとの全体的な統計（成功率、総実行数など）
 
-# SQL Lab → SQL Editorを開く
-# DATABASEで "Nagare PostgreSQL" を選択
-# SCHEMAで "public" を選択
-```
+### v_daily_success_rate
+日次のパイプライン成功率
 
-### 2. クエリをコピー&ペースト
+### v_pipeline_stats
+パイプラインのステータス別統計（平均実行時間など）
 
-各`.sql`ファイルの内容をコピーして、SQL Editorに貼り付けます。
+### v_recent_pipeline_runs
+最新100件のパイプライン実行履歴
 
-### 3. クエリを実行して確認
+### v_job_stats
+ジョブごとの統計情報
 
-**RUN**ボタンをクリックして、結果を確認します。
+### v_pipeline_runs_by_hour
+時間帯別のパイプライン実行数
 
-### 4. Virtual Datasetとして保存
+## 3. 推奨チャート
 
-1. クエリエディタ右上の**SAVE** → **Save dataset**
-2. Dataset名を入力（ファイル名の`Dataset名`を使用）
-3. **SAVE & EXPLORE**をクリック
+### チャート1: パイプライン成功率の推移
+- **データソース**: v_daily_success_rate
+- **Chart Type**: Line Chart
+- **X軸**: run_date
+- **Y軸**: success_rate
+- **Group by**: repository_name
 
-### 5. チャートを作成
+### チャート2: リポジトリ別成功率
+- **データソース**: v_pipeline_overview
+- **Chart Type**: Bar Chart
+- **X軸**: repository_name
+- **Y軸**: overall_success_rate
 
-データセットからチャートを作成し、ダッシュボードに追加します。
+### チャート3: 最新のパイプライン実行状況
+- **データソース**: v_recent_pipeline_runs
+- **Chart Type**: Table
+- **Columns**: repository_name, pipeline_name, status, branch_name, started_at, duration_sec
 
-詳細は [Supersetダッシュボード設定ガイド](../../docs/03_setup/superset_dashboard.md)を参照してください。
+### チャート4: 平均実行時間の推移
+- **データソース**: v_pipeline_stats
+- **Chart Type**: Line Chart
+- **X軸**: run_date
+- **Y軸**: avg_duration_sec
+- **Group by**: repository_name
+- **Filter**: status = 'SUCCESS'
 
-## クエリのカスタマイズ
+### チャート5: ステータス別実行数
+- **データソース**: v_pipeline_stats
+- **Chart Type**: Pie Chart
+- **Dimension**: status
+- **Metric**: SUM(run_count)
 
-### 日数の変更
+### チャート6: 時間帯別実行パターン
+- **データソース**: v_pipeline_runs_by_hour
+- **Chart Type**: Bar Chart
+- **X軸**: hour_of_day
+- **Y軸**: run_count
+- **Group by**: repository_name
 
-デフォルトでは過去30日間のデータを取得しますが、必要に応じて変更できます：
+## 4. ダッシュボード作成
 
-```sql
--- 過去7日間
-WHERE pr.started_at >= CURRENT_DATE - INTERVAL '7 days'
-
--- 過去90日間
-WHERE pr.started_at >= CURRENT_DATE - INTERVAL '90 days'
-```
-
-### 閾値の調整
-
-ジョブのフィルタリング条件を調整：
-
-```sql
--- 実行回数が10回以上
-HAVING COUNT(*) >= 10
-
--- 失敗回数が5回以上
-HAVING COUNT(*) >= 5
-```
-
-### 結果件数の変更
-
-```sql
--- Top 100を表示
-LIMIT 100
-```
-
-## トラブルシューティング
-
-### クエリが遅い
-
-```sql
--- EXPLAIN ANALYZEで実行計画を確認
-EXPLAIN ANALYZE
-SELECT ... (遅いクエリ);
-```
-
-### データが返らない
-
-```bash
-# データが存在するか確認
-docker exec nagare-postgres psql -U nagare_user -d nagare -c "SELECT COUNT(*) FROM pipeline_runs;"
-docker exec nagare-postgres psql -U nagare_user -d nagare -c "SELECT COUNT(*) FROM jobs;"
-```
-
-データがない場合：
-1. Streamlit管理画面でリポジトリを登録
-2. Airflow UIでDAGを手動実行
-3. 数分待ってから再度確認
-
-## 参考リンク
-
-- [Supersetダッシュボード設定ガイド](../../docs/03_setup/superset_dashboard.md)
-- [データモデル](../../docs/02_design/data_model.md)
-- [PostgreSQL公式ドキュメント](https://www.postgresql.org/docs/)
+1. Dashboards → + Dashboard
+2. Dashboard name: `Nagare CI/CD Overview`
+3. 上記のチャートをダッシュボードに追加
+4. レイアウトを調整して保存
