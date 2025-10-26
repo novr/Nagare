@@ -3,15 +3,13 @@
 
 FROM apache/superset:latest
 
-# PostgreSQLドライバーをインストール
 USER root
 
-# システムのpip3を使ってpsycopg2-binaryをインストール
+# PostgreSQLドライバーをシステムpipでインストール
 RUN pip3 install --no-cache-dir psycopg2-binary
 
-# virtualenvからシステムのsite-packagesを参照できるようにシンボリックリンクを作成
-RUN ln -s /usr/local/lib/python3.10/site-packages/psycopg2 /app/.venv/lib/python3.10/site-packages/psycopg2 || true
-RUN ln -s /usr/local/lib/python3.10/site-packages/psycopg2_binary* /app/.venv/lib/python3.10/site-packages/ || true
+# Pythonバージョンを動的に取得してシンボリックリンクを作成
+RUN PYTHON_VERSION=$(/app/.venv/bin/python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')") && \
+    ln -sf /usr/local/lib/python${PYTHON_VERSION}/site-packages/psycopg2* /app/.venv/lib/python${PYTHON_VERSION}/site-packages/
 
-# 元のユーザーに戻す
 USER superset
