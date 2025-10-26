@@ -73,7 +73,9 @@ class DatabaseClient:
                 if len(parts) == 2:
                     repositories.append({"owner": parts[0], "repo": parts[1]})
                 else:
-                    logger.warning(f"Invalid repository_name format: {row.repository_name}")
+                    logger.warning(
+                        f"Invalid repository_name format: {row.repository_name}"
+                    )
             logger.info(f"Retrieved {len(repositories)} active repositories")
             return repositories
         finally:
@@ -117,47 +119,66 @@ class DatabaseClient:
         """pipeline_runsテーブルにデータをUPSERTする
 
         Args:
-            runs: ワークフロー実行データのリスト（repository_owner, repository_nameを含む）
+            runs: ワークフロー実行データのリスト
+                  (repository_owner, repository_nameを含む)
         """
         if not runs:
             return
 
         session = self.session_factory()
         try:
-            for run in runs:
-                # repository_owner/repository_nameからrepository_idを取得
-                repository_name = f"{run['repository_owner']}/{run['repository_name']}"
+            # 全てのrepository_nameを抽出（重複排除）
+            repository_names = list(
+                {
+                    f"{run['repository_owner']}/{run['repository_name']}"
+                    for run in runs
+                }
+            )
+
+            # 一度のクエリで全てのrepository_idを取得（N+1問題の解決）
+            repo_cache: dict[str, int] = {}
+            if repository_names:
+                placeholders = ", ".join(
+                    [f":repo_{i}" for i in range(len(repository_names))]
+                )
                 repo_query = text(
-                    """
-                    SELECT id FROM repositories
-                    WHERE repository_name = :repository_name
+                    f"""
+                    SELECT repository_name, id FROM repositories
+                    WHERE repository_name IN ({placeholders})
                     """
                 )
-                repo_result = session.execute(
-                    repo_query, {"repository_name": repository_name}
-                )
-                repo_row = repo_result.fetchone()
+                params = {
+                    f"repo_{i}": name for i, name in enumerate(repository_names)
+                }
+                result = session.execute(repo_query, params)
+                repo_cache = {row[0]: row[1] for row in result}
 
-                if not repo_row:
+            # スキップされたrun数をカウント
+            skipped_count = 0
+
+            for run in runs:
+                repository_name = f"{run['repository_owner']}/{run['repository_name']}"
+                repository_id = repo_cache.get(repository_name)
+
+                if repository_id is None:
                     logger.warning(
-                        f"Repository {repository_name} not found in database, skipping run"
+                        f"Repository {repository_name} not found, skipping"
                     )
+                    skipped_count += 1
                     continue
-
-                repository_id = repo_row[0]
 
                 # repository_idを追加してINSERT
                 query = text(
                     """
                     INSERT INTO pipeline_runs (
-                        source_run_id, source, pipeline_name, status, trigger_event,
-                        repository_id, branch_name, commit_sha, started_at,
-                        completed_at, duration_ms, url
+                        source_run_id, source, pipeline_name, status,
+                        trigger_event, repository_id, branch_name, commit_sha,
+                        started_at, completed_at, duration_ms, url
                     )
                     VALUES (
-                        :source_run_id, :source, :pipeline_name, :status, :trigger_event,
-                        :repository_id, :branch_name, :commit_sha, :started_at,
-                        :completed_at, :duration_ms, :url
+                        :source_run_id, :source, :pipeline_name, :status,
+                        :trigger_event, :repository_id, :branch_name, :commit_sha,
+                        :started_at, :completed_at, :duration_ms, :url
                     )
                     ON CONFLICT (source_run_id, source) DO UPDATE SET
                         pipeline_name = EXCLUDED.pipeline_name,
@@ -189,8 +210,18 @@ class DatabaseClient:
                         "url": run.get("url"),
                     },
                 )
+
+            # エラーログ出力
+            if skipped_count > 0:
+                logger.error(
+                    f"Skipped {skipped_count} runs due to missing repositories"
+                )
+
             session.commit()
-            logger.info(f"Upserted {len(runs)} pipeline runs")
+            logger.info(
+                f"Upserted {len(runs) - skipped_count} pipeline runs "
+                f"({skipped_count} skipped)"
+            )
         except Exception:
             session.rollback()
             raise
@@ -201,45 +232,57 @@ class DatabaseClient:
         """jobsテーブルにデータをUPSERTする
 
         Args:
-            jobs: ジョブデータのリスト（source_run_id, repository_owner, repository_nameを含む）
+            jobs: ジョブデータのリスト
+                  (source_run_id, repository_owner, repository_nameを含む)
         """
         if not jobs:
             return
 
         session = self.session_factory()
         try:
-            for job in jobs:
-                # source_run_idとrepository情報からrun_id(pipeline_runs.id)を取得
-                repository_name = f"{job['repository_owner']}/{job['repository_name']}"
+            # 全てのsource_run_idを抽出（重複排除）
+            source_run_ids = list({job["source_run_id"] for job in jobs})
 
+            # 一度のクエリで全てのrun_idを取得（N+1問題の解決）
+            run_cache: dict[tuple[str, str, str], int] = {}
+            if source_run_ids:
+                placeholders = ", ".join(
+                    [f":run_{i}" for i in range(len(source_run_ids))]
+                )
                 run_query = text(
-                    """
-                    SELECT pr.id
+                    f"""
+                    SELECT pr.source_run_id, pr.source, r.repository_name, pr.id
                     FROM pipeline_runs pr
                     JOIN repositories r ON pr.repository_id = r.id
-                    WHERE pr.source_run_id = :source_run_id
-                      AND pr.source = :source
-                      AND r.repository_name = :repository_name
+                    WHERE pr.source_run_id IN ({placeholders})
                     """
                 )
-                run_result = session.execute(
-                    run_query,
-                    {
-                        "source_run_id": job["source_run_id"],
-                        "source": job["source"],
-                        "repository_name": repository_name,
-                    },
-                )
-                run_row = run_result.fetchone()
+                params = {f"run_{i}": run_id for i, run_id in enumerate(source_run_ids)}
+                result = session.execute(run_query, params)
+                # キー: (source_run_id, source, repository_name), 値: run_id
+                for row in result:
+                    run_cache[(row[0], row[1], row[2])] = row[3]
 
-                if not run_row:
+            # スキップされたjob数をカウント
+            skipped_count = 0
+
+            for job in jobs:
+                repository_name = f"{job['repository_owner']}/{job['repository_name']}"
+                cache_key = (
+                    job["source_run_id"],
+                    job["source"],
+                    repository_name,
+                )
+                run_id = run_cache.get(cache_key)
+
+                if run_id is None:
                     logger.warning(
                         f"Pipeline run not found for job {job['source_job_id']} "
-                        f"(source_run_id={job['source_run_id']}, repo={repository_name}), skipping"
+                        f"(run_id={job['source_run_id']}, "
+                        f"repo={repository_name}), skipping"
                     )
+                    skipped_count += 1
                     continue
-
-                run_id = run_row[0]
 
                 # run_idを使用してINSERT
                 query = text(
@@ -273,8 +316,17 @@ class DatabaseClient:
                         "duration_ms": job.get("duration_ms"),
                     },
                 )
+
+            # エラーログ出力
+            if skipped_count > 0:
+                logger.error(
+                    f"Skipped {skipped_count} jobs due to missing pipeline runs"
+                )
+
             session.commit()
-            logger.info(f"Upserted {len(jobs)} jobs")
+            logger.info(
+                f"Upserted {len(jobs) - skipped_count} jobs ({skipped_count} skipped)"
+            )
         except Exception:
             session.rollback()
             raise
