@@ -54,6 +54,11 @@ class MockDatabaseClient:
         self.get_repositories_called = False
         self.get_repositories_call_count = 0
 
+        # get_latest_run_timestamp tracking
+        self.get_latest_run_timestamp_called = False
+        self.get_latest_run_timestamp_call_count = 0
+        self.get_latest_run_timestamp_calls: list[dict[str, str]] = []
+
         # upsert_pipeline_runs tracking
         self.upsert_pipeline_runs_called = False
         self.upsert_pipeline_runs_call_count = 0
@@ -81,6 +86,22 @@ class MockDatabaseClient:
             {"owner": "test-org", "repo": "test-repo-1"},
             {"owner": "test-org", "repo": "test-repo-2"},
         ]
+
+    def get_latest_run_timestamp(self, owner: str, repo: str) -> datetime | None:
+        """モックの最新タイムスタンプを返す
+
+        Args:
+            owner: リポジトリオーナー
+            repo: リポジトリ名
+
+        Returns:
+            常にNone（初回取得をシミュレート）
+        """
+        self.get_latest_run_timestamp_called = True
+        self.get_latest_run_timestamp_call_count += 1
+        self.get_latest_run_timestamp_calls.append({"owner": owner, "repo": repo})
+        # テストでは常に初回取得をシミュレート
+        return None
 
     def upsert_pipeline_runs(self, runs: list[dict[str, Any]]) -> None:
         """モックのUPSERT処理

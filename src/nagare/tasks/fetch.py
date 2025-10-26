@@ -137,11 +137,16 @@ def fetch_repositories(
     return repositories
 
 
-def fetch_workflow_runs(github_client: GitHubClientProtocol, **context: Any) -> None:
+def fetch_workflow_runs(
+    github_client: GitHubClientProtocol, db: DatabaseClientProtocol, **context: Any
+) -> None:
     """各リポジトリのワークフロー実行データを取得する
+
+    初回実行時は全件取得、2回目以降は最新タイムスタンプからの差分取得を行う。
 
     Args:
         github_client: GitHubClientインスタンス（必須、外部から注入される）
+        db: DatabaseClientインスタンス（必須、外部から注入される）
         **context: Airflowのコンテキスト
     """
     ti: TaskInstance = context["ti"]
@@ -154,10 +159,6 @@ def fetch_workflow_runs(github_client: GitHubClientProtocol, **context: Any) -> 
     if not repositories:
         logger.warning("No repositories found to fetch workflow runs")
         return
-
-    # 前回実行時刻から今回実行時刻までのデータを取得
-    execution_date: datetime = context["execution_date"]
-    created_after = execution_date - timedelta(hours=FetchConfig.LOOKBACK_HOURS)
 
     def process_repository(repo: dict[str, str]) -> list[dict[str, Any]]:
         """リポジトリからワークフロー実行データを取得
@@ -174,6 +175,21 @@ def fetch_workflow_runs(github_client: GitHubClientProtocol, **context: Any) -> 
 
         owner = repo["owner"]
         repo_name = repo["repo"]
+
+        # リポジトリの最新実行タイムスタンプを取得
+        latest_timestamp = db.get_latest_run_timestamp(owner, repo_name)
+
+        if latest_timestamp is None:
+            # 初回実行: 全件取得
+            logger.info(f"Initial fetch for {owner}/{repo_name} (fetching all runs)")
+            created_after = None
+        else:
+            # 2回目以降: 差分取得
+            logger.info(
+                f"Incremental fetch for {owner}/{repo_name} "
+                f"(fetching runs after {latest_timestamp.isoformat()})"
+            )
+            created_after = latest_timestamp
 
         runs = github_client.get_workflow_runs(
             owner=owner, repo=repo_name, created_after=created_after

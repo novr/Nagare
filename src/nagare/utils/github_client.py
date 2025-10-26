@@ -217,8 +217,8 @@ class GitHubClient:
         """
         rate_limit = self.github.get_rate_limit()
 
-        core = rate_limit.core
-        search = rate_limit.search
+        core = rate_limit.resources.core
+        search = rate_limit.resources.search
 
         rate_info = {
             "core": {
@@ -258,11 +258,11 @@ class GitHubClient:
         rate_limit = self.github.get_rate_limit()
 
         if resource == "core":
-            reset_time = rate_limit.core.reset
-            remaining = rate_limit.core.remaining
+            reset_time = rate_limit.resources.core.reset
+            remaining = rate_limit.resources.core.remaining
         elif resource == "search":
-            reset_time = rate_limit.search.reset
-            remaining = rate_limit.search.remaining
+            reset_time = rate_limit.resources.search.reset
+            remaining = rate_limit.resources.search.remaining
         else:
             logger.error(f"Unknown resource type: {resource}")
             return

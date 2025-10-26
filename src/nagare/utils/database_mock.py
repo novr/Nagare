@@ -46,6 +46,23 @@ class MockDatabaseClient:
         logger.warning("[MOCK] No repositories configured. Set REPOSITORIES_JSON")
         return []
 
+    def get_latest_run_timestamp(self, owner: str, repo: str) -> Any:
+        """指定リポジトリの最新パイプライン実行タイムスタンプを取得する（モック実装）
+
+        モック環境ではデータが保存されないため、常にNoneを返す（初回取得として扱う）。
+
+        Args:
+            owner: リポジトリオーナー
+            repo: リポジトリ名
+
+        Returns:
+            常にNone（初回取得をシミュレート）
+        """
+        logger.debug(
+            f"[MOCK] get_latest_run_timestamp called for {owner}/{repo} - returning None (initial fetch)"
+        )
+        return None
+
     def upsert_pipeline_runs(self, runs: list[dict[str, Any]]) -> None:
         """pipeline_runsテーブルにデータをUPSERTする（モック実装）
 

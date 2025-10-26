@@ -18,7 +18,11 @@ from nagare.tasks.fetch import (
 )
 from nagare.tasks.load import load_to_database
 from nagare.tasks.transform import transform_data
-from nagare.utils.dag_helpers import with_database_client, with_github_client
+from nagare.utils.dag_helpers import (
+    with_database_client,
+    with_github_and_database_clients,
+    with_github_client,
+)
 
 # デフォルト引数
 default_args = {
@@ -51,7 +55,7 @@ with DAG(
     # タスク2: ワークフロー実行データの取得
     task_fetch_workflow_runs = PythonOperator(
         task_id=TaskIds.FETCH_WORKFLOW_RUNS,
-        python_callable=with_github_client(fetch_workflow_runs),
+        python_callable=with_github_and_database_clients(fetch_workflow_runs),
     )
 
     # タスク3: ジョブデータの取得

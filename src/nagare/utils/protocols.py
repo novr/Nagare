@@ -35,6 +35,18 @@ class DatabaseClientProtocol(Protocol):
         """監視対象リポジトリのリストを取得する"""
         ...
 
+    def get_latest_run_timestamp(self, owner: str, repo: str) -> datetime | None:
+        """指定リポジトリの最新パイプライン実行タイムスタンプを取得する
+
+        Args:
+            owner: リポジトリオーナー
+            repo: リポジトリ名
+
+        Returns:
+            最新の started_at タイムスタンプ。データがない場合はNone
+        """
+        ...
+
     def upsert_pipeline_runs(self, runs: list[dict[str, Any]]) -> None:
         """pipeline_runsテーブルにデータをUPSERTする"""
         ...

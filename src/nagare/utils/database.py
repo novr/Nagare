@@ -79,11 +79,45 @@ class DatabaseClient:
         finally:
             session.close()
 
+    def get_latest_run_timestamp(self, owner: str, repo: str) -> Any:
+        """指定リポジトリの最新パイプライン実行タイムスタンプを取得する
+
+        Args:
+            owner: リポジトリオーナー
+            repo: リポジトリ名
+
+        Returns:
+            最新の started_at タイムスタンプ。データがない場合はNone
+        """
+        session = self.session_factory()
+        try:
+            repository_name = f"{owner}/{repo}"
+            query = text(
+                """
+                SELECT pr.started_at
+                FROM pipeline_runs pr
+                JOIN repositories r ON pr.repository_id = r.id
+                WHERE r.repository_name = :repository_name
+                ORDER BY pr.started_at DESC
+                LIMIT 1
+                """
+            )
+            result = session.execute(query, {"repository_name": repository_name})
+            row = result.fetchone()
+            if row:
+                logger.debug(f"Latest run timestamp for {repository_name}: {row[0]}")
+                return row[0]
+            else:
+                logger.debug(f"No runs found for {repository_name} (initial fetch)")
+                return None
+        finally:
+            session.close()
+
     def upsert_pipeline_runs(self, runs: list[dict[str, Any]]) -> None:
         """pipeline_runsテーブルにデータをUPSERTする
 
         Args:
-            runs: ワークフロー実行データのリスト
+            runs: ワークフロー実行データのリスト（repository_owner, repository_nameを含む）
         """
         if not runs:
             return
@@ -91,6 +125,28 @@ class DatabaseClient:
         session = self.session_factory()
         try:
             for run in runs:
+                # repository_owner/repository_nameからrepository_idを取得
+                repository_name = f"{run['repository_owner']}/{run['repository_name']}"
+                repo_query = text(
+                    """
+                    SELECT id FROM repositories
+                    WHERE repository_name = :repository_name
+                    """
+                )
+                repo_result = session.execute(
+                    repo_query, {"repository_name": repository_name}
+                )
+                repo_row = repo_result.fetchone()
+
+                if not repo_row:
+                    logger.warning(
+                        f"Repository {repository_name} not found in database, skipping run"
+                    )
+                    continue
+
+                repository_id = repo_row[0]
+
+                # repository_idを追加してINSERT
                 query = text(
                     """
                     INSERT INTO pipeline_runs (
@@ -116,7 +172,23 @@ class DatabaseClient:
                         updated_at = CURRENT_TIMESTAMP
                     """
                 )
-                session.execute(query, run)
+                session.execute(
+                    query,
+                    {
+                        "source_run_id": run["source_run_id"],
+                        "source": run["source"],
+                        "pipeline_name": run["pipeline_name"],
+                        "status": run["status"],
+                        "trigger_event": run["trigger_event"],
+                        "repository_id": repository_id,
+                        "branch_name": run.get("branch_name"),
+                        "commit_sha": run.get("commit_sha"),
+                        "started_at": run.get("started_at"),
+                        "completed_at": run.get("completed_at"),
+                        "duration_ms": run.get("duration_ms"),
+                        "url": run.get("url"),
+                    },
+                )
             session.commit()
             logger.info(f"Upserted {len(runs)} pipeline runs")
         except Exception:
@@ -129,7 +201,7 @@ class DatabaseClient:
         """jobsテーブルにデータをUPSERTする
 
         Args:
-            jobs: ジョブデータのリスト
+            jobs: ジョブデータのリスト（source_run_id, repository_owner, repository_nameを含む）
         """
         if not jobs:
             return
@@ -137,6 +209,39 @@ class DatabaseClient:
         session = self.session_factory()
         try:
             for job in jobs:
+                # source_run_idとrepository情報からrun_id(pipeline_runs.id)を取得
+                repository_name = f"{job['repository_owner']}/{job['repository_name']}"
+
+                run_query = text(
+                    """
+                    SELECT pr.id
+                    FROM pipeline_runs pr
+                    JOIN repositories r ON pr.repository_id = r.id
+                    WHERE pr.source_run_id = :source_run_id
+                      AND pr.source = :source
+                      AND r.repository_name = :repository_name
+                    """
+                )
+                run_result = session.execute(
+                    run_query,
+                    {
+                        "source_run_id": job["source_run_id"],
+                        "source": job["source"],
+                        "repository_name": repository_name,
+                    },
+                )
+                run_row = run_result.fetchone()
+
+                if not run_row:
+                    logger.warning(
+                        f"Pipeline run not found for job {job['source_job_id']} "
+                        f"(source_run_id={job['source_run_id']}, repo={repository_name}), skipping"
+                    )
+                    continue
+
+                run_id = run_row[0]
+
+                # run_idを使用してINSERT
                 query = text(
                     """
                     INSERT INTO jobs (
@@ -156,7 +261,18 @@ class DatabaseClient:
                         updated_at = CURRENT_TIMESTAMP
                     """
                 )
-                session.execute(query, job)
+                session.execute(
+                    query,
+                    {
+                        "run_id": run_id,
+                        "source_job_id": job["source_job_id"],
+                        "job_name": job["job_name"],
+                        "status": job["status"],
+                        "started_at": job.get("started_at"),
+                        "completed_at": job.get("completed_at"),
+                        "duration_ms": job.get("duration_ms"),
+                    },
+                )
             session.commit()
             logger.info(f"Upserted {len(jobs)} jobs")
         except Exception:

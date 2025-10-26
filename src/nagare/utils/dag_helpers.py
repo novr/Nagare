@@ -98,3 +98,53 @@ def with_github_client(
     wrapper.__doc__ = task_func.__doc__
 
     return wrapper
+
+
+def with_github_and_database_clients(
+    task_func: Callable[..., T],
+    factory: ClientFactory | None = None,
+) -> Callable[..., T]:
+    """GitHubClientとDatabaseClientの両方を注入してタスク関数を実行するラッパーを生成する
+
+    Args:
+        task_func: GitHubClientとDatabaseClientを引数として受け取るタスク関数
+        factory: ClientFactoryインスタンス（省略時はget_factory()を使用）
+
+    Returns:
+        ラップされた関数（Airflowのコンテキストを受け取る）
+
+    Example:
+        ```python
+        def my_task(
+            github_client: GitHubClientProtocol,
+            db: DatabaseClientProtocol,
+            **context: Any
+        ) -> None:
+            latest_timestamp = db.get_latest_run_timestamp("owner", "repo")
+            runs = github_client.get_workflow_runs(..., created_after=latest_timestamp)
+            ...
+
+        # DAGで使用
+        task = PythonOperator(
+            task_id="my_task",
+            python_callable=with_github_and_database_clients(my_task),
+        )
+        ```
+    """
+
+    def wrapper(**context: Any) -> T:
+        """Airflowから呼ばれるラッパー関数"""
+        if factory is None:
+            current_factory = get_factory()
+        else:
+            current_factory = factory
+
+        with current_factory.create_github_client() as github_client:
+            with current_factory.create_database_client() as db:
+                return task_func(github_client=github_client, db=db, **context)
+
+    # 元の関数名とdocstringを保持
+    wrapper.__name__ = task_func.__name__
+    wrapper.__doc__ = task_func.__doc__
+
+    return wrapper
