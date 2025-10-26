@@ -41,8 +41,15 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
       AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/src/nagare/dags
 
-      # データベース接続
+      # データベース接続（Airflow用）
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${DATABASE_USER:-nagare_user}:${DATABASE_PASSWORD}@postgres:5432/${DATABASE_NAME:-nagare}
+
+      # データベース接続（アプリケーション用）
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_NAME: ${DATABASE_NAME:-nagare}
+      DATABASE_USER: ${DATABASE_USER:-nagare_user}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
 
       # Webserver設定
       AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'false'
@@ -100,8 +107,15 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
       AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/src/nagare/dags
 
-      # データベース接続
+      # データベース接続（Airflow用）
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${DATABASE_USER:-nagare_user}:${DATABASE_PASSWORD}@postgres:5432/${DATABASE_NAME:-nagare}
+
+      # データベース接続（アプリケーション用）
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_NAME: ${DATABASE_NAME:-nagare}
+      DATABASE_USER: ${DATABASE_USER:-nagare_user}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
 
       # GitHub認証情報
       GITHUB_APP_ID: ${GITHUB_APP_ID}
@@ -159,7 +173,9 @@ services:
 
   # Apache Superset
   superset:
-    image: apache/superset:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.superset
     container_name: nagare-superset
     environment:
       SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY}
