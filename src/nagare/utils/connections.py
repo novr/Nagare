@@ -22,6 +22,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
+from urllib.parse import quote_plus
 
 logger = logging.getLogger(__name__)
 
@@ -344,11 +345,13 @@ class DatabaseConnection:
     def url(self) -> str:
         """SQLAlchemy URL生成
 
+        パスワードはURLエンコードされます（特殊文字対策）。
+
         Returns:
             PostgreSQL接続URL
         """
         return (
-            f"postgresql://{self.user}:{self.password}"
+            f"postgresql://{self.user}:{quote_plus(self.password)}"
             f"@{self.host}:{self.port}/{self.database}"
         )
 

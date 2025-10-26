@@ -9,6 +9,7 @@ Usage:
 
 import os
 from datetime import datetime
+from urllib.parse import quote_plus
 
 import pandas as pd
 import streamlit as st
@@ -35,7 +36,8 @@ def get_database_engine():
     db_user = os.getenv("DATABASE_USER", "nagare_user")
     db_password = os.getenv("DATABASE_PASSWORD", "")
 
-    db_url = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+    # パスワードをURLエンコード（特殊文字対策）
+    db_url = f"postgresql://{db_user}:{quote_plus(db_password)}@{db_host}:{db_port}/{db_name}"
     return create_engine(db_url, pool_pre_ping=True)
 
 

@@ -97,7 +97,10 @@ class TestGitHubClientErrorHandling:
 
     @patch("nagare.utils.github_client.Github")
     def test_github_timeout_error(self, mock_github: MagicMock) -> None:
-        """タイムアウトエラー"""
+        """タイムアウトエラー
+
+        注: GitHubクライアントは通常Pythonの標準TimeoutErrorを使用
+        """
         from nagare.utils.connections import GitHubConnection
         from nagare.utils.github_client import GitHubClient
 
@@ -160,13 +163,19 @@ class TestDatabaseErrorHandling:
 
     @patch("nagare.utils.database.create_engine")
     def test_database_query_timeout(self, mock_create_engine: MagicMock) -> None:
-        """クエリタイムアウト"""
+        """クエリタイムアウト
+
+        注: SQLAlchemyは sqlalchemy.exc.TimeoutError を使用
+        """
+        from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
+
         from nagare.utils.connections import DatabaseConnection
         from nagare.utils.database import DatabaseClient
 
         mock_engine = MagicMock()
         mock_conn = MagicMock()
-        mock_conn.execute.side_effect = TimeoutError("Query timeout")
+        # SQLAlchemyの正しい例外型を使用
+        mock_conn.execute.side_effect = SQLAlchemyTimeoutError("Query timeout", None, None)
         mock_engine.connect.return_value.__enter__.return_value = mock_conn
         mock_create_engine.return_value = mock_engine
 
@@ -175,7 +184,7 @@ class TestDatabaseErrorHandling:
         )
         client = DatabaseClient(connection=connection)
 
-        with pytest.raises(TimeoutError):
+        with pytest.raises(SQLAlchemyTimeoutError):
             with client.engine.connect() as conn:
                 conn.execute("SELECT * FROM large_table")
 
