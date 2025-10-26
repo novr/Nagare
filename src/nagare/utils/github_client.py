@@ -1,17 +1,26 @@
 """GitHub API Clientモジュール
 
 PyGithubを使用したGitHub APIクライアント
+
+ADR-002: Connection管理アーキテクチャに準拠し、
+GitHubConnectionから接続情報を受け取る。
 """
 
 import logging
-import os
 import time
 from datetime import datetime
 from typing import Any
 
-from github import Auth, Github, GithubException, GithubRetry, RateLimitExceededException
+from github import (
+    Auth,
+    Github,
+    GithubException,
+    GithubRetry,
+    RateLimitExceededException,
+)
 
 from nagare.constants import GitHubConfig
+from nagare.utils.connections import GitHubConnection
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +83,8 @@ class GitHubClient:
 
     def __init__(
         self,
+        connection: GitHubConnection | None = None,
+        # 後方互換性のため既存引数も残す（非推奨）
         app_id: int | None = None,
         private_key: str | None = None,
         installation_id: int | None = None,
@@ -82,87 +93,81 @@ class GitHubClient:
     ) -> None:
         """GitHub Clientを初期化する
 
-        引数が指定されない場合、環境変数から認証情報を読み取る。
-        GitHub Appsとして認証する場合は app_id, private_key, installation_id を指定。
-        Personal Access Tokenで認証する場合は token を指定。
-
         Args:
-            app_id: GitHub App ID (未指定時は環境変数GITHUB_APP_IDから取得)
-            private_key: GitHub App Private Key (未指定時は環境変数から取得)
-            installation_id: GitHub App Installation ID (未指定時は環境変数から取得)
-            token: Personal Access Token (未指定時は環境変数GITHUB_TOKENから取得)
-            base_url: GitHub API ベースURL（GitHub Enterpriseの場合に変更可能）
+            connection: GitHub接続設定（推奨）
+            app_id: GitHub App ID（非推奨、後方互換性のため残存）
+            private_key: GitHub App Private Key（非推奨）
+            installation_id: GitHub App Installation ID（非推奨）
+            token: Personal Access Token（非推奨）
+            base_url: GitHub API ベースURL（非推奨）
 
         Raises:
             ValueError: 認証情報が不足している場合
         """
-        # 各引数が未指定の場合に環境変数から読み取る
-        # GitHub Apps認証
-        if app_id is None:
-            app_id_str = os.getenv("GITHUB_APP_ID")
-            if app_id_str:
-                try:
-                    app_id = int(app_id_str)
-                except ValueError as e:
-                    raise ValueError(
-                        f"GITHUB_APP_ID must be an integer, got: {app_id_str}"
-                    ) from e
+        # Connection優先、なければ既存引数から生成、最後に環境変数
+        if connection is None:
+            # 既存の引数が指定されている場合（後方互換性）
+            if any(
+                [
+                    app_id,
+                    private_key,
+                    installation_id,
+                    token,
+                    base_url != "https://api.github.com",
+                ]
+            ):
+                connection = GitHubConnection(
+                    token=token,
+                    app_id=app_id,
+                    installation_id=installation_id,
+                    private_key=private_key,
+                    base_url=base_url,
+                )
+            else:
+                # 環境変数から生成
+                connection = GitHubConnection.from_env()
 
-        if installation_id is None:
-            installation_id_str = os.getenv("GITHUB_APP_INSTALLATION_ID")
-            if installation_id_str:
-                try:
-                    installation_id = int(installation_id_str)
-                except ValueError as e:
-                    raise ValueError(
-                        f"GITHUB_APP_INSTALLATION_ID must be an integer, "
-                        f"got: {installation_id_str}"
-                    ) from e
+        # Private keyファイルの読み込み（必要な場合）
+        if connection.private_key is None and connection.private_key_path:
+            try:
+                with open(connection.private_key_path) as f:
+                    connection.private_key = f.read()
+            except FileNotFoundError as e:
+                raise ValueError(
+                    f"GitHub App private key file not found: {connection.private_key_path}"
+                ) from e
+            except PermissionError as e:
+                raise ValueError(
+                    f"Permission denied reading GitHub App private key file: "
+                    f"{connection.private_key_path}"
+                ) from e
+            except Exception as e:
+                raise ValueError(
+                    f"Failed to read GitHub App private key file "
+                    f"{connection.private_key_path}: {e}"
+                ) from e
 
-        if private_key is None:
-            private_key_env = os.getenv("GITHUB_APP_PRIVATE_KEY")
-            private_key_path = os.getenv("GITHUB_APP_PRIVATE_KEY_PATH")
-
-            if private_key_path and not private_key_env:
-                try:
-                    with open(private_key_path) as f:
-                        private_key = f.read()
-                except FileNotFoundError as e:
-                    raise ValueError(
-                        f"GitHub App private key file not found: {private_key_path}"
-                    ) from e
-                except PermissionError as e:
-                    raise ValueError(
-                        f"Permission denied reading GitHub App private key file: "
-                        f"{private_key_path}"
-                    ) from e
-                except Exception as e:
-                    raise ValueError(
-                        f"Failed to read GitHub App private key file "
-                        f"{private_key_path}: {e}"
-                    ) from e
-            elif private_key_env:
-                private_key = private_key_env
-
-        # Personal Access Token認証（フォールバック）
-        if token is None:
-            token = os.getenv("GITHUB_TOKEN")
+        # 認証情報の検証
+        if not connection.validate():
+            raise ValueError(
+                "GitHub authentication not configured. "
+                "Set either token or (app_id, installation_id, private_key)."
+            )
 
         # 認証設定
-        if app_id and private_key and installation_id:
+        if connection.app_id and connection.private_key and connection.installation_id:
             # GitHub Apps認証
-            app_auth = Auth.AppAuth(app_id, private_key)
-            auth = Auth.AppInstallationAuth(app_auth, installation_id)
+            app_auth = Auth.AppAuth(connection.app_id, connection.private_key)
+            auth = Auth.AppInstallationAuth(app_auth, connection.installation_id)
             logger.debug("GitHubClient initialized with GitHub App authentication")
-        elif token:
+        elif connection.token:
             # Personal Access Token認証
-            auth = Auth.Token(token)
+            auth = Auth.Token(connection.token)
             logger.debug("GitHubClient initialized with token authentication")
         else:
             raise ValueError(
                 "GitHub authentication not configured. "
-                "Set either (GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, "
-                "GITHUB_APP_PRIVATE_KEY/PATH) or GITHUB_TOKEN"
+                "Set either token or (app_id, installation_id, private_key)."
             )
 
         # リトライ設定（指数バックオフ）
@@ -176,7 +181,7 @@ class GitHubClient:
         # PyGithubがレート制限を自動的に処理
         self.github = Github(
             auth=auth,
-            base_url=base_url,
+            base_url=connection.base_url,
             retry=retry,
             per_page=GitHubConfig.PER_PAGE,
         )
@@ -268,7 +273,9 @@ class GitHubClient:
             return
 
         if remaining > 0:
-            logger.info(f"Rate limit not exceeded for {resource}: {remaining} remaining")
+            logger.info(
+                f"Rate limit not exceeded for {resource}: {remaining} remaining"
+            )
             return
 
         # リセットまでの待機時間を計算
@@ -355,7 +362,9 @@ class GitHubClient:
                             run.updated_at.isoformat() if run.updated_at else None
                         ),
                         "run_started_at": (
-                            run.run_started_at.isoformat() if run.run_started_at else None
+                            run.run_started_at.isoformat()
+                            if run.run_started_at
+                            else None
                         ),
                         "html_url": run.html_url,
                     }
@@ -365,7 +374,9 @@ class GitHubClient:
                 return all_runs
 
             except RateLimitExceededException:
-                logger.warning(f"Rate limit exceeded, waiting for reset (retry {retry_count}/{max_retries})")
+                logger.warning(
+                    f"Rate limit exceeded, waiting for reset (retry {retry_count}/{max_retries})"
+                )
                 self.wait_for_rate_limit_reset("core")
                 retry_count += 1
                 if retry_count > max_retries:
@@ -374,7 +385,7 @@ class GitHubClient:
             except GithubException as e:
                 # 一時的なエラー (502, 503, 504) の場合はリトライ
                 if e.status in [502, 503, 504] and retry_count < max_retries:
-                    wait_time = 2 ** retry_count  # 指数バックオフ
+                    wait_time = 2**retry_count  # 指数バックオフ
                     logger.warning(
                         f"Temporary error {e.status}, retrying in {wait_time}s "
                         f"(retry {retry_count}/{max_retries})"
@@ -460,7 +471,9 @@ class GitHubClient:
                 return all_jobs
 
             except RateLimitExceededException:
-                logger.warning(f"Rate limit exceeded, waiting for reset (retry {retry_count}/{max_retries})")
+                logger.warning(
+                    f"Rate limit exceeded, waiting for reset (retry {retry_count}/{max_retries})"
+                )
                 self.wait_for_rate_limit_reset("core")
                 retry_count += 1
                 if retry_count > max_retries:
@@ -469,7 +482,7 @@ class GitHubClient:
             except GithubException as e:
                 # 一時的なエラー (502, 503, 504) の場合はリトライ
                 if e.status in [502, 503, 504] and retry_count < max_retries:
-                    wait_time = 2 ** retry_count  # 指数バックオフ
+                    wait_time = 2**retry_count  # 指数バックオフ
                     logger.warning(
                         f"Temporary error {e.status}, retrying in {wait_time}s "
                         f"(retry {retry_count}/{max_retries})"
@@ -654,7 +667,9 @@ class GitHubClient:
             }
 
         except GithubException as e:
-            error_msg = f"Failed to fetch repositories for user '{username}': HTTP {e.status}"
+            error_msg = (
+                f"Failed to fetch repositories for user '{username}': HTTP {e.status}"
+            )
             if e.status == 404:
                 error_msg = f"User '{username}' not found or not accessible"
             logger.error(error_msg)
@@ -739,7 +754,9 @@ class GitHubClient:
             }
 
         except GithubException as e:
-            error_msg = f"Failed to search repositories with query '{query}': HTTP {e.status}"
+            error_msg = (
+                f"Failed to search repositories with query '{query}': HTTP {e.status}"
+            )
             logger.error(error_msg)
             raise GithubException(e.status, e.data, e.headers) from e
 

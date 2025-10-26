@@ -39,6 +39,9 @@ Thumbs.db
 .env.local
 .env.*.local
 
+# Connection configuration
+connections.yml
+
 # Airflow
 airflow.db
 airflow.cfg

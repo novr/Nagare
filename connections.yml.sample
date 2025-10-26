@@ -1,0 +1,100 @@
+# Nagare Connection Configuration
+#
+# この設定ファイルは環境変数の代わりにConnection情報を管理できます。
+# 使用方法：
+#   1. cp connections.yml.sample connections.yml
+#   2. 必要な項目を編集
+#   3. Pythonコードで読み込み: ConnectionRegistry.from_file("connections.yml")
+#
+# ⚠️ セキュリティ警告:
+#   - このファイルには機密情報が含まれます
+#   - .gitignoreに追加されていることを確認してください
+#   - 本番環境では環境変数の使用を推奨します
+
+# ==============================================================================
+# GitHub接続設定
+# ==============================================================================
+github:
+  # Personal Access Token認証（推奨）
+  # GitHub Settings → Developer settings → Personal access tokens → Generate new token
+  # 必要な権限: repo, read:org, workflow
+  token: YOUR_GITHUB_TOKEN_HERE
+
+  # GitHub Apps認証（エンタープライズ向け）
+  # 以下をコメント解除して使用
+  # app_id: 123456
+  # installation_id: 789012
+  # private_key_path: /path/to/private-key.pem
+  # または、private_keyに直接記載（非推奨）
+  # private_key: |
+  #   -----BEGIN RSA PRIVATE KEY-----
+  #   ...
+  #   -----END RSA PRIVATE KEY-----
+
+  # GitHub Enterprise用のベースURL
+  # デフォルト: https://api.github.com
+  # base_url: https://github.example.com/api/v3
+
+
+# ==============================================================================
+# GitLab接続設定（将来の拡張用）
+# ==============================================================================
+gitlab:
+  # Personal Access Token
+  # GitLab Settings → Access Tokens → Create personal access token
+  # 必要なスコープ: api, read_api, read_repository
+  token: YOUR_GITLAB_TOKEN_HERE
+
+  # GitLab Enterprise用のベースURL
+  # デフォルト: https://gitlab.com
+  # base_url: https://gitlab.example.com
+
+
+# ==============================================================================
+# CircleCI接続設定（将来の拡張用）
+# ==============================================================================
+circleci:
+  # API Token
+  # CircleCI → User Settings → Personal API Tokens → Create New Token
+  api_token: YOUR_CIRCLECI_TOKEN_HERE
+
+  # CircleCI Enterprise用のベースURL
+  # デフォルト: https://circleci.com/api
+  # base_url: https://circleci.example.com/api
+
+
+# ==============================================================================
+# データベース接続設定
+# ==============================================================================
+database:
+  # PostgreSQL接続情報
+  host: localhost
+  port: 5432
+  database: nagare
+  user: nagare_user
+  password: YOUR_SECURE_DATABASE_PASSWORD_HERE
+
+  # Connection pooling設定（オプション）
+  # デフォルト値は以下の通り
+  # pool_size: 5
+  # max_overflow: 10
+  # pool_pre_ping: true
+
+
+# ==============================================================================
+# 使用例
+# ==============================================================================
+# Python:
+#   from nagare.utils.connections import ConnectionRegistry
+#
+#   # 設定ファイルから読み込み
+#   ConnectionRegistry.from_file("connections.yml")
+#
+#   # または、環境変数から読み込み（デフォルト）
+#   github_conn = ConnectionRegistry.get_github()  # 自動的にGITHUB_TOKENを読み取り
+#
+# Docker Compose:
+#   環境変数での設定を推奨（docker-compose.yml参照）
+#
+# ローカル開発:
+#   このファイルを使用すると、.envファイルより優先されます

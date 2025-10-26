@@ -1,10 +1,12 @@
 """データベースユーティリティ
 
 PostgreSQL接続とデータアクセス機能を提供する。
+
+ADR-002: Connection管理アーキテクチャに準拠し、
+DatabaseConnectionから接続情報を受け取る。
 """
 
 import logging
-import os
 from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
@@ -12,6 +14,8 @@ from typing import Any
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
+
+from nagare.utils.connections import DatabaseConnection
 
 logger = logging.getLogger(__name__)
 
@@ -23,29 +27,38 @@ class DatabaseClient:
     開発環境ではMockDatabaseClientを使用すること。
     """
 
-    def __init__(self) -> None:
-        """DatabaseClientを初期化する"""
+    def __init__(self, connection: DatabaseConnection | None = None) -> None:
+        """DatabaseClientを初期化する
+
+        Args:
+            connection: データベース接続設定
+                       （省略時は環境変数から生成）
+        """
         logger.info("DatabaseClient initialized (production mode)")
 
-        # 環境変数から接続情報を取得
-        db_host = os.getenv("DATABASE_HOST", "localhost")
-        db_port = os.getenv("DATABASE_PORT", "5432")
-        db_name = os.getenv("DATABASE_NAME", "nagare")
-        db_user = os.getenv("DATABASE_USER", "nagare_user")
-        db_password = os.getenv("DATABASE_PASSWORD", "")
+        # Connection優先、なければ環境変数から生成
+        if connection is None:
+            connection = DatabaseConnection.from_env()
 
-        # 接続URL構築
-        db_url = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+        # 接続情報の検証
+        if not connection.validate():
+            raise ValueError(
+                "Database connection not configured properly. "
+                "Check DATABASE_HOST, DATABASE_NAME, and DATABASE_USER."
+            )
 
         # PostgreSQL接続プールの初期化
         self.engine: Engine = create_engine(
-            db_url,
-            pool_pre_ping=True,  # 接続の有効性を確認
-            pool_size=5,
-            max_overflow=10,
+            connection.url,
+            pool_pre_ping=connection.pool_pre_ping,
+            pool_size=connection.pool_size,
+            max_overflow=connection.max_overflow,
         )
         self.session_factory = sessionmaker(bind=self.engine)
-        logger.info(f"Connected to PostgreSQL: {db_host}:{db_port}/{db_name}")
+        logger.info(
+            f"Connected to PostgreSQL: {connection.host}:{connection.port}"
+            f"/{connection.database}"
+        )
 
     def get_repositories(self) -> list[dict[str, str]]:
         """監視対象リポジトリのリストを取得する
@@ -129,10 +142,7 @@ class DatabaseClient:
         try:
             # 全てのrepository_nameを抽出（重複排除）
             repository_names = list(
-                {
-                    f"{run['repository_owner']}/{run['repository_name']}"
-                    for run in runs
-                }
+                {f"{run['repository_owner']}/{run['repository_name']}" for run in runs}
             )
 
             # 一度のクエリで全てのrepository_idを取得（N+1問題の解決）
@@ -147,9 +157,7 @@ class DatabaseClient:
                     WHERE repository_name IN ({placeholders})
                     """
                 )
-                params = {
-                    f"repo_{i}": name for i, name in enumerate(repository_names)
-                }
+                params = {f"repo_{i}": name for i, name in enumerate(repository_names)}
                 result = session.execute(repo_query, params)
                 repo_cache = {row[0]: row[1] for row in result}
 
@@ -161,9 +169,7 @@ class DatabaseClient:
                 repository_id = repo_cache.get(repository_name)
 
                 if repository_id is None:
-                    logger.warning(
-                        f"Repository {repository_name} not found, skipping"
-                    )
+                    logger.warning(f"Repository {repository_name} not found, skipping")
                     skipped_count += 1
                     continue
 
