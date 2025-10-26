@@ -99,24 +99,18 @@ docker-compose build streamlit-admin
   - 🟢 成功: 緑背景
   - 🔴 失敗: 赤背景
 
-## ローカル開発環境での起動
+## 開発時のデバッグ
+
+コードを修正した後、変更を反映させる方法:
 
 ```bash
-# 依存関係インストール
-uv pip install -e .
+# Streamlitコンテナを再起動
+docker-compose restart streamlit-admin
 
-# 環境変数設定
-export DATABASE_HOST=localhost
-export DATABASE_PORT=5432
-export DATABASE_NAME=nagare
-export DATABASE_USER=nagare_user
-export DATABASE_PASSWORD=your_password
-
-# Streamlit起動
-streamlit run src/nagare/admin_app.py
+# コードを大幅に変更した場合は再ビルド
+docker-compose build streamlit-admin
+docker-compose up -d streamlit-admin
 ```
-
-ブラウザが自動で開かない場合: http://localhost:8501
 
 ## トラブルシューティング
 
@@ -189,13 +183,14 @@ docker-compose ps streamlit-admin
 # Streamlitポート（デフォルト: 8501）
 STREAMLIT_PORT=8501
 
-# データベース接続情報
-DATABASE_HOST=postgres
-DATABASE_PORT=5432
-DATABASE_NAME=nagare
-DATABASE_USER=nagare_user
+# データベースパスワード（必須）
 DATABASE_PASSWORD=your_secure_password_here
 ```
+
+**設定の管理方針**:
+- `DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_NAME`, `DATABASE_USER` は`docker-compose.yml`で管理
+- `.env`には機密情報（パスワード、トークン）のみ記載
+- カスタマイズする場合は`docker-compose.yml`を編集
 
 ## セキュリティ注意事項
 

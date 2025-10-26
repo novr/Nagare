@@ -29,9 +29,6 @@ docker exec -i nagare-postgres psql -U nagare_user -d nagare < scripts/init_db.s
 ```bash
 # Dockerコンテナ内で実行
 docker exec nagare-airflow-scheduler python /opt/airflow/scripts/manage_repositories.py add owner/repo
-
-# ローカル環境の場合
-uv run python scripts/manage_repositories.py add owner/repo
 ```
 
 #### CLIツールの使い方
@@ -132,15 +129,16 @@ SELECT id, repository_name, active FROM repositories;
 
 ### データベース接続エラー
 
-`.env`のデータベース接続情報を確認：
+`.env`のデータベースパスワードを確認：
 
 ```bash
-DATABASE_HOST=postgres
-DATABASE_PORT=5432
-DATABASE_NAME=nagare
-DATABASE_USER=nagare_user
 DATABASE_PASSWORD=your_secure_password_here
 ```
+
+**設定の管理方針**:
+- `DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_NAME`, `DATABASE_USER` は`docker-compose.yml`で管理
+- `.env`には機密情報（`DATABASE_PASSWORD`）のみ記載
+- カスタマイズする場合は`docker-compose.yml`を編集
 
 ### スキーマが古い
 

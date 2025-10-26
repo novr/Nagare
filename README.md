@@ -41,16 +41,14 @@ Kent Beck氏の警告「指標が目標になると、それは良い指標で�
 
 ## 環境構築
 
-### Docker環境での実行（推奨）
+NagareはDocker Composeを使用した開発環境を提供しています。Airflow、PostgreSQL、Superset、Streamlitを含む完全な環境を簡単に構築できます。
 
-Docker Composeを使用して、Airflow、PostgreSQL、Supersetを含む完全な環境を簡単に構築できます。
-
-#### 前提条件
+### 前提条件
 
 - [Docker](https://docs.docker.com/get-docker/) がインストールされていること
 - [Docker Compose](https://docs.docker.com/compose/install/) がインストールされていること
 
-#### セットアップ手順
+### セットアップ手順
 
 1. リポジトリをクローン
 
@@ -99,6 +97,15 @@ vi .env  # または任意のエディタ
 - `.env`ファイルは`.gitignore`で除外されています
 - `.env`ファイルを誤ってコミットしないよう注意してください
 
+**オプション: 設定ファイルでの管理**:
+```bash
+# 環境変数の代わりに設定ファイルで管理することも可能
+cp connections.yml.sample connections.yml
+vi connections.yml  # 接続情報を編集
+```
+
+詳細は [ADR-002: Connection管理アーキテクチャ](docs/02_design/adr/002-connection-management-architecture.md) を参照。
+
 5. Docker環境の起動
 
 ```bash
@@ -134,7 +141,7 @@ http://localhost:8501 にアクセスして、Streamlit管理画面からリポ�
 
 詳細は [Streamlit管理画面ガイド](docs/03_setup/streamlit_admin.md) を参照してください。
 
-#### Docker環境の管理
+### Docker環境の管理
 
 ```bash
 # 停止
@@ -153,71 +160,61 @@ docker compose logs -f [service-name]
 docker compose ps
 ```
 
-### ローカル開発環境のセットアップ
+## 開発ツール
 
-uvを使用したローカル開発環境の構築方法です。
+Nagareの開発では、すべての開発ツール（リント、フォーマット、テスト）をDockerコンテナ内で実行します。
 
-#### 前提条件
-
-- [uv](https://github.com/astral-sh/uv) がインストールされていること
-- Python 3.11
-
-#### セットアップ手順
-
-1. リポジトリをクローン
-
-```bash
-git clone <repository-url>
-cd Nagare
-```
-
-2. 依存関係をインストール
-
-```bash
-# ローカル開発環境用（Airflow/Supersetを含む）
-uv sync --extra local --extra dev
-
-# または、本番環境用の最小限の依存関係のみ
-uv sync --extra dev
-```
-
-3. 環境変数の設定
-
-```bash
-cp .env.sample .env
-# .envファイルを編集して必要な環境変数を設定
-```
-
-### 開発ツール
-
-#### コードフォーマット
+### コードフォーマット
 
 ```bash
 # コードをフォーマット
-uv run ruff format src/
+docker compose exec airflow-scheduler uv run ruff format src/
 ```
 
-#### リント
+### リント
 
 ```bash
 # リント実行
-uv run ruff check src/
+docker compose exec airflow-scheduler uv run ruff check src/
 
 # リント（自動修正付き）
-uv run ruff check --fix src/
+docker compose exec airflow-scheduler uv run ruff check --fix src/
 
 # 型チェック
-uv run pyright src/
+docker compose exec airflow-scheduler uv run pyright src/
 ```
 
-#### テスト
+### テスト
 
 ```bash
 # すべてのテストを実行
-uv run pytest
+docker compose exec airflow-scheduler uv run pytest
 
 # カバレッジ付きで実行
-uv run pytest --cov=src --cov-report=html
+docker compose exec airflow-scheduler uv run pytest --cov=src --cov-report=html
+
+# 特定のテストを実行
+docker compose exec airflow-scheduler uv run pytest tests/utils/test_connections.py
+```
+
+### Pythonシェル（デバッグ用）
+
+```bash
+# Airflowコンテナ内でPythonシェルを起動
+docker compose exec airflow-scheduler uv run python
+
+# IPythonがインストールされている場合
+docker compose exec airflow-scheduler uv run ipython
+```
+
+### データベース操作
+
+```bash
+# PostgreSQLに接続
+docker compose exec postgres psql -U nagare_user -d nagare
+
+# SQLファイルを実行
+docker compose exec -T postgres psql -U nagare_user -d nagare < sql/schema.sql
 ```
 
 ## Supersetダッシュボードのセットアップ

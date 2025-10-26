@@ -2,6 +2,15 @@
 
 このディレクトリには、Nagareプロジェクトの重要なアーキテクチャ決定を記録したADRが格納されています。
 
+## ADR一覧
+
+| ADR | タイトル | ステータス | 決定日 |
+|-----|---------|-----------|--------|
+| [001](./001-dependency-injection-strategy.md) | 依存性注入（DI）戦略の選択 | Accepted | 2025-10-22 |
+| [002](./002-connection-management-architecture.md) | Connection管理アーキテクチャ | Accepted | 2025-10-26 |
+
+---
+
 ## ADRとは
 
 Architecture Decision Record (ADR) は、アーキテクチャ上の重要な決定とその理由を文書化する軽量な記録方式です。
