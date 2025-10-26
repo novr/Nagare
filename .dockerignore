@@ -51,6 +51,9 @@ secrets
 # テストファイル
 tests
 
+# スクリプト（ホスト実行用）
+scripts
+
 # Claude Code
 .claude
 
