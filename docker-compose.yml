@@ -5,6 +5,8 @@ x-airflow-common: &airflow-common
     dockerfile: Dockerfile
   volumes:
     - ./src:/opt/airflow/src:ro
+    - ./tests:/opt/airflow/tests:ro
+    - ./pyproject.toml:/opt/airflow/pyproject.toml:ro
     - airflow_logs:/opt/airflow/logs
   networks:
     - nagare-network
