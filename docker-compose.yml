@@ -5,10 +5,8 @@ services:
     container_name: nagare-postgres
     environment:
       POSTGRES_USER: ${DATABASE_USER:-nagare_user}
-      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
       POSTGRES_DB: ${DATABASE_NAME:-nagare}
-    secrets:
-      - db_password
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -53,7 +51,7 @@ services:
 
       # Webserver設定
       AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'false'
-      AIRFLOW__WEBSERVER__SECRET_KEY_FILE: /run/secrets/airflow_secret_key
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
       AIRFLOW__WEBSERVER__WORKERS: 1
       AIRFLOW__WEBSERVER__WORKER_REFRESH_INTERVAL: 1800
       AIRFLOW__WEBSERVER__WORKER_CLASS: sync
@@ -70,8 +68,6 @@ services:
       USE_DB_MOCK: ${USE_DB_MOCK:-false}
       REPOSITORIES_JSON: ${REPOSITORIES_JSON}
       AIRFLOW_ALERT_EMAIL: ${AIRFLOW_ALERT_EMAIL:-admin@example.com}
-    secrets:
-      - airflow_secret_key
     volumes:
       - ./src:/opt/airflow/src:ro
       - airflow_logs:/opt/airflow/logs
@@ -252,11 +248,3 @@ networks:
   nagare-network:
     name: nagare-network
     driver: bridge
-
-secrets:
-  db_password:
-    file: ./secrets/db_password.txt
-  airflow_secret_key:
-    file: ./secrets/airflow_secret_key.txt
-  superset_secret_key:
-    file: ./secrets/superset_secret_key.txt

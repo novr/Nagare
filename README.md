@@ -59,43 +59,47 @@ git clone <repository-url>
 cd Nagare
 ```
 
-2. Secretsファイルと環境変数の生成
+2. 環境変数ファイルの作成
+
+```bash
+cp .env.sample .env
+```
+
+3. パスワードの生成（推奨）
 
 ```bash
 ./scripts/setup-secrets.sh
 ```
 
-このスクリプトは以下を実行します：
-- `.env.sample`から`.env`を作成（まだ存在しない場合）
-- Secretsファイルの生成：
-  - `secrets/db_password.txt` - データベースパスワード
-  - `secrets/airflow_secret_key.txt` - Airflow Secret Key
-  - `secrets/superset_secret_key.txt` - Superset Secret Key
-- `.env`ファイルの自動更新（`DATABASE_PASSWORD`と`SUPERSET_SECRET_KEY`を設定）
+このスクリプトは強力なランダムパスワードを自動生成します：
+- `DATABASE_PASSWORD` - PostgreSQLパスワード
+- `AIRFLOW_SECRET_KEY` - Airflow Secret Key
+- `SUPERSET_SECRET_KEY` - Superset Secret Key
 
-3. 環境変数の設定
+または、手動で強力なパスワードを`.env`に設定することもできます。
+
+4. GitHub認証の設定
 
 ```bash
-# .envファイルを編集して必要な環境変数を設定
-# DATABASE_PASSWORDとSUPERSET_SECRET_KEYは既に設定済み
 vi .env  # または任意のエディタ
 ```
 
-**必須設定項目**:
-- `GITHUB_TOKEN`: GitHub Personal Access Token（または`GITHUB_APP_*`でGitHub Apps認証）
-- `AIRFLOW_ADMIN_PASSWORD`: Airflow管理者パスワード
+以下の必須項目を設定してください：
 
-**GitHub Personal Access Tokenの生成手順**:
+**GITHUB_TOKEN（必須）**:
 1. GitHub Settings → Developer settings → Personal access tokens → Generate new token
 2. 必要な権限: `repo`, `read:org`, `workflow`
 3. トークンを`.env`の`GITHUB_TOKEN`に設定
 
-**⚠️ セキュリティ警告**:
-- `.env`ファイルは`.gitignore`で除外されており、Gitにコミットされません
-- `.env`ファイルを誤ってコミットしないよう注意してください
-- 強力なパスワードを設定してください（最低16文字、英数字+記号推奨）
+**AIRFLOW_ADMIN_PASSWORD（必須）**:
+- Airflow管理画面にログインするためのパスワード
+- 推奨: 16文字以上の強力なパスワード
 
-4. Docker環境の起動
+**⚠️ セキュリティ警告**:
+- `.env`ファイルは`.gitignore`で除外されています
+- `.env`ファイルを誤ってコミットしないよう注意してください
+
+5. Docker環境の起動
 
 ```bash
 # バックグラウンドで起動
@@ -105,7 +109,7 @@ docker compose up -d
 docker compose logs -f
 ```
 
-5. サービスへのアクセス
+6. サービスへのアクセス
 
 - **Airflow UI**: http://localhost:8080
   - ユーザー名: `admin`
@@ -119,30 +123,16 @@ docker compose logs -f
 - **PostgreSQL**: `localhost:5432`
   - データベース名: `nagare`
   - ユーザー名: `nagare_user`
-  - パスワード: `.env`の`DATABASE_PASSWORD`または`secrets/db_password.txt`
+  - パスワード: `.env`の`DATABASE_PASSWORD`
 
-6. 監視対象リポジトリの設定
+7. 監視対象リポジトリの設定
 
-**方法1: Streamlit管理画面から設定（推奨）**
-
-http://localhost:8501 にアクセスして、以下の方法でリポジトリを追加できます：
+http://localhost:8501 にアクセスして、Streamlit管理画面からリポジトリを追加します：
 
 - **GitHub検索**: 組織名、ユーザー名、キーワードから検索してインポート
 - **手動追加**: リポジトリ名（`owner/repo`形式）を直接入力
 
 詳細は [Streamlit管理画面ガイド](docs/03_setup/streamlit_admin.md) を参照してください。
-
-**方法2: CLIから設定**
-
-```bash
-# リポジトリを追加
-docker exec nagare-airflow-scheduler python /opt/airflow/scripts/manage_repositories.py add owner/repo
-
-# リポジトリ一覧を表示
-docker exec nagare-airflow-scheduler python /opt/airflow/scripts/manage_repositories.py list
-```
-
-詳細は [データベースセットアップガイド](docs/03_setup/database_setup.md) を参照してください。
 
 #### Docker環境の管理
 
