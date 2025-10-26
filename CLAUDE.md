@@ -1,0 +1,2 @@
+- ./claude/AGENT.md を参照する
+- レビュー結果は REVIEW.md を更新する
