@@ -59,34 +59,41 @@ git clone <repository-url>
 cd Nagare
 ```
 
-2. 環境変数の設定
-
-```bash
-cp .env.sample .env
-# .envファイルを編集して必要な環境変数を設定
-# Docker環境用の設定値を使用（DATABASE_HOST=postgres等）
-```
-
-**⚠️ セキュリティ警告**:
-- `.env`ファイルに実際の機密情報（GitHubトークン、パスワード）を設定してください
-- `.env`ファイルは`.gitignore`で除外されており、Gitにコミットされません
-- `.env`ファイルを誤ってコミットしないよう注意してください
-- GitHub Personal Access Tokenの生成手順:
-  1. GitHub Settings → Developer settings → Personal access tokens → Generate new token
-  2. 必要な権限: `repo`, `read:org`, `workflow`
-  3. トークンを`.env`の`GITHUB_TOKEN`に設定
-- 強力なパスワードを設定してください（最低16文字、英数字+記号推奨）
-
-3. Secretsファイルの生成
+2. Secretsファイルと環境変数の生成
 
 ```bash
 ./scripts/setup-secrets.sh
 ```
 
-このスクリプトは以下のファイルを生成します：
-- `secrets/db_password.txt` - データベースパスワード
-- `secrets/airflow_secret_key.txt` - Airflow Secret Key
-- `secrets/superset_secret_key.txt` - Superset Secret Key
+このスクリプトは以下を実行します：
+- `.env.sample`から`.env`を作成（まだ存在しない場合）
+- Secretsファイルの生成：
+  - `secrets/db_password.txt` - データベースパスワード
+  - `secrets/airflow_secret_key.txt` - Airflow Secret Key
+  - `secrets/superset_secret_key.txt` - Superset Secret Key
+- `.env`ファイルの自動更新（`DATABASE_PASSWORD`と`SUPERSET_SECRET_KEY`を設定）
+
+3. 環境変数の設定
+
+```bash
+# .envファイルを編集して必要な環境変数を設定
+# DATABASE_PASSWORDとSUPERSET_SECRET_KEYは既に設定済み
+vi .env  # または任意のエディタ
+```
+
+**必須設定項目**:
+- `GITHUB_TOKEN`: GitHub Personal Access Token（または`GITHUB_APP_*`でGitHub Apps認証）
+- `AIRFLOW_ADMIN_PASSWORD`: Airflow管理者パスワード
+
+**GitHub Personal Access Tokenの生成手順**:
+1. GitHub Settings → Developer settings → Personal access tokens → Generate new token
+2. 必要な権限: `repo`, `read:org`, `workflow`
+3. トークンを`.env`の`GITHUB_TOKEN`に設定
+
+**⚠️ セキュリティ警告**:
+- `.env`ファイルは`.gitignore`で除外されており、Gitにコミットされません
+- `.env`ファイルを誤ってコミットしないよう注意してください
+- 強力なパスワードを設定してください（最低16文字、英数字+記号推奨）
 
 4. Docker環境の起動
 
@@ -248,7 +255,6 @@ Supersetにログイン後、以下の手順でダッシュボードを作成で
 
 3. **チャートとダッシュボードの作成**
    - 詳細は [Supersetダッシュボード設定](docs/03_setup/superset_dashboard.md) を参照
-   - サンプルクエリは `superset/queries/` を参照
 
 ## トラブルシューティング
 
@@ -328,7 +334,6 @@ docker-compose up -d
 
 **その他**
 - [用語集](docs/99_glossary.md)
-- [リポジトリガイドライン](AGENT.md)
 
 ## ライセンス
 

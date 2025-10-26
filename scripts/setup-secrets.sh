@@ -65,6 +65,56 @@ fi
 
 echo
 echo "=================================="
+echo "Updating .env file..."
+echo "=================================="
+
+ENV_FILE=".env"
+
+# .envファイルが存在しない場合は.env.sampleからコピー
+if [ ! -f "$ENV_FILE" ]; then
+    if [ -f ".env.sample" ]; then
+        cp .env.sample "$ENV_FILE"
+        echo -e "${GREEN}✓${NC} Created .env from .env.sample"
+    else
+        echo -e "${RED}✗${NC} .env.sample not found, creating new .env"
+        touch "$ENV_FILE"
+    fi
+fi
+
+# 生成されたパスワード/キーを読み込み
+DB_PASSWORD=$(cat "$DB_PASSWORD_FILE")
+AIRFLOW_KEY=$(cat "$AIRFLOW_KEY_FILE")
+SUPERSET_KEY=$(cat "$SUPERSET_KEY_FILE")
+
+# .envファイルを更新（既存の値があれば置換、なければ追加）
+update_env_var() {
+    local key=$1
+    local value=$2
+    local file=$3
+
+    # エスケープ処理（/や特殊文字をエスケープ）
+    local escaped_value=$(printf '%s\n' "$value" | sed 's/[\/&]/\\&/g')
+
+    if grep -q "^${key}=" "$file"; then
+        # 既存の行を置換（macOS/Linux互換）
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            sed -i '' "s|^${key}=.*|${key}=${escaped_value}|" "$file"
+        else
+            sed -i "s|^${key}=.*|${key}=${escaped_value}|" "$file"
+        fi
+        echo -e "${GREEN}✓${NC} Updated ${key} in .env"
+    else
+        # 新しい行を追加
+        echo "${key}=${value}" >> "$file"
+        echo -e "${GREEN}✓${NC} Added ${key} to .env"
+    fi
+}
+
+update_env_var "DATABASE_PASSWORD" "$DB_PASSWORD" "$ENV_FILE"
+update_env_var "SUPERSET_SECRET_KEY" "$SUPERSET_KEY" "$ENV_FILE"
+
+echo
+echo "=================================="
 echo -e "${GREEN}Setup completed!${NC}"
 echo "=================================="
 echo
@@ -73,6 +123,10 @@ echo "  - db_password.txt"
 echo "  - airflow_secret_key.txt"
 echo "  - superset_secret_key.txt"
 echo
+echo ".env file updated with:"
+echo "  - DATABASE_PASSWORD"
+echo "  - SUPERSET_SECRET_KEY"
+echo
 echo -e "${RED}IMPORTANT:${NC} Do not commit these files to version control!"
-echo "They are already included in .gitignore"
+echo "Both $SECRETS_DIR and .env are included in .gitignore"
 echo
