@@ -58,7 +58,17 @@ superset_config.py
 *.sqlite3
 
 # uv
-uv.lock
+# uv.lock  # 依存関係の再現性のためコミット推奨
 
-# ai
-# implementation_task.md
+# Ruff cache
+.ruff_cache/
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*.swo
+*~
+
+# Review/Analysis files (optional)
+# REVIEW.md

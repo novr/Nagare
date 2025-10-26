@@ -67,6 +67,16 @@ cp .env.sample .env
 # Docker環境用の設定値を使用（DATABASE_HOST=postgres等）
 ```
 
+**⚠️ セキュリティ警告**:
+- `.env`ファイルに実際の機密情報（GitHubトークン、パスワード）を設定してください
+- `.env`ファイルは`.gitignore`で除外されており、Gitにコミットされません
+- `.env`ファイルを誤ってコミットしないよう注意してください
+- GitHub Personal Access Tokenの生成手順:
+  1. GitHub Settings → Developer settings → Personal access tokens → Generate new token
+  2. 必要な権限: `repo`, `read:org`, `workflow`
+  3. トークンを`.env`の`GITHUB_TOKEN`に設定
+- 強力なパスワードを設定してください（最低16文字、英数字+記号推奨）
+
 3. Secretsファイルの生成
 
 ```bash
@@ -96,8 +106,13 @@ docker compose logs -f
 - **Streamlit管理画面**: http://localhost:8501
   - リポジトリの管理、GitHub検索、パイプライン実行履歴の確認
 - **Superset**: http://localhost:8088
+  - ユーザー名: `admin`
+  - パスワード: `admin`（初回ログイン後に変更推奨）
   - データ可視化とダッシュボード
 - **PostgreSQL**: `localhost:5432`
+  - データベース名: `nagare`
+  - ユーザー名: `nagare_user`
+  - パスワード: `.env`の`DATABASE_PASSWORD`または`secrets/db_password.txt`
 
 6. 監視対象リポジトリの設定
 
@@ -206,6 +221,86 @@ uv run pytest
 
 # カバレッジ付きで実行
 uv run pytest --cov=src --cov-report=html
+```
+
+## Supersetダッシュボードのセットアップ
+
+Supersetにログイン後、以下の手順でダッシュボードを作成できます:
+
+1. **データベース接続の追加**
+   - Settings → Database Connections → + Database
+   - PostgreSQLを選択
+   - 接続情報:
+     ```
+     Display Name: Nagare PostgreSQL
+     SQLAlchemy URI: postgresql://nagare_user:your_secure_password_here@postgres:5432/nagare
+     ```
+   - Test Connection → Connect
+
+2. **データセットの追加**
+   - データベースに作成済みのビューを追加:
+     - `v_pipeline_overview` - リポジトリ統計
+     - `v_daily_success_rate` - 日次成功率
+     - `v_pipeline_stats` - パイプライン統計
+     - `v_recent_pipeline_runs` - 最新実行履歴
+     - `v_job_stats` - ジョブ統計
+     - `v_pipeline_runs_by_hour` - 時間帯別パターン
+
+3. **チャートとダッシュボードの作成**
+   - 詳細は [Supersetダッシュボード設定](docs/03_setup/superset_dashboard.md) を参照
+   - サンプルクエリは `superset/queries/` を参照
+
+## トラブルシューティング
+
+### Supersetがデータベースに接続できない
+
+**症状**: "Could not load database driver: PostgresEngineSpec" エラー
+
+**解決策**: Supersetコンテナを再ビルド
+```bash
+docker-compose build superset
+docker-compose up -d superset
+```
+
+### Airflowの DAG が表示されない
+
+**原因**: DAG ファイルの構文エラーまたは依存関係の問題
+
+**解決策**:
+```bash
+# ログを確認
+docker compose logs airflow-scheduler
+
+# DAGの構文チェック
+docker exec nagare-airflow-scheduler airflow dags list
+```
+
+### データが収集されない
+
+**確認ポイント**:
+1. リポジトリが正しく登録されているか（Streamlit管理画面またはデータベースで確認）
+2. GitHubトークンが正しく設定されているか（`.env`ファイル）
+3. Airflow DAGが有効化されているか（Airflow UIで確認）
+4. DAGの実行履歴にエラーがないか（Airflow UI → DAG → Log）
+
+```bash
+# リポジトリ一覧を確認
+docker exec nagare-postgres psql -U nagare_user -d nagare -c "SELECT * FROM repositories;"
+
+# DAG を手動実行
+docker exec nagare-airflow-scheduler airflow dags trigger collect_github_actions_data
+```
+
+### データベースのパスワードエラー
+
+**症状**: "password authentication failed for user"
+
+**解決策**:
+1. `.env`ファイルの`DATABASE_PASSWORD`と`secrets/db_password.txt`が一致しているか確認
+2. コンテナを再起動
+```bash
+docker-compose down
+docker-compose up -d
 ```
 
 ## ドキュメント
