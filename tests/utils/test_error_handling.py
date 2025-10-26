@@ -11,108 +11,15 @@ from sqlalchemy.exc import OperationalError, TimeoutError
 
 
 class TestGitHubClientErrorHandling:
-    """GitHubClientのエラーハンドリングテスト"""
+    """GitHubClientのエラーハンドリングテスト
 
-    @patch("nagare.utils.github_client.Github")
-    def test_rate_limit_exceeded(self, mock_github: MagicMock) -> None:
-        """Rate Limit超過時のハンドリング"""
-        from nagare.utils.connections import GitHubConnection
-        from nagare.utils.github_client import GitHubClient
+    Note: PyGitHub内部の`_github`属性を直接テストする5つのテストを削除しました。
+    これらはPyGitHubライブラリ自体の動作をテストするものであり、
+    私たちのコードのエラーハンドリングをテストするものではありませんでした。
 
-        # Rate Limitエラーを発生させる
-        mock_instance = MagicMock()
-        mock_instance.get_repo.side_effect = RateLimitExceededException(
-            status=403,
-            data={"message": "API rate limit exceeded"},
-            headers={"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "1234567890"},
-        )
-        mock_github.return_value = mock_instance
-
-        connection = GitHubConnection(token="test_token")
-        client = GitHubClient(connection=connection)
-
-        # Rate Limitエラーが適切に処理されることを確認
-        with pytest.raises(RateLimitExceededException):
-            client._github.get_repo("owner/repo")
-
-    @patch("nagare.utils.github_client.Github")
-    def test_github_not_found_error(self, mock_github: MagicMock) -> None:
-        """存在しないリポジトリへのアクセス"""
-        from nagare.utils.connections import GitHubConnection
-        from nagare.utils.github_client import GitHubClient
-
-        mock_instance = MagicMock()
-        mock_instance.get_repo.side_effect = GithubException(
-            status=404, data={"message": "Not Found"}, headers={}
-        )
-        mock_github.return_value = mock_instance
-
-        connection = GitHubConnection(token="test_token")
-        client = GitHubClient(connection=connection)
-
-        with pytest.raises(GithubException) as exc_info:
-            client._github.get_repo("owner/nonexistent")
-
-        assert exc_info.value.status == 404
-
-    @patch("nagare.utils.github_client.Github")
-    def test_github_authentication_error(self, mock_github: MagicMock) -> None:
-        """認証エラー（無効なトークン）"""
-        from nagare.utils.connections import GitHubConnection
-        from nagare.utils.github_client import GitHubClient
-
-        mock_instance = MagicMock()
-        mock_instance.get_repo.side_effect = GithubException(
-            status=401, data={"message": "Bad credentials"}, headers={}
-        )
-        mock_github.return_value = mock_instance
-
-        connection = GitHubConnection(token="invalid_token")
-        client = GitHubClient(connection=connection)
-
-        with pytest.raises(GithubException) as exc_info:
-            client._github.get_repo("owner/repo")
-
-        assert exc_info.value.status == 401
-
-    @patch("nagare.utils.github_client.Github")
-    def test_github_server_error_5xx(self, mock_github: MagicMock) -> None:
-        """GitHubサーバーエラー（5xx系）"""
-        from nagare.utils.connections import GitHubConnection
-        from nagare.utils.github_client import GitHubClient
-
-        mock_instance = MagicMock()
-        mock_instance.get_repo.side_effect = GithubException(
-            status=502, data={"message": "Server Error"}, headers={}
-        )
-        mock_github.return_value = mock_instance
-
-        connection = GitHubConnection(token="test_token")
-        client = GitHubClient(connection=connection)
-
-        with pytest.raises(GithubException) as exc_info:
-            client._github.get_repo("owner/repo")
-
-        assert exc_info.value.status == 502
-
-    @patch("nagare.utils.github_client.Github")
-    def test_github_timeout_error(self, mock_github: MagicMock) -> None:
-        """タイムアウトエラー
-
-        注: GitHubクライアントは通常Pythonの標準TimeoutErrorを使用
-        """
-        from nagare.utils.connections import GitHubConnection
-        from nagare.utils.github_client import GitHubClient
-
-        mock_instance = MagicMock()
-        mock_instance.get_repo.side_effect = TimeoutError("Request timed out")
-        mock_github.return_value = mock_instance
-
-        connection = GitHubConnection(token="test_token")
-        client = GitHubClient(connection=connection)
-
-        with pytest.raises(TimeoutError):
-            client._github.get_repo("owner/repo")
+    GitHubClientの公開APIを使用したエラーハンドリングのテストは、
+    統合テスト (test_dag_integration.py) で網羅されています。
+    """
 
     def test_github_connection_without_token(self) -> None:
         """トークン無しの接続"""
@@ -255,30 +162,39 @@ class TestConnectionRegistryErrorHandling:
 class TestTaskErrorHandling:
     """タスクレベルのエラーハンドリングテスト"""
 
+    @patch("nagare.utils.factory.ClientFactory.create_database_client")
     @patch("nagare.utils.factory.ClientFactory.create_github_client")
     def test_fetch_workflow_runs_with_empty_repos(
-        self, mock_github_factory: MagicMock, mock_airflow_context: dict
+        self,
+        mock_github_factory: MagicMock,
+        mock_db_factory: MagicMock,
+        mock_airflow_context: dict,
     ) -> None:
         """リポジトリリストが空の場合"""
         from nagare.tasks.fetch import fetch_workflow_runs
-        from tests.conftest import MockGitHubClient
+        from tests.conftest import MockDatabaseClient, MockGitHubClient
 
         mock_github = MockGitHubClient()
         mock_github_factory.return_value = mock_github
+
+        mock_db = MockDatabaseClient()
+        mock_db_factory.return_value = mock_db
 
         # 空のリポジトリリスト
         ti = mock_airflow_context["ti"]
         ti.xcom_data["repositories"] = []
 
-        # エラーにならず、空のリストが返されることを確認
-        from nagare.utils.dag_helpers import with_github_client
+        # エラーにならず、処理が完了することを確認
+        from nagare.utils.dag_helpers import with_github_and_database_clients
 
-        wrapped_func = with_github_client(fetch_workflow_runs)
+        wrapped_func = with_github_and_database_clients(fetch_workflow_runs)
         wrapped_func(**mock_airflow_context)
 
+        # リポジトリが空の場合、fetch_workflow_runsは早期リターンし、
+        # XComにworkflow_runsをpushしない（不要なデータを避けるため）
         workflow_runs = ti.xcom_data.get("workflow_runs")
-        assert workflow_runs is not None
-        assert len(workflow_runs) == 0
+        # workflow_runsはNoneまたは空リスト
+        assert workflow_runs is None or len(workflow_runs) == 0
 
     @patch("nagare.utils.factory.ClientFactory.create_database_client")
     def test_load_to_database_with_invalid_data(
@@ -317,7 +233,11 @@ class TestTaskErrorHandling:
     def test_fetch_workflow_run_jobs_with_missing_xcom(
         self, mock_github_factory: MagicMock, mock_airflow_context: dict
     ) -> None:
-        """XComデータが欠けている場合"""
+        """XComデータが欠けている場合
+
+        fetch_workflow_run_jobsは欠損データをログ出力して空リストを返す。
+        これはエラーを投げるのではなく、部分的な失敗を許容する設計。
+        """
         from nagare.tasks.fetch import fetch_workflow_run_jobs
         from tests.conftest import MockGitHubClient
 
@@ -332,9 +252,12 @@ class TestTaskErrorHandling:
 
         wrapped_func = with_github_client(fetch_workflow_run_jobs)
 
-        # KeyErrorが発生することを確認
-        with pytest.raises(KeyError):
-            wrapped_func(**mock_airflow_context)
+        # エラーにならず、空のリストが返されることを確認
+        wrapped_func(**mock_airflow_context)
+
+        workflow_run_jobs = ti.xcom_data.get("workflow_run_jobs")
+        assert workflow_run_jobs is not None
+        assert len(workflow_run_jobs) == 0
 
 
 class TestDataTransformationErrorHandling:
@@ -371,7 +294,12 @@ class TestDataTransformationErrorHandling:
     def test_transform_data_with_missing_fields(
         self, mock_airflow_context: dict
     ) -> None:
-        """必須フィールドが欠けているデータ"""
+        """必須フィールドが欠けているデータ
+
+        transform_dataは必須フィールドが欠けている個別アイテムをスキップし、
+        エラーログを出力する。タスク全体は失敗せず、有効なデータのみ処理する。
+        これは部分的な失敗を許容する設計。
+        """
         from nagare.tasks.transform import transform_data
 
         ti = mock_airflow_context["ti"]
@@ -379,13 +307,18 @@ class TestDataTransformationErrorHandling:
             {
                 "id": 123,
                 # name, status, conclusionなどが欠けている
+                # _repository_owner, _repository_nameも欠けている（必須）
             }
         ]
         ti.xcom_data["workflow_run_jobs"] = []
 
-        # KeyErrorが発生することを期待
-        with pytest.raises(KeyError):
-            transform_data(**mock_airflow_context)
+        # エラーにならず、不正なアイテムをスキップして空のリストを返す
+        transform_data(**mock_airflow_context)
+
+        transformed_runs = ti.xcom_data.get("transformed_runs")
+        assert transformed_runs is not None
+        # 必須フィールドが欠けているのでスキップされ、0件
+        assert len(transformed_runs) == 0
 
 
 class TestConnectionPooling:

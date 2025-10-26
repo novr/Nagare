@@ -50,6 +50,12 @@ class MockDatabaseClient:
     """
 
     def __init__(self) -> None:
+        # Configurable data
+        self.repositories: list[dict[str, Any]] = [
+            {"owner": "test-org", "repo": "test-repo-1"},
+            {"owner": "test-org", "repo": "test-repo-2"},
+        ]
+
         # get_repositories tracking
         self.get_repositories_called = False
         self.get_repositories_call_count = 0
@@ -79,13 +85,14 @@ class MockDatabaseClient:
         self.close_called = False
 
     def get_repositories(self) -> list[dict[str, str]]:
-        """モックのリポジトリリストを返す"""
+        """モックのリポジトリリストを返す
+
+        self.repositoriesで設定されたリストを返す。
+        テストで動的に変更可能。
+        """
         self.get_repositories_called = True
         self.get_repositories_call_count += 1
-        return [
-            {"owner": "test-org", "repo": "test-repo-1"},
-            {"owner": "test-org", "repo": "test-repo-2"},
-        ]
+        return self.repositories
 
     def get_latest_run_timestamp(self, owner: str, repo: str) -> datetime | None:
         """モックの最新タイムスタンプを返す
@@ -108,20 +115,29 @@ class MockDatabaseClient:
 
         Args:
             runs: UPSERTするパイプライン実行データのリスト
+
+        Note:
+            実際のDBではUPSERTは冪等的（同じデータは上書き）だが、
+            このモックは単純にappendして累積する。
+            冪等性のテストは実DBで行うべき。
         """
         self.upsert_pipeline_runs_called = True
         self.upsert_pipeline_runs_call_count += 1
-        self.upserted_runs = runs
+        self.upserted_runs.extend(runs)
 
     def upsert_jobs(self, jobs: list[dict[str, Any]]) -> None:
         """モックのUPSERT処理（ジョブ）
 
         Args:
             jobs: UPSERTするジョブデータのリスト
+
+        Note:
+            実際のDBではUPSERTは冪等的（同じデータは上書き）だが、
+            このモックは単純にappendして累積する。
         """
         self.upsert_jobs_called = True
         self.upsert_jobs_call_count += 1
-        self.upserted_jobs = jobs
+        self.upserted_jobs.extend(jobs)
 
     @contextmanager
     def transaction(self) -> Generator[None, None, None]:
@@ -169,6 +185,35 @@ class MockGitHubClient:
     """
 
     def __init__(self) -> None:
+        # Configurable data
+        self.workflow_runs_data: list[dict[str, Any]] = [
+            {
+                "id": 123456,
+                "name": "CI",
+                "head_branch": "main",
+                "head_sha": "abc123",
+                "status": "completed",
+                "conclusion": "success",
+                "event": "push",
+                "created_at": "2024-01-01T00:00:00Z",
+                "updated_at": "2024-01-01T00:10:00Z",
+                "run_started_at": "2024-01-01T00:00:00Z",
+                "html_url": "https://github.com/test-org/test-repo/actions/runs/123456",
+            }
+        ]
+        self.workflow_run_jobs_data: list[dict[str, Any]] = [
+            {
+                "id": 789,
+                "run_id": 123456,
+                "name": "build",
+                "status": "completed",
+                "conclusion": "success",
+                "started_at": "2024-01-01T00:00:00Z",
+                "completed_at": "2024-01-01T00:05:00Z",
+                "html_url": "https://github.com/test-org/test-repo/actions/runs/123456/jobs/789",
+            }
+        ]
+
         # get_workflow_runs tracking
         self.get_workflow_runs_called = False
         self.get_workflow_runs_call_count = 0
@@ -199,6 +244,10 @@ class MockGitHubClient:
 
         Returns:
             ワークフロー実行データのリスト
+
+        Note:
+            self.workflow_runs_dataで設定されたデータを返す。
+            テストで動的に変更可能。
         """
         self.get_workflow_runs_called = True
         self.get_workflow_runs_call_count += 1
@@ -210,21 +259,7 @@ class MockGitHubClient:
                 "max_results": max_results,
             }
         )
-        return [
-            {
-                "id": 123456,
-                "name": "CI",
-                "head_branch": "main",
-                "head_sha": "abc123",
-                "status": "completed",
-                "conclusion": "success",
-                "event": "push",
-                "created_at": "2024-01-01T00:00:00Z",
-                "updated_at": "2024-01-01T00:10:00Z",
-                "run_started_at": "2024-01-01T00:00:00Z",
-                "html_url": "https://github.com/test-org/test-repo/actions/runs/123456",
-            }
-        ]
+        return self.workflow_runs_data
 
     def get_workflow_run_jobs(
         self, owner: str, repo: str, run_id: int, max_results: int = 1000
@@ -239,24 +274,17 @@ class MockGitHubClient:
 
         Returns:
             ジョブデータのリスト
+
+        Note:
+            self.workflow_run_jobs_dataで設定されたデータを返す。
+            テストで動的に変更可能。
         """
         self.get_workflow_run_jobs_called = True
         self.get_workflow_run_jobs_call_count += 1
         self.get_workflow_run_jobs_calls.append(
             {"owner": owner, "repo": repo, "run_id": run_id, "max_results": max_results}
         )
-        return [
-            {
-                "id": 789,
-                "run_id": run_id,
-                "name": "build",
-                "status": "completed",
-                "conclusion": "success",
-                "started_at": "2024-01-01T00:00:00Z",
-                "completed_at": "2024-01-01T00:05:00Z",
-                "html_url": f"https://github.com/test-org/test-repo/actions/runs/{run_id}/jobs/789",
-            }
-        ]
+        return self.workflow_run_jobs_data
 
     def close(self) -> None:
         """モックのクローズ処理"""

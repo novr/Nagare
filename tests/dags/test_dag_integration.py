@@ -168,19 +168,24 @@ class TestDAGErrorHandling:
         # 空リストが返されることを確認
         assert result == []
 
+    @patch("nagare.utils.factory.ClientFactory.create_database_client")
     @patch("nagare.utils.factory.ClientFactory.create_github_client")
     def test_fetch_workflow_runs_with_api_error(
         self,
         mock_github_factory: MagicMock,
+        mock_db_factory: MagicMock,
         mock_airflow_context: dict[str, Any],
     ) -> None:
         """GitHub API エラー時のハンドリング"""
-        from tests.conftest import MockGitHubClient
+        from tests.conftest import MockDatabaseClient, MockGitHubClient
 
         # APIエラーを返すモック
         mock_github = MockGitHubClient()
         mock_github.workflow_runs_data = []  # 空データ
         mock_github_factory.return_value = mock_github
+
+        mock_db = MockDatabaseClient()
+        mock_db_factory.return_value = mock_db
 
         # 前のタスクのデータを設定
         ti = mock_airflow_context["ti"]
@@ -189,9 +194,9 @@ class TestDAGErrorHandling:
         ]
 
         from nagare.tasks.fetch import fetch_workflow_runs
-        from nagare.utils.dag_helpers import with_github_client
+        from nagare.utils.dag_helpers import with_github_and_database_clients
 
-        wrapped_func = with_github_client(fetch_workflow_runs)
+        wrapped_func = with_github_and_database_clients(fetch_workflow_runs)
 
         # エラーが発生しても処理が続行されることを確認
         # （実装では部分的失敗を許容）
@@ -207,7 +212,11 @@ class TestDAGErrorHandling:
         mock_db_factory: MagicMock,
         mock_airflow_context: dict[str, Any],
     ) -> None:
-        """XComデータが欠けている場合のハンドリング"""
+        """XComデータが欠けている場合のハンドリング
+
+        transform_dataは欠損データを警告ログ出力して空リストで処理する。
+        これはエラーを投げるのではなく、部分的な失敗を許容する設計。
+        """
         from tests.conftest import MockDatabaseClient
 
         mock_db = MockDatabaseClient()
@@ -220,9 +229,17 @@ class TestDAGErrorHandling:
 
         from nagare.tasks.transform import transform_data
 
-        # KeyErrorまたは適切なエラーハンドリングがされることを確認
-        with pytest.raises(KeyError):
-            transform_data(**mock_airflow_context)
+        # エラーにならず、空のリストを返すことを確認
+        transform_data(**mock_airflow_context)
+
+        # XComに空のデータが保存されていることを確認
+        transformed_runs = ti.xcom_data.get("transformed_runs")
+        transformed_jobs = ti.xcom_data.get("transformed_jobs")
+
+        assert transformed_runs is not None
+        assert transformed_jobs is not None
+        assert len(transformed_runs) == 0
+        assert len(transformed_jobs) == 0
 
     @patch("nagare.utils.factory.ClientFactory.create_database_client")
     def test_load_to_database_with_empty_data(
@@ -230,7 +247,11 @@ class TestDAGErrorHandling:
         mock_db_factory: MagicMock,
         mock_airflow_context: dict[str, Any],
     ) -> None:
-        """変換済みデータが空の場合のハンドリング"""
+        """変換済みデータが空の場合のハンドリング
+
+        load_to_databaseは空データの場合、DBアクセスをスキップして早期リターンする。
+        これは不要なDB接続とトランザクションを避ける最適化。
+        """
         from tests.conftest import MockDatabaseClient
 
         mock_db = MockDatabaseClient()
@@ -249,9 +270,9 @@ class TestDAGErrorHandling:
         # 空データでもエラーにならないことを確認
         wrapped_func(**mock_airflow_context)
 
-        # upsert は呼ばれているが、データは0件
-        assert mock_db.upsert_pipeline_runs_called
-        assert len(mock_db.upserted_runs) == 0
+        # 空データの場合、upsert は呼ばれない（早期リターン）
+        assert not mock_db.upsert_pipeline_runs_called
+        assert not mock_db.upsert_jobs_called
 
 
 class TestDAGPerformance:
