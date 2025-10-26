@@ -25,28 +25,7 @@
 
 ## ⚠️ 高優先度の問題（High Priority Issues）
 
-### 1. **テストの実行エラー: Admin Appテスト全滅**
-**深刻度**: 🟡 High
-
-**問題点**:
-- `tests/admin/test_admin_app.py`の全19テストが失敗 (commit ecf23f2で検証)
-- エラー: `AttributeError: module 'nagare' has no attribute 'admin_app'`
-- admin_app.pyが正しくインポートできていない
-
-**影響**:
-- admin_app.pyの機能テストが全て無効化されている
-- 管理画面の動作保証がない
-
-**推奨対策**:
-```python
-# tests/admin/test_admin_app.py のインポートパスを修正
-# 現在: from nagare.admin_app import ...
-# 修正: import streamlit as st; from nagare.admin_app import ... (適切なインポート方法を調査)
-```
-
-**優先度**: 1週間以内
-
-### 2. **テストの論理エラー: DAG/エラーハンドリングテスト失敗**
+### **テストの論理エラー: DAG/エラーハンドリングテスト失敗**
 **深刻度**: 🟡 High
 
 **問題点** (commit ecf23f2で検証):
@@ -77,7 +56,7 @@
 
 ## 📝 中優先度の問題（Medium Priority Issues）
 
-### 3. **Docker: streamlit-admin用の専用Dockerfile作成を検討**
+### **Docker: streamlit-admin用の専用Dockerfile作成を検討**
 **深刻度**: 🟠 Medium
 
 **現状**:
@@ -98,7 +77,7 @@ Streamlit専用のDockerfileを作成するか、現状のまま運用（トレ�
 
 **優先度**: 1ヶ月以内
 
-### 4. **セットアップ: GitHubトークン設定の説明強化**
+### **セットアップ: GitHubトークン設定の説明強化**
 **深刻度**: 🟠 Medium
 
 **問題点**:
@@ -108,7 +87,7 @@ Streamlit専用のDockerfileを作成するか、現状のまま運用（トレ�
 **推奨対策**:
 README.mdにGitHub認証の選択肢と手順を明記
 
-### 5. **セットアップ: 初回起動の待ち時間を明記**
+### **セットアップ: 初回起動の待ち時間を明記**
 **深刻度**: 🟠 Medium
 
 **問題点**:
@@ -130,7 +109,7 @@ docker compose ps
 \`\`\`
 ```
 
-### 6. **テスト品質: 冪等性テストが冪等性をテストしていない**
+### **テスト品質: 冪等性テストが冪等性をテストしていない**
 **深刻度**: 🟠 Medium
 
 **問題箇所**:
@@ -153,7 +132,7 @@ assert second_count == 2  # モックなので累積される
 
 ---
 
-### 7. **テスト: パフォーマンステストが性能を測定していない**
+### **テスト: パフォーマンステストが性能を測定していない**
 **深刻度**: 🟠 Medium
 
 **問題箇所**:
@@ -176,7 +155,7 @@ def test_large_dataset_handling(self, ...):
 
 ---
 
-### 8. **テストカバレッジ: リトライ動作の未検証**
+### **テストカバレッジ: リトライ動作の未検証**
 **深刻度**: 🟠 Medium
 
 **問題点**:
@@ -201,7 +180,7 @@ def test_task_retry_on_transient_error(self):
 
 ---
 
-### 9. **テストカバレッジ: 未テストのモジュール**
+### **テストカバレッジ: 未テストのモジュール**
 **深刻度**: 🟠 Medium
 
 **問題点**:
@@ -221,7 +200,7 @@ docker compose exec airflow-scheduler uv run pytest --cov=src/nagare --cov-repor
 
 ---
 
-### 10. **テスト品質: mock specの欠如**
+### **テスト品質: mock specの欠如**
 **深刻度**: 🟠 Medium
 
 **問題点**:
@@ -245,7 +224,7 @@ mock_client = MagicMock(spec=GitHubClient)
 
 ---
 
-### 11. **テスト: 実DB統合テストの不足**
+### **テスト: 実DB統合テストの不足**
 **深刻度**: 🟠 Medium
 
 モックベースのテストは充実しているが、実際のPostgreSQLへの接続テストが不足:
@@ -266,7 +245,7 @@ def test_database_integration(test_database_container):
 
 ## 💡 低優先度の改善提案（Low Priority Improvements）
 
-### 12. **コード重複: admin_app.pyとconnections.pyのURL生成**
+### **コード重複: admin_app.pyとconnections.pyのURL生成**
 **深刻度**: 🟢 Low
 
 両方で似たようなURL生成コードが存在:
@@ -278,7 +257,7 @@ def test_database_integration(test_database_container):
 
 ---
 
-### 13. **ドキュメント: Dockerfile.supersetバージョンの根拠が不明**
+### **ドキュメント: Dockerfile.supersetバージョンの根拠が不明**
 **深刻度**: 🟢 Low
 
 バージョン3.1.0に固定したが、選定理由が不明:
@@ -291,7 +270,7 @@ def test_database_integration(test_database_container):
 
 ---
 
-### 14. **テストの命名規則: 不統一**
+### **テストの命名規則: 不統一**
 **深刻度**: 🟢 Low
 
 一部のテストで日本語の説明とテスト名が乖離:
@@ -309,12 +288,12 @@ def test_add_repository_creates_new_record_when_not_exists(self):
 
 ---
 
-### 15. **Docker: イメージサイズ最適化の継続**
+### **Docker: イメージサイズ最適化の継続**
 - .dockerignoreの追加
 - ビルドキャッシュの最適化
 - マルチステージビルドの検討（Streamlit専用イメージ作成時）
 
-### 16. **セットアップ: 前提条件の詳細化**
+### **セットアップ: 前提条件の詳細化**
 ```markdown
 ### 前提条件
 - Docker Desktop 4.0以降（推奨: 最新版）
@@ -323,19 +302,19 @@ def test_add_repository_creates_new_record_when_not_exists(self):
 - macOS / Linux / Windows（WSL2）
 ```
 
-### 17. **セットアップ: セットアップ検証スクリプト**
+### **セットアップ: セットアップ検証スクリプト**
 ```bash
 # scripts/verify-setup.sh
 # 全てのサービスが正常に起動しているかチェック
 ```
 
-### 18. **命名規則: ファイル名の一貫性**
+### **命名規則: ファイル名の一貫性**
 - DAGファイルは`collect_github_actions_data_dag.py`のほうが明確
 
-### 19. **ログレベル: 本番環境での調整**
+### **ログレベル: 本番環境での調整**
 現在はすべてINFOレベル、本番環境ではWARNING以上に設定すべき
 
-### 20. **コメント: 英語docstringの追加検討**
+### **コメント: 英語docstringの追加検討**
 主要な関数/クラスに英語のdocstringも追加を検討
 
 ---
@@ -344,7 +323,31 @@ def test_add_repository_creates_new_record_when_not_exists(self):
 
 以下の問題は最近のコミットで解決されました：
 
-### ~~1. Docker環境でのテスト実行検証~~ → **検証完了** (commit ecf23f2)
+### ~~Admin Appテスト全滅~~ → **解決済み** (Streamlitインストール)
+
+**旧問題**:
+- `tests/admin/test_admin_app.py`の全19テストが失敗
+- エラー: `AttributeError: module 'nagare' has no attribute 'admin_app'`
+- Docker環境でStreamlitパッケージが未インストール
+
+**解決策**:
+```bash
+# Docker環境にStreamlitをインストール
+docker-compose exec airflow-scheduler pip install streamlit
+```
+
+**検証結果**:
+- 全19テストが成功 ✅
+- テスト成功率: 33% → 71% (16/49 → 35/49)
+
+**根本原因**:
+- 開発依存関係(pytest, streamlit)がDocker環境に含まれていなかった
+- Airflowの実行には不要だが、テスト実行には必要
+
+**今後の対応**:
+- Dockerfile.testを作成し、dev依存関係を含めたテストイメージの管理を検討
+
+### ~~Docker環境でのテスト実行検証~~ → **検証完了** (commit ecf23f2)
 
 **旧問題**:
 - 1,061行の新規テストコードがDocker環境で実行可能か未検証
@@ -358,20 +361,22 @@ docker-compose exec airflow-scheduler python -m pytest tests/admin/test_admin_ap
 docker-compose exec airflow-scheduler python -m pytest tests/utils/test_error_handling.py -v
 ```
 
-**統計**:
+**統計** (現在):
 - 合計49テストが実行可能（環境問題なし）
-- 16テスト成功、33テスト失敗
+- 35テスト成功、14テスト失敗（成功率: 71%）
 - 失敗原因はコード/テストロジックの問題（環境問題ではない）
 
-**必要な修正**:
-- docker-compose.ymlに`tests`ディレクトリマウント追加
-- Docker環境でpytestを手動インストール（dev依存関係が未インストールのため）
+**必要な修正** (完了):
+- ✅ docker-compose.ymlに`tests`ディレクトリマウント追加
+- ✅ Docker環境でpytest、streamlitを手動インストール
 
-**新たに発見された問題**:
-- Admin Appテスト全19件失敗 → High優先度問題#1
-- DAG/エラーハンドリングテスト14件失敗 → High優先度問題#2
+**解決された問題**:
+- ✅ Admin Appテスト全19件失敗 → Streamlitインストールで解決
 
-### ~~2. セキュリティ: パスワードのURLエスケープ不足~~ → **解決済み** (commit a35d4dd)
+**残る問題**:
+- ⚠️ DAG/エラーハンドリングテスト14件失敗 → High優先度問題
+
+### ~~セキュリティ: パスワードのURLエスケープ不足~~ → **解決済み** (commit a35d4dd)
 
 **旧問題**:
 - `admin_app.py`と`connections.py`でパスワードをURL文字列に直接埋め込み
@@ -389,7 +394,7 @@ db_url = f"postgresql://{db_user}:{quote_plus(db_password)}@{db_host}:{db_port}/
 return f"postgresql://{self.user}:{quote_plus(self.password)}@{self.host}:{self.port}/{self.database}"
 ```
 
-### ~~3. テストバグ: 誤った例外型の使用~~ → **解決済み** (commit a35d4dd)
+### ~~テストバグ: 誤った例外型の使用~~ → **解決済み** (commit a35d4dd)
 
 **旧問題**:
 - `test_database_query_timeout()`がPython標準の`TimeoutError`を使用
@@ -406,7 +411,7 @@ with pytest.raises(SQLAlchemyTimeoutError):
         conn.execute("SELECT * FROM large_table")
 ```
 
-### ~~4. Docker: Dockerfile.supersetのlatestタグ使用~~ → **解決済み** (commit 078543d)
+### ~~Docker: Dockerfile.supersetのlatestタグ使用~~ → **解決済み** (commit 078543d)
 
 **旧問題**:
 - `FROM apache/superset:latest`でビルドの再現性がない
@@ -417,7 +422,7 @@ with pytest.raises(SQLAlchemyTimeoutError):
 FROM apache/superset:3.1.0  # バージョンを明示的に固定
 ```
 
-### ~~5. README.mdから削除済みファイルへの参照~~ → **解決済み** (commit 5698b6f以前)
+### ~~README.mdから削除済みファイルへの参照~~ → **解決済み** (commit 5698b6f以前)
 
 **旧問題**:
 - `superset/queries/`への参照（既に削除済み）
@@ -426,7 +431,7 @@ FROM apache/superset:3.1.0  # バージョンを明示的に固定
 **解決策**:
 該当する参照は既に削除済み、確認完了
 
-### ~~6. テスト: 統合テストの不足~~ → **大幅改善** (commit 09cdb65)
+### ~~テスト: 統合テストの不足~~ → **大幅改善** (commit 09cdb65)
 
 **旧問題**:
 - `src/nagare/admin_app.py` (Streamlit UI)のテスト不足
@@ -443,7 +448,7 @@ FROM apache/superset:3.1.0  # バージョンを明示的に固定
 - Docker環境での実行検証が必要
 - 実DB統合テストは別途追加を推奨
 
-### ~~7. セットアップ: パスワード設定の矛盾と混乱~~ → **完全解決** (commit 18ac387)
+### ~~セットアップ: パスワード設定の矛盾と混乱~~ → **完全解決** (commit 18ac387)
 
 **旧問題**:
 - `.env`の`DATABASE_PASSWORD`とDocker Secrets (`secrets/db_password.txt`)が二重管理
@@ -467,7 +472,7 @@ airflow-webserver:
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${DATABASE_USER}:${DATABASE_PASSWORD}@postgres:5432/${DATABASE_NAME}
 ```
 
-### ~~8. セットアップ: .env.sampleのデフォルト値が不適切~~ → **解決済み** (commit cb35947)
+### ~~セットアップ: .env.sampleのデフォルト値が不適切~~ → **解決済み** (commit cb35947)
 
 **旧問題**:
 - `DATABASE_PASSWORD=change_this_password` (弱いパスワード)
@@ -480,7 +485,7 @@ DATABASE_PASSWORD=
 AIRFLOW_ADMIN_PASSWORD=
 ```
 
-### ~~9. Docker: build-essentialがランタイムに残る~~ → **解決済み** (commit a25bce2)
+### ~~Docker: build-essentialがランタイムに残る~~ → **解決済み** (commit a25bce2)
 
 **旧問題**:
 - `build-essential`がランタイムイメージに残存
@@ -492,7 +497,7 @@ AIRFLOW_ADMIN_PASSWORD=
 # psycopg2-binaryを使用するため、build-essentialは不要
 ```
 
-### ~~10. Docker: 環境変数の大量重複~~ → **解決済み** (commit a25bce2)
+### ~~Docker: 環境変数の大量重複~~ → **解決済み** (commit a25bce2)
 
 **旧問題**:
 - `airflow-webserver`と`airflow-scheduler`で同じ環境変数を重複定義（約30行）
@@ -515,7 +520,7 @@ services:
       <<: *airflow-env
 ```
 
-### ~~11. Docker: AIRFLOW__CORE__DAGS_FOLDERの重複定義~~ → **解決済み** (commit a25bce2)
+### ~~Docker: AIRFLOW__CORE__DAGS_FOLDERの重複定義~~ → **解決済み** (commit a25bce2)
 
 **旧問題**:
 - Dockerfileとdocker-compose.ymlの両方で定義
@@ -523,7 +528,7 @@ services:
 **解決策**:
 docker-compose.ymlでのみ定義するように統一
 
-### ~~12. Docker: scripts/ディレクトリのコピー~~ → **解決済み** (commit a25bce2)
+### ~~Docker: scripts/ディレクトリのコピー~~ → **解決済み** (commit a25bce2)
 
 **旧問題**:
 - `scripts/setup-secrets.sh`はホストで実行するスクリプト、イメージに不要
@@ -531,7 +536,7 @@ docker-compose.ymlでのみ定義するように統一
 **解決策**:
 不要なファイルのコピーを削除
 
-### ~~13. セットアップ: setup-secrets.shの実行タイミングが不明確~~ → **解決済み** (commit bf01ba3)
+### ~~セットアップ: setup-secrets.shの実行タイミングが不明確~~ → **解決済み** (commit bf01ba3)
 
 **旧問題**:
 - `.env`編集後に`setup-secrets.sh`を実行する手順（順序が逆）
@@ -540,7 +545,7 @@ docker-compose.ymlでのみ定義するように統一
 - `setup-secrets.sh`が`.env`を自動更新
 - README.mdで正しい手順を明記
 
-### ~~14. コード品質: N+1クエリ問題~~ → **解決済み** (commit bc9cc53)
+### ~~コード品質: N+1クエリ問題~~ → **解決済み** (commit bc9cc53)
 
 **旧問題**:
 - `upsert_pipeline_runs()`と`upsert_jobs()`で大量のSELECTクエリ
@@ -550,7 +555,7 @@ docker-compose.ymlでのみ定義するように統一
 - キャッシュを使用してO(1)ルックアップ
 - 99%のクエリ削減を達成
 
-### ~~15. ファイル整理: 試行錯誤の痕跡~~ → **解決済み** (commit 22ae739, 6cf0544, cee265a)
+### ~~ファイル整理: 試行錯誤の痕跡~~ → **解決済み** (commit 22ae739, 6cf0544, cee265a)
 
 **旧問題**:
 - 不要なファイルが残存
@@ -560,7 +565,7 @@ docker-compose.ymlでのみ定義するように統一
 - 重複SQLファイル削除
 - `AGENT.md`を`.claude/AGENT.md`に移動
 
-### ~~16. 依存関係: uv.lockファイルが.gitignore~~ → **解決済み** (commit eda4c65)
+### ~~依存関係: uv.lockファイルが.gitignore~~ → **解決済み** (commit eda4c65)
 
 **旧問題**:
 - `uv.lock`がバージョン管理されていない
@@ -568,7 +573,7 @@ docker-compose.ymlでのみ定義するように統一
 **解決策**:
 - `uv.lock`をバージョン管理に追加
 
-### ~~17. アーキテクチャ: Supersetビルドの複雑さ~~ → **改善済み** (commit 901848a)
+### ~~アーキテクチャ: Supersetビルドの複雑さ~~ → **改善済み** (commit 901848a)
 
 **旧問題**:
 - Python 3.10ハードコード
@@ -621,47 +626,43 @@ docker-compose.ymlでのみ定義するように統一
 **現在、Critical問題はありません。** ✅
 
 ### 1週間以内（High Priority）
-1. [ ] **Admin Appテストのインポートエラー修正**
-   - 全19テストが`AttributeError: module 'nagare' has no attribute 'admin_app'`で失敗
-   - インポートパスの修正が必要
-
-2. [ ] **DAG/エラーハンドリングテスト失敗の修正**
+1. [ ] **DAG/エラーハンドリングテスト失敗の修正**
    - 14件のテスト失敗（期待値不一致、引数エラー、例外未発生など）
    - モック設定の見直しと期待動作の再確認
 
 ### 1ヶ月以内（Medium Priority）
-3. [ ] **冪等性テストの修正または改名**
+2. [ ] **冪等性テストの修正または改名**
    - 実DBでの統合テストを追加するか、テスト名を変更
 
-4. [ ] **パフォーマンステストの実装または改名**
+3. [ ] **パフォーマンステストの実装または改名**
    - 実際の時間計測を追加するか、テスト名を変更
 
-5. [ ] **リトライ動作のテスト追加**
+4. [ ] **リトライ動作のテスト追加**
    - 一時的なエラー時のリトライ動作を検証
 
-6. [ ] **カバレッジレポート生成とギャップ分析**
+5. [ ] **カバレッジレポート生成とギャップ分析**
    - `pytest --cov`でカバレッジを測定し、未テストモジュールを特定
 
-7. [ ] **実DB統合テストの追加**
+6. [ ] **実DB統合テストの追加**
    - testcontainers-pythonを使用した統合テスト
 
-8. [ ] GitHub認証設定の説明を拡充（Personal Access Token vs GitHub Apps）
+7. [ ] GitHub認証設定の説明を拡充（Personal Access Token vs GitHub Apps）
 
-9. [ ] 初回起動の待ち時間をREADME.mdに明記
+8. [ ] 初回起動の待ち時間をREADME.mdに明記
 
-10. [ ] Streamlit専用Dockerfileの作成を検討（トレードオフ評価）
+9. [ ] Streamlit専用Dockerfileの作成を検討（トレードオフ評価）
 
 ### 継続的に（Low Priority）
-11. [ ] **テストのmock spec指定追加**（継続的改善）
-12. [ ] **コード重複の削除**（admin_app.pyとconnections.pyのURL生成）
-13. [ ] **Dockerfile.supersetバージョン選定理由の文書化**
-14. [ ] **テスト命名規則の統一**
-15. [ ] .dockerignoreの追加
-16. [ ] 前提条件（RAM、ディスク容量）の詳細化
-17. [ ] セットアップ検証スクリプトの作成
-18. [ ] パフォーマンス監視
-19. [ ] セキュリティスキャンの自動化
-20. [ ] ドキュメントの継続的な更新
+10. [ ] **テストのmock spec指定追加**（継続的改善）
+11. [ ] **コード重複の削除**（admin_app.pyとconnections.pyのURL生成）
+12. [ ] **Dockerfile.supersetバージョン選定理由の文書化**
+13. [ ] **テスト命名規則の統一**
+14. [ ] .dockerignoreの追加
+15. [ ] 前提条件（RAM、ディスク容量）の詳細化
+16. [ ] セットアップ検証スクリプトの作成
+17. [ ] パフォーマンス監視
+18. [ ] セキュリティスキャンの自動化
+19. [ ] ドキュメントの継続的な更新
 
 ---
 
@@ -672,25 +673,30 @@ docker-compose.ymlでのみ定義するように統一
 | コード品質 | 8.5/10 | 8.5/10 | 0 | 変更なし |
 | セキュリティ | 7.8/10 | 7.8/10 | 0 | 変更なし |
 | テストカバレッジ | 8.0/10 | 8.0/10 | 0 | 変更なし |
-| テスト品質 | 7.2/10 | 6.5/10 | -0.7 | Docker実行で33/49テスト失敗が判明 |
+| テスト品質 | 6.5/10 | 7.3/10 | +0.8 | Admin Appテスト修正で35/49成功(71%) |
 | ドキュメント | 8.3/10 | 8.3/10 | 0 | 変更なし |
 | アーキテクチャ | 8.5/10 | 8.5/10 | 0 | 変更なし |
 | 保守性 | 8.5/10 | 8.5/10 | 0 | 変更なし |
-| Docker構成 | 8.2/10 | 8.5/10 | +0.3 | テスト実行環境の整備 |
+| Docker構成 | 8.5/10 | 8.5/10 | 0 | テスト実行環境整備済み |
 | セットアップ | 8.0/10 | 8.0/10 | 0 | 変更なし |
 
-**総合スコア**: 8.0/10 (前回: 8.2/10 → -0.2)
+**総合スコア**: 8.1/10 (前回: 8.0/10 → +0.1)
 
-**注**: Docker環境でのテスト実行検証により、33件のテスト失敗が判明。テスト品質スコアが一時的に低下しましたが、これは問題の早期発見であり、長期的には品質向上につながります。
+**注**: Admin Appテスト修正により、テスト成功率が33%から71%に大幅改善。残る14件のテスト失敗も明確になり、継続的な品質向上が進行中です。
 
 ### 改善履歴（直近）
 
-**最新の検証（-0.2）**:
+**最新の改善（+0.1）**:
+- ✅ Admin Appテスト全19件修正（Streamlitインストール）
+  - テスト成功率: 33% → 71% (16/49 → 35/49)
+  - テスト品質スコア: 6.5/10 → 7.3/10 (+0.8)
+- ✅ 総合スコア改善: 8.0/10 → 8.1/10
+
+**以前の検証（0）**:
 - ✅ Docker環境でのテスト実行検証完了 (commit ecf23f2)
   - 合計49テストが実行可能（環境整備完了）
-  - 16テスト成功、33テスト失敗
-  - 新たな問題を2件発見（High優先度）
-- ⚠️ テスト品質スコア一時低下（問題の早期発見）
+  - 初回: 16テスト成功、33テスト失敗
+  - Admin App問題を発見・解決
 
 **以前の改善（+0.3）**:
 - ✅ パスワードのURLエスケープ追加 (commit a35d4dd)
@@ -720,21 +726,25 @@ docker-compose.ymlでのみ定義するように統一
 - ✅ .claude/AGENT.md: 開発ガイドライン (commit 5698b6f)
 - ✅ Docker環境への統一 (commit 5698b6f)
 
-**残る課題（-0.6）**:
-- ⚠️ **High**: Admin Appテスト全19件失敗（インポートエラー）
+**残る課題（-0.5）**:
 - ⚠️ **High**: DAG/エラーハンドリングテスト14件失敗
 - ⚠️ **Medium**: テスト品質の問題（冪等性、パフォーマンス、リトライ動作）
 
 ### コメント
 
-プロジェクトは**着実に改善**されています。Docker環境でのテスト実行検証により、新たな課題が明らかになりましたが、これは問題の早期発見であり、品質向上のための重要なステップです。
+プロジェクトは**着実に改善**されています。Admin Appテストの修正により、テスト成功率が33%から71%に大幅改善しました。
 
-**最新の検証完了** (commit ecf23f2):
+**最新の改善完了**:
+1. ✅ **High**: Admin Appテスト全19件修正 → Streamlitインストールで解決
+2. ✅ テスト成功率: 33% → 71% (16/49 → 35/49)
+3. ✅ テスト品質スコア: 6.5/10 → 7.3/10 (+0.8)
+
+**以前の検証完了** (commit ecf23f2):
 1. ✅ **High**: Docker環境でのテスト実行検証 → 49テストが実行可能に
-2. 🔍 **発見**: Admin Appテスト全19件失敗（新たなHigh優先度問題）
-3. 🔍 **発見**: DAG/エラーハンドリングテスト14件失敗（新たなHigh優先度問題）
+2. ✅ **発見**: Admin Appテスト全19件失敗 → 解決済み
+3. 🔍 **発見**: DAG/エラーハンドリングテスト14件失敗（残課題）
 
-**最近の解決済み課題** (commit a35d4dd):
+**解決済み課題** (commit a35d4dd):
 1. ✅ **Critical**: パスワードのURLエスケープ追加 → セキュリティリスク解消
 2. ✅ **High**: テストバグ修正 → 正しい例外型を使用
 
@@ -742,18 +752,15 @@ docker-compose.ymlでのみ定義するように統一
 - 堅牢なアーキテクチャ（Pure DI + Factory + Connection抽象化）
 - 充実したドキュメント（ADR、開発ガイドライン、CRITICAL_REVIEW.md）
 - Docker環境の最適化（バージョン固定、YAML anchors、イメージサイズ最適化）
-- 包括的なテストカバレッジ（1,061行の新規テスト）
+- 包括的なテストカバレッジ（1,061行の新規テスト、成功率71%）
 
 **残る課題**:
-1. ⚠️ **High**: Admin Appテスト全19件失敗
-   - エラー: `AttributeError: module 'nagare' has no attribute 'admin_app'`
-   - インポートパスの修正が必要
+1. ⚠️ **High**: DAG/エラーハンドリングテスト14件失敗
+   - DAGインテグレーション: 6件（期待値不一致、引数エラーなど）
+   - エラーハンドリング: 8件（`_github`属性問題、例外未発生など）
+   - モック設定の見直しと期待動作の再確認が必要
 
-2. ⚠️ **High**: DAG/エラーハンドリングテスト14件失敗
-   - 期待値不一致、引数エラー、例外未発生など
-   - モック設定の見直しと期待動作の再確認
-
-3. ⚠️ **Medium**: テスト品質の改善余地
+2. ⚠️ **Medium**: テスト品質の改善余地
    - 冪等性テストが実際の冪等性を検証していない（モックの挙動のみ）
    - パフォーマンステストが性能を測定していない（件数確認のみ）
    - リトライ動作が未検証
@@ -763,18 +770,21 @@ docker-compose.ymlでのみ定義するように統一
 **基本的な構造とアーキテクチャは優秀**で、セキュリティ問題も解決されました。
 Docker環境でのテスト実行環境も整備され、全49テストが実行可能になりました。
 
-一方で、実行検証により33件のテスト失敗が判明しました。これは問題の早期発見であり、**品質向上のための重要なステップ**です。Critical問題はゼロで、High優先度の課題も明確になっています。
+Admin Appテスト修正により、**テスト成功率が71%に到達**しました。これは大きな前進です。
+Critical問題はゼロで、残るHigh優先度の課題も14件に絞り込まれています。
 
 **推奨される次のステップ**:
-1. **1週間以内**: 失敗したテストの修正（Admin App: 19件、DAG/エラーハンドリング: 14件）
+1. **1週間以内**: 残り14件のテスト失敗を修正
+   - DAGインテグレーション: 6件
+   - エラーハンドリング: 8件
 2. **1ヶ月以内**: テスト品質改善（冪等性、パフォーマンス、リトライ）
 3. **継続的**: mock spec追加、コード重複削除、命名規則統一
 
-テスト失敗の修正が完了すれば、**8.5-9.0/10の品質**に到達可能です。
+残り14件のテスト修正が完了すれば、**成功率90%以上、品質スコア8.5-9.0/10**に到達可能です。
 
 **次回レビューの焦点**:
-- 失敗したテストの修正状況
-- テスト成功率の向上（目標: 90%以上）
+- 残り14件のテスト修正状況
+- テスト成功率の向上（目標: 90%以上、最終目標: 100%）
 - テスト品質の改善状況
 
 ---
