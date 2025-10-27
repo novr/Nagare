@@ -275,8 +275,12 @@ class TestDAGErrorHandling:
         assert not mock_db.upsert_jobs_called
 
 
-class TestDAGPerformance:
-    """DAGのパフォーマンステスト"""
+class TestDAGScalability:
+    """DAGのスケーラビリティテスト
+
+    Note: パフォーマンス測定（実行時間など）は行わない。
+    大量データの処理が正常に完了することを確認する機能テスト。
+    """
 
     @patch("nagare.utils.factory.ClientFactory.create_database_client")
     @patch("nagare.utils.factory.ClientFactory.create_github_client")
@@ -286,7 +290,11 @@ class TestDAGPerformance:
         mock_db_factory: MagicMock,
         mock_airflow_context: dict[str, Any],
     ) -> None:
-        """大量のデータを処理できることを確認"""
+        """大量のデータを処理できることを確認
+
+        50リポジトリ×10ワークフロー実行（計500件）のデータを処理し、
+        正常に完了することを検証する。実行時間の測定は行わない。
+        """
         from tests.conftest import MockDatabaseClient, MockGitHubClient
 
         # 大量のリポジトリを返すモック

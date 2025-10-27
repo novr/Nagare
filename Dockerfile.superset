@@ -1,5 +1,13 @@
 # カスタムSuperset Dockerfile
 # PostgreSQLドライバーを含むSupersetイメージ
+#
+# バージョン選定: 3.1.0（2024年リリース）
+# - 再現性のため特定バージョンに固定（コミット078543d）
+# - 3.1.0は実績のある安定版
+# - 最新版（5.0.0, 2025-06）はメジャーアップグレードのため慎重に検証が必要
+# - TODO: 検証環境で5.0.0以降をテストし、段階的にアップグレード予定
+#
+# 参考: https://github.com/apache/superset/releases
 
 FROM apache/superset:3.1.0
 
