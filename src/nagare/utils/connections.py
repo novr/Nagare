@@ -769,7 +769,7 @@ class CircleCIConnection(BaseConnection):
 
 
 @dataclass
-class BitriseConnection(ConnectionBase):
+class BitriseConnection(BaseConnection):
     """Bitrise API接続設定
 
     Bitriseはモバイルアプリ向けCI/CDプラットフォーム。

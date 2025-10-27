@@ -27,7 +27,8 @@ COPY --chown=airflow:root src/ ./src/
 # 追加の依存関係をインストール（本番環境用、editable installなし）
 # psycopg2-binaryを使用するため、build-essentialは不要
 # Airflowは既にベースイメージに含まれている
-RUN pip install --no-cache-dir .
+# 開発環境用にdev依存関係も含める（テスト実行のため）
+RUN pip install --no-cache-dir ".[dev]"
 
 # PYTHONPATH設定（srcディレクトリをインポートパスに追加）
 ENV PYTHONPATH="${PYTHONPATH}:/opt/airflow/src"

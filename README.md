@@ -203,53 +203,53 @@ Nagareの開発では、すべての開発ツール（リント、フォーマ�
 
 ```bash
 # コードをフォーマット
-docker compose exec airflow-scheduler uv run ruff format src/
+docker-compose exec airflow-scheduler ruff format src/
 ```
 
 ### リント
 
 ```bash
 # リント実行
-docker compose exec airflow-scheduler uv run ruff check src/
+docker-compose exec airflow-scheduler ruff check src/
 
 # リント（自動修正付き）
-docker compose exec airflow-scheduler uv run ruff check --fix src/
+docker-compose exec airflow-scheduler ruff check --fix src/
 
 # 型チェック
-docker compose exec airflow-scheduler uv run pyright src/
+docker-compose exec airflow-scheduler pyright src/
 ```
 
 ### テスト
 
 ```bash
 # すべてのテストを実行
-docker compose exec airflow-scheduler uv run pytest
+docker-compose exec airflow-scheduler pytest
 
 # カバレッジ付きで実行
-docker compose exec airflow-scheduler uv run pytest --cov=src --cov-report=html
+docker-compose exec airflow-scheduler pytest --cov=src --cov-report=html
 
 # 特定のテストを実行
-docker compose exec airflow-scheduler uv run pytest tests/utils/test_connections.py
+docker-compose exec airflow-scheduler pytest tests/utils/test_connections.py::TestBitriseConnection -v
 ```
 
 ### Pythonシェル（デバッグ用）
 
 ```bash
 # Airflowコンテナ内でPythonシェルを起動
-docker compose exec airflow-scheduler uv run python
+docker-compose exec airflow-scheduler python
 
-# IPythonがインストールされている場合
-docker compose exec airflow-scheduler uv run ipython
+# IPythonがインストールされている場合（別途インストール必要）
+docker-compose exec airflow-scheduler ipython
 ```
 
 ### データベース操作
 
 ```bash
 # PostgreSQLに接続
-docker compose exec postgres psql -U nagare_user -d nagare
+docker-compose exec postgres psql -U nagare_user -d nagare
 
 # SQLファイルを実行
-docker compose exec -T postgres psql -U nagare_user -d nagare < sql/schema.sql
+docker-compose exec -T postgres psql -U nagare_user -d nagare < sql/schema.sql
 ```
 
 ## Supersetダッシュボードのセットアップ
@@ -297,7 +297,7 @@ docker-compose up -d superset
 **解決策**:
 ```bash
 # ログを確認
-docker compose logs airflow-scheduler
+docker-compose logs airflow-scheduler
 
 # DAGの構文チェック
 docker exec nagare-airflow-scheduler airflow dags list
