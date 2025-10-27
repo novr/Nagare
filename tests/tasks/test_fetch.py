@@ -31,6 +31,7 @@ def test_fetch_workflow_runs_with_mock(
 ) -> None:
     """fetch_workflow_runs関数がモックGitHubClientで動作することを確認"""
     from nagare.tasks.fetch import fetch_workflow_runs
+    from tests.conftest import MockDatabaseClient
 
     # 前のタスクのデータを設定
     ti = mock_airflow_context["ti"]
@@ -38,8 +39,13 @@ def test_fetch_workflow_runs_with_mock(
         {"owner": "test-org", "repo": "test-repo-1"},
     ]
 
+    # MockDatabaseClientを作成
+    mock_db_client = MockDatabaseClient()
+
     # モックを注入して実行
-    fetch_workflow_runs(github_client=mock_github_client, **mock_airflow_context)
+    fetch_workflow_runs(
+        github_client=mock_github_client, db=mock_db_client, **mock_airflow_context
+    )
 
     # 検証
     assert mock_github_client.get_workflow_runs_called

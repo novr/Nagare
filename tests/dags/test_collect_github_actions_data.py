@@ -43,11 +43,11 @@ def test_with_database_client_wrapper(mock_airflow_context: dict[str, Any]) -> N
 
 
 def test_with_github_client_wrapper(mock_airflow_context: dict[str, Any]) -> None:
-    """with_github_clientヘルパー関数が動作することを確認"""
+    """with_github_and_database_clientsヘルパー関数が動作することを確認"""
     from nagare.tasks.fetch import fetch_workflow_runs
-    from nagare.utils.dag_helpers import with_github_client
+    from nagare.utils.dag_helpers import with_github_and_database_clients
     from nagare.utils.factory import ClientFactory, set_factory
-    from tests.conftest import MockGitHubClient
+    from tests.conftest import MockDatabaseClient, MockGitHubClient
 
     # 前のタスクのデータを設定
     ti = mock_airflow_context["ti"]
@@ -58,8 +58,12 @@ def test_with_github_client_wrapper(mock_airflow_context: dict[str, Any]) -> Non
     # モック用のFactoryを作成
     class MockFactory(ClientFactory):
         @staticmethod
-        def create_github_client() -> MockGitHubClient:
+        def create_github_client(conn_id: str | None = None) -> MockGitHubClient:
             return MockGitHubClient()
+
+        @staticmethod
+        def create_database_client(conn_id: str | None = None) -> MockDatabaseClient:
+            return MockDatabaseClient()
 
     # Factoryを差し替え
     original_factory = ClientFactory()
@@ -67,7 +71,7 @@ def test_with_github_client_wrapper(mock_airflow_context: dict[str, Any]) -> Non
 
     try:
         # ヘルパー関数でラップして実行
-        wrapped_func = with_github_client(fetch_workflow_runs)
+        wrapped_func = with_github_and_database_clients(fetch_workflow_runs)
         wrapped_func(**mock_airflow_context)
 
         # XComに保存されたか確認
