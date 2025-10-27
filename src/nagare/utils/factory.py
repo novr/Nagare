@@ -8,7 +8,6 @@ ConnectionRegistryから接続情報を取得してクライアントを生成�
 """
 
 import logging
-import os
 
 from nagare.utils.connections import (
     ConnectionRegistry,
@@ -16,7 +15,6 @@ from nagare.utils.connections import (
     GitHubConnection,
 )
 from nagare.utils.database import DatabaseClient
-from nagare.utils.database_mock import MockDatabaseClient
 from nagare.utils.github_client import GitHubClient
 from nagare.utils.protocols import DatabaseClientProtocol, GitHubClientProtocol
 
@@ -26,10 +24,7 @@ logger = logging.getLogger(__name__)
 class ClientFactory:
     """クライアントインスタンスを生成するFactoryクラス
 
-    環境変数に基づいて適切な実装を返す。
-    - USE_DB_MOCK=true: MockDatabaseClient（開発環境）
-    - USE_DB_MOCK=false: DatabaseClient（本番環境）
-
+    ConnectionRegistryから接続情報を取得してクライアントを生成する。
     テスト時はcreate_*メソッドをオーバーライドしたサブクラスを使用。
     """
 
@@ -39,7 +34,7 @@ class ClientFactory:
     ) -> DatabaseClientProtocol:
         """DatabaseClientインスタンスを生成する
 
-        環境変数USE_DB_MOCKに基づいて適切な実装を返す。
+        ConnectionRegistryから接続情報を取得してDatabaseClientを生成する。
 
         Args:
             connection: データベース接続設定（省略時はRegistryから取得）
@@ -47,16 +42,11 @@ class ClientFactory:
         Returns:
             DatabaseClientProtocol実装インスタンス
         """
-        use_mock = os.getenv("USE_DB_MOCK", "false").lower() == "true"
-        if use_mock:
-            logger.debug("Creating MockDatabaseClient (development mode)")
-            return MockDatabaseClient()
-        else:
-            logger.debug("Creating DatabaseClient (production mode)")
-            # Connection優先、なければRegistryから取得
-            if connection is None:
-                connection = ConnectionRegistry.get_database()
-            return DatabaseClient(connection=connection)
+        logger.debug("Creating DatabaseClient (production mode)")
+        # Connection優先、なければRegistryから取得
+        if connection is None:
+            connection = ConnectionRegistry.get_database()
+        return DatabaseClient(connection=connection)
 
     @staticmethod
     def create_github_client(

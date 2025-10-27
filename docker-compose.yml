@@ -35,8 +35,6 @@ x-airflow-env: &airflow-env
   GITHUB_TOKEN: ${GITHUB_TOKEN}
 
   # アプリケーション設定
-  USE_DB_MOCK: ${USE_DB_MOCK:-false}
-  REPOSITORIES_JSON: ${REPOSITORIES_JSON:-}
   AIRFLOW_ALERT_EMAIL: ${AIRFLOW_ALERT_EMAIL:-admin@example.com}
 
 services:

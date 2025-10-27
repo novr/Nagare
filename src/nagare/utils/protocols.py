@@ -4,14 +4,13 @@
 
 ## モック戦略について
 
-このプロジェクトでは2レベルのモック機能を提供している:
+このプロジェクトでは以下のモック機能を提供している:
 
-1. **環境変数ベースのモック** (database.py の USE_DB_MOCK)
-   - 開発環境でPostgreSQL未接続時に使用
-   - 実際のファイル (YAML/JSON) から設定を読み込む
-   - ログ出力により動作を確認可能
+1. **本番環境**: ConnectionRegistryからDatabaseConnection/GitHubConnectionを取得
+   - 環境変数から接続情報を読み込む
+   - 実際のPostgreSQL/GitHub APIに接続
 
-2. **テスト注入モック** (conftest.py の Mock*Client)
+2. **テスト環境**: MockFactory経由でMock*Clientを注入
    - ユニットテスト時に依存性注入で使用
    - 呼び出し履歴とパラメータを記録
    - テスト内でアサーションが可能

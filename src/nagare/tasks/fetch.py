@@ -116,7 +116,6 @@ def fetch_repositories(
     """監視対象のリポジトリリストを取得する
 
     PostgreSQLから監視対象リポジトリを取得する。
-    開発環境では USE_DB_MOCK=true でモックデータを使用可能。
 
     Args:
         db: DatabaseClientインスタンス（必須、外部から注入される）

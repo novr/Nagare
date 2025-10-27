@@ -3,49 +3,10 @@
 import pytest
 
 
-def test_factory_create_database_client_production(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """DatabaseClient（本番）の生成を確認"""
+def test_factory_create_database_client() -> None:
+    """DatabaseClientの生成を確認"""
     from nagare.utils.database import DatabaseClient
     from nagare.utils.factory import ClientFactory
-
-    # 本番モード
-    monkeypatch.setenv("USE_DB_MOCK", "false")
-
-    factory = ClientFactory()
-    client = factory.create_database_client()
-
-    assert isinstance(client, DatabaseClient)
-    client.close()
-
-
-def test_factory_create_database_client_mock(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """MockDatabaseClient（開発）の生成を確認"""
-    from nagare.utils.database_mock import MockDatabaseClient
-    from nagare.utils.factory import ClientFactory
-
-    # モックモード
-    monkeypatch.setenv("USE_DB_MOCK", "true")
-
-    factory = ClientFactory()
-    client = factory.create_database_client()
-
-    assert isinstance(client, MockDatabaseClient)
-    client.close()
-
-
-def test_factory_create_database_client_default(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """環境変数未設定時はDatabaseClient（本番）が生成されることを確認"""
-    from nagare.utils.database import DatabaseClient
-    from nagare.utils.factory import ClientFactory
-
-    # 環境変数クリア
-    monkeypatch.delenv("USE_DB_MOCK", raising=False)
 
     factory = ClientFactory()
     client = factory.create_database_client()
