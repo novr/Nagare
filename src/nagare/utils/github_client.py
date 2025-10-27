@@ -20,7 +20,11 @@ from github import (
 )
 
 from nagare.constants import GitHubConfig
-from nagare.utils.connections import GitHubConnection
+from nagare.utils.connections import (
+    GitHubAppAuth,
+    GitHubConnection,
+    GitHubTokenAuth,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -116,36 +120,45 @@ class GitHubClient:
                     base_url != "https://api.github.com",
                 ]
             ):
-                connection = GitHubConnection(
-                    token=token,
-                    app_id=app_id,
-                    installation_id=installation_id,
-                    private_key=private_key,
-                    base_url=base_url,
-                )
+                # Token認証を優先
+                if token:
+                    connection = GitHubTokenAuth(token=token, _base_url=base_url)
+                elif app_id and installation_id:
+                    connection = GitHubAppAuth(
+                        app_id=app_id,
+                        installation_id=installation_id,
+                        private_key=private_key,
+                        _base_url=base_url,
+                    )
+                else:
+                    raise ValueError(
+                        "GitHub authentication not configured. "
+                        "Set either token or (app_id, installation_id, private_key)."
+                    )
             else:
                 # 環境変数から生成
                 connection = GitHubConnection.from_env()
 
-        # Private keyファイルの読み込み（必要な場合）
-        if connection.private_key is None and connection.private_key_path:
-            try:
-                with open(connection.private_key_path) as f:
-                    connection.private_key = f.read()
-            except FileNotFoundError as e:
-                raise ValueError(
-                    f"GitHub App private key file not found: {connection.private_key_path}"
-                ) from e
-            except PermissionError as e:
-                raise ValueError(
-                    f"Permission denied reading GitHub App private key file: "
-                    f"{connection.private_key_path}"
-                ) from e
-            except Exception as e:
-                raise ValueError(
-                    f"Failed to read GitHub App private key file "
-                    f"{connection.private_key_path}: {e}"
-                ) from e
+        # Private keyファイルの読み込み（GitHubAppAuthの場合のみ）
+        if isinstance(connection, GitHubAppAuth):
+            if connection.private_key is None and connection.private_key_path:
+                try:
+                    with open(connection.private_key_path) as f:
+                        connection.private_key = f.read()
+                except FileNotFoundError as e:
+                    raise ValueError(
+                        f"GitHub App private key file not found: {connection.private_key_path}"
+                    ) from e
+                except PermissionError as e:
+                    raise ValueError(
+                        f"Permission denied reading GitHub App private key file: "
+                        f"{connection.private_key_path}"
+                    ) from e
+                except Exception as e:
+                    raise ValueError(
+                        f"Failed to read GitHub App private key file "
+                        f"{connection.private_key_path}: {e}"
+                    ) from e
 
         # 認証情報の検証
         if not connection.validate():
@@ -154,20 +167,20 @@ class GitHubClient:
                 "Set either token or (app_id, installation_id, private_key)."
             )
 
-        # 認証設定
-        if connection.app_id and connection.private_key and connection.installation_id:
+        # 認証設定（型に基づいて分岐）
+        if isinstance(connection, GitHubAppAuth):
             # GitHub Apps認証
             app_auth = Auth.AppAuth(connection.app_id, connection.private_key)
             auth = Auth.AppInstallationAuth(app_auth, connection.installation_id)
             logger.debug("GitHubClient initialized with GitHub App authentication")
-        elif connection.token:
+        elif isinstance(connection, GitHubTokenAuth):
             # Personal Access Token認証
             auth = Auth.Token(connection.token)
             logger.debug("GitHubClient initialized with token authentication")
         else:
             raise ValueError(
-                "GitHub authentication not configured. "
-                "Set either token or (app_id, installation_id, private_key)."
+                f"Invalid GitHubConnection type: {type(connection).__name__}. "
+                "Expected GitHubTokenAuth or GitHubAppAuth."
             )
 
         # リトライ設定（指数バックオフ）

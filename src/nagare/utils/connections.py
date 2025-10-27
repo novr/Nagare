@@ -134,7 +134,7 @@ class BaseConnection(ABC):
             # プラットフォーム固有のパース処理を呼び出す
             return cls.from_airflow_extra(
                 conn_id=conn_id,
-                password=connection.password,
+                password=connection.password,  # type: ignore[arg-type]
                 host=connection.host,
                 port=connection.port,
                 schema=connection.schema,
@@ -204,100 +204,82 @@ class BaseConnection(ABC):
 # ============================================================================
 
 
-@dataclass
-class GitHubConnection(BaseConnection):
-    """GitHub接続設定
+class GitHubConnectionBase(BaseConnection, ABC):
+    """GitHub接続設定の抽象基底クラス
 
-    Personal Access Token または GitHub Apps 認証に対応。
-
-    Attributes:
-        token: Personal Access Token（推奨）
-        app_id: GitHub App ID
-        installation_id: GitHub App Installation ID
-        private_key: GitHub App Private Key（文字列）
-        private_key_path: GitHub App Private Keyファイルパス
-        base_url: GitHub API ベースURL（GitHub Enterpriseの場合に変更）
-        description: 説明（BaseConnectionから継承）
+    Token認証とApp認証を明確に分離するための基底クラス。
+    サブクラス：GitHubTokenAuth, GitHubAppAuth
 
     使用例:
-        # Airflow Connectionから（推奨）
-        conn = GitHubConnection.from_airflow("github_default")
+        # Airflow Connectionから（自動的に適切なサブクラスを返す）
+        conn = GitHubConnectionBase.from_airflow("github_default")
 
-        # Personal Access Token認証
-        conn = GitHubConnection(token="ghp_xxx")
+        # 環境変数から（自動的に適切なサブクラスを返す）
+        conn = GitHubConnectionBase.from_env()
 
-        # GitHub Apps認証
-        conn = GitHubConnection(
-            app_id=123456,
-            installation_id=789012,
-            private_key_path="/path/to/key.pem"
-        )
-
-        # 環境変数から自動生成
-        conn = GitHubConnection.from_env()
+        # 直接サブクラスを使用
+        conn = GitHubTokenAuth(token="ghp_xxx")
+        conn = GitHubAppAuth(app_id=123, installation_id=456, private_key="...")
     """
 
     # クラス変数
     CONN_TYPE: ClassVar[str] = "http"
 
-    # Personal Access Token認証
-    token: str | None = None
-
-    # GitHub Apps認証
-    app_id: int | None = None
-    installation_id: int | None = None
-    private_key: str | None = None
-    private_key_path: str | None = None
-
-    # 共通設定
-    base_url: str = "https://api.github.com"
+    @property
+    @abstractmethod
+    def base_url(self) -> str:
+        """GitHub API ベースURL"""
+        ...
 
     @classmethod
-    def from_env(cls) -> "GitHubConnection":
-        """環境変数から生成
+    def from_env(cls) -> "GitHubConnectionBase":
+        """環境変数から適切なサブクラスを生成
 
-        以下の環境変数を読み取る：
-        - GITHUB_TOKEN: Personal Access Token
-        - GITHUB_APP_ID: GitHub App ID
-        - GITHUB_APP_INSTALLATION_ID: GitHub App Installation ID
-        - GITHUB_APP_PRIVATE_KEY: Private Key（文字列）
-        - GITHUB_APP_PRIVATE_KEY_PATH: Private Keyファイルパス
+        以下の環境変数を読み取り、Token認証かApp認証かを自動判定：
+        - GITHUB_TOKEN: Personal Access Token（Token認証）
+        - GITHUB_APP_ID + GITHUB_APP_INSTALLATION_ID: GitHub App認証
         - GITHUB_API_URL: ベースURL（デフォルト: https://api.github.com）
 
+        Token認証を優先し、なければApp認証を試す。
+
         Returns:
-            GitHubConnection: 環境変数から生成されたConnection
+            GitHubConnectionBase: GitHubTokenAuth または GitHubAppAuth
+
+        Raises:
+            ValueError: いずれの認証情報も設定されていない場合
         """
-        # App ID/Installation IDの読み取り（0はNoneとして扱う）
+        token = os.getenv("GITHUB_TOKEN")
+        base_url = os.getenv("GITHUB_API_URL", "https://api.github.com")
+
+        # Token認証を優先
+        if token:
+            return GitHubTokenAuth(token=token, _base_url=base_url)
+
+        # GitHub App認証
         app_id_str = os.getenv("GITHUB_APP_ID", "")
         installation_id_str = os.getenv("GITHUB_APP_INSTALLATION_ID", "")
 
-        app_id = None
-        if app_id_str:
+        if app_id_str and installation_id_str:
             try:
                 app_id = int(app_id_str)
-                if app_id == 0:
-                    app_id = None
-            except ValueError:
-                logger.warning(f"Invalid GITHUB_APP_ID: {app_id_str}")
-
-        installation_id = None
-        if installation_id_str:
-            try:
                 installation_id = int(installation_id_str)
-                if installation_id == 0:
-                    installation_id = None
-            except ValueError:
-                logger.warning(
-                    f"Invalid GITHUB_APP_INSTALLATION_ID: {installation_id_str}"
-                )
 
-        return cls(
-            token=os.getenv("GITHUB_TOKEN"),
-            app_id=app_id,
-            installation_id=installation_id,
-            private_key=os.getenv("GITHUB_APP_PRIVATE_KEY"),
-            private_key_path=os.getenv("GITHUB_APP_PRIVATE_KEY_PATH"),
-            base_url=os.getenv("GITHUB_API_URL", "https://api.github.com"),
+                return GitHubAppAuth(
+                    app_id=app_id,
+                    installation_id=installation_id,
+                    private_key=os.getenv("GITHUB_APP_PRIVATE_KEY"),
+                    private_key_path=os.getenv("GITHUB_APP_PRIVATE_KEY_PATH"),
+                    _base_url=base_url,
+                )
+            except ValueError as e:
+                raise ValueError(
+                    f"Invalid GITHUB_APP_ID or GITHUB_APP_INSTALLATION_ID: {e}"
+                ) from e
+
+        # いずれも設定されていない
+        raise ValueError(
+            "GitHub authentication not configured. "
+            "Set either GITHUB_TOKEN or (GITHUB_APP_ID + GITHUB_APP_INSTALLATION_ID)"
         )
 
     @classmethod
@@ -311,15 +293,13 @@ class GitHubConnection(BaseConnection):
         login: str | None,
         extra: dict[str, Any],
         description: str,
-    ) -> "GitHubConnection":
-        """Airflow Connectionの各フィールドからインスタンスを生成
+    ) -> "GitHubConnectionBase":
+        """Airflow Connectionから適切なサブクラスを生成
 
         Airflow Connectionのフィールドマッピング：
-        - password: Personal Access Token
+        - password: Personal Access Token（Token認証）
         - host: API base URL（例: api.github.com）
-        - extra.app_id: GitHub App ID
-        - extra.installation_id: GitHub App Installation ID
-        - extra.private_key: Private Key文字列
+        - extra.app_id + extra.installation_id: GitHub App認証
 
         Args:
             conn_id: Connection ID（ロギング用）
@@ -332,65 +312,113 @@ class GitHubConnection(BaseConnection):
             description: 説明
 
         Returns:
-            GitHubConnection: 生成されたインスタンス
+            GitHubConnectionBase: GitHubTokenAuth または GitHubAppAuth
+
+        Raises:
+            ValueError: いずれの認証情報も設定されていない場合
         """
         # Base URLの決定
         base_url = "https://api.github.com"
         if host:
-            # プロトコルが含まれていない場合は追加
             if not host.startswith(("http://", "https://")):
                 base_url = f"https://{host}"
             else:
                 base_url = host
 
-        # GitHub Apps認証情報の読み取り
+        # Token認証を優先
+        if password:
+            return GitHubTokenAuth(
+                token=password,
+                _base_url=base_url,
+                description=description,
+            )
+
+        # GitHub Apps認証
         app_id = extra.get("app_id")
         installation_id = extra.get("installation_id")
         private_key = extra.get("private_key")
 
-        # app_id と installation_id を整数に変換
-        if app_id:
+        if app_id and installation_id:
             try:
-                app_id = int(app_id)
-            except (ValueError, TypeError):
-                logger.warning(f"Invalid app_id in Connection '{conn_id}': {app_id}")
-                app_id = None
-
-        if installation_id:
-            try:
-                installation_id = int(installation_id)
-            except (ValueError, TypeError):
-                logger.warning(
-                    f"Invalid installation_id in Connection '{conn_id}': {installation_id}"
+                return GitHubAppAuth(
+                    app_id=int(app_id),
+                    installation_id=int(installation_id),
+                    private_key=private_key,
+                    _base_url=base_url,
+                    description=description,
                 )
-                installation_id = None
+            except (ValueError, TypeError) as e:
+                raise ValueError(
+                    f"Invalid app_id or installation_id in Connection '{conn_id}': {e}"
+                ) from e
+
+        # いずれも設定されていない
+        raise ValueError(
+            f"Connection '{conn_id}' must have either password (token) "
+            "or extra.app_id + extra.installation_id (GitHub App)"
+        )
+
+
+@dataclass
+class GitHubTokenAuth(GitHubConnectionBase):
+    """GitHub Personal Access Token認証
+
+    Personal Access Tokenを使用したGitHub API認証。
+    個人開発や小規模プロジェクトに推奨。
+
+    Attributes:
+        token: Personal Access Token（必須）
+        base_url: GitHub API ベースURL
+        description: 説明（BaseConnectionから継承）
+
+    使用例:
+        # 直接インスタンス化
+        conn = GitHubTokenAuth(token="ghp_xxxxxxxxxxxx")
+
+        # Airflow Connectionから
+        conn = GitHubConnectionBase.from_airflow("github_default")
+    """
+
+    CONN_TYPE: ClassVar[str] = "http"
+
+    token: str = ""  # 必須、validate()で検証
+    _base_url: str = "https://api.github.com"
+
+    @property
+    def base_url(self) -> str:
+        """GitHub API ベースURL"""
+        return self._base_url
+
+    @classmethod
+    def from_env(cls) -> "GitHubTokenAuth":
+        """環境変数から生成
+
+        以下の環境変数を読み取る：
+        - GITHUB_TOKEN: Personal Access Token（必須）
+        - GITHUB_API_URL: ベースURL（デフォルト: https://api.github.com）
+
+        Returns:
+            GitHubTokenAuth: 環境変数から生成されたインスタンス
+
+        Raises:
+            ValueError: GITHUB_TOKENが設定されていない場合
+        """
+        token = os.getenv("GITHUB_TOKEN")
+        if not token:
+            raise ValueError("GITHUB_TOKEN environment variable is required")
 
         return cls(
-            token=password or None,
-            app_id=app_id,
-            installation_id=installation_id,
-            private_key=private_key,
-            base_url=base_url,
-            description=description,
+            token=token,
+            _base_url=os.getenv("GITHUB_API_URL", "https://api.github.com"),
         )
 
     def validate(self) -> bool:
         """接続情報の検証
 
-        Token認証 または GitHub Apps認証のいずれかが有効な場合にTrueを返す。
-
         Returns:
             有効な設定の場合True
         """
-        # Personal Access Token認証
-        if self.token:
-            return True
-
-        # GitHub Apps認証
-        if self.app_id and self.installation_id:
-            return bool(self.private_key or self.private_key_path)
-
-        return False
+        return bool(self.token)
 
     def to_dict(self) -> dict[str, Any]:
         """辞書形式に変換（シークレットは除外）
@@ -399,13 +427,129 @@ class GitHubConnection(BaseConnection):
             シークレットを含まない設定情報
         """
         return {
-            "type": "github",
+            "type": "github_token",
             "base_url": self.base_url,
-            "auth_type": "token" if self.token else "app",
             "has_token": bool(self.token),
-            "has_app_id": bool(self.app_id),
+        }
+
+
+@dataclass
+class GitHubAppAuth(GitHubConnectionBase):
+    """GitHub App認証
+
+    GitHub Appを使用したGitHub API認証。
+    エンタープライズや組織での利用に推奨。
+
+    Attributes:
+        app_id: GitHub App ID（必須）
+        installation_id: GitHub App Installation ID（必須）
+        private_key: GitHub App Private Key（文字列、オプション）
+        private_key_path: Private Keyファイルパス（オプション）
+        base_url: GitHub API ベースURL
+        description: 説明（BaseConnectionから継承）
+
+    private_keyまたはprivate_key_pathのいずれかが必須。
+
+    使用例:
+        # Private Key文字列を指定
+        conn = GitHubAppAuth(
+            app_id=123456,
+            installation_id=789012,
+            private_key="-----BEGIN RSA PRIVATE KEY-----\\n..."
+        )
+
+        # Private Keyファイルパスを指定
+        conn = GitHubAppAuth(
+            app_id=123456,
+            installation_id=789012,
+            private_key_path="/path/to/key.pem"
+        )
+    """
+
+    CONN_TYPE: ClassVar[str] = "http"
+
+    app_id: int = 0  # 必須、validate()で検証
+    installation_id: int = 0  # 必須、validate()で検証
+    private_key: str | None = None
+    private_key_path: str | None = None
+    _base_url: str = "https://api.github.com"
+
+    @property
+    def base_url(self) -> str:
+        """GitHub API ベースURL"""
+        return self._base_url
+
+    @classmethod
+    def from_env(cls) -> "GitHubAppAuth":
+        """環境変数から生成
+
+        以下の環境変数を読み取る：
+        - GITHUB_APP_ID: GitHub App ID（必須）
+        - GITHUB_APP_INSTALLATION_ID: Installation ID（必須）
+        - GITHUB_APP_PRIVATE_KEY: Private Key文字列（オプション）
+        - GITHUB_APP_PRIVATE_KEY_PATH: Private Keyファイルパス（オプション）
+        - GITHUB_API_URL: ベースURL（デフォルト: https://api.github.com）
+
+        private_keyまたはprivate_key_pathのいずれかが必須。
+
+        Returns:
+            GitHubAppAuth: 環境変数から生成されたインスタンス
+
+        Raises:
+            ValueError: 必須の環境変数が設定されていない場合
+        """
+        app_id_str = os.getenv("GITHUB_APP_ID")
+        installation_id_str = os.getenv("GITHUB_APP_INSTALLATION_ID")
+
+        if not app_id_str or not installation_id_str:
+            raise ValueError(
+                "GITHUB_APP_ID and GITHUB_APP_INSTALLATION_ID are required"
+            )
+
+        try:
+            app_id = int(app_id_str)
+            installation_id = int(installation_id_str)
+        except ValueError as e:
+            raise ValueError(
+                f"Invalid GITHUB_APP_ID or GITHUB_APP_INSTALLATION_ID: {e}"
+            ) from e
+
+        return cls(
+            app_id=app_id,
+            installation_id=installation_id,
+            private_key=os.getenv("GITHUB_APP_PRIVATE_KEY"),
+            private_key_path=os.getenv("GITHUB_APP_PRIVATE_KEY_PATH"),
+            _base_url=os.getenv("GITHUB_API_URL", "https://api.github.com"),
+        )
+
+    def validate(self) -> bool:
+        """接続情報の検証
+
+        Returns:
+            有効な設定の場合True
+        """
+        if not self.app_id or not self.installation_id:
+            return False
+        return bool(self.private_key or self.private_key_path)
+
+    def to_dict(self) -> dict[str, Any]:
+        """辞書形式に変換（シークレットは除外）
+
+        Returns:
+            シークレットを含まない設定情報
+        """
+        return {
+            "type": "github_app",
+            "base_url": self.base_url,
+            "app_id": self.app_id,
+            "installation_id": self.installation_id,
             "has_private_key": bool(self.private_key or self.private_key_path),
         }
+
+
+# 後方互換性のための型エイリアス
+# 既存コードで GitHubConnection を使用している箇所が動作するように
+GitHubConnection = GitHubConnectionBase
 
 
 # ============================================================================
@@ -919,7 +1063,18 @@ class ConnectionRegistry:
         # GitHubの設定
         if "github" in config:
             gh_config = config["github"]
-            cls._github = GitHubConnection(**gh_config)
+            # token と app_id のどちらが設定されているかで適切なクラスを選択
+            if "token" in gh_config:
+                cls._github = GitHubTokenAuth(**gh_config)
+            elif "app_id" in gh_config and "installation_id" in gh_config:
+                # _base_url を base_url にマッピング
+                if "base_url" in gh_config:
+                    gh_config["_base_url"] = gh_config.pop("base_url")
+                cls._github = GitHubAppAuth(**gh_config)
+            else:
+                raise ValueError(
+                    "GitHub config must have either 'token' or ('app_id' and 'installation_id')"
+                )
             logger.info("GitHub connection loaded from file")
 
         # GitLabの設定
