@@ -13,7 +13,9 @@ from nagare.utils.connections import (
     CircleCIConnection,
     ConnectionRegistry,
     DatabaseConnection,
+    GitHubAppAuth,
     GitHubConnection,
+    GitHubTokenAuth,
     GitLabConnection,
 )
 
@@ -28,8 +30,8 @@ class TestGitHubConnection:
 
         conn = GitHubConnection.from_env()
 
+        assert isinstance(conn, GitHubTokenAuth)
         assert conn.token == "test_token"
-        assert conn.app_id is None
         assert conn.base_url == "https://api.github.com"
 
     def test_from_env_with_app(self, monkeypatch: pytest.MonkeyPatch):
@@ -41,7 +43,7 @@ class TestGitHubConnection:
 
         conn = GitHubConnection.from_env()
 
-        assert conn.token is None
+        assert isinstance(conn, GitHubAppAuth)
         assert conn.app_id == 123456
         assert conn.installation_id == 789012
         assert conn.private_key == "test_key"
@@ -53,16 +55,17 @@ class TestGitHubConnection:
 
         conn = GitHubConnection.from_env()
 
+        assert isinstance(conn, GitHubTokenAuth)
         assert conn.base_url == "https://github.example.com/api/v3"
 
     def test_validate_with_token(self):
         """Token認証の検証"""
-        conn = GitHubConnection(token="test_token")
+        conn = GitHubTokenAuth(token="test_token")
         assert conn.validate() is True
 
     def test_validate_with_app(self):
         """GitHub Apps認証の検証"""
-        conn = GitHubConnection(
+        conn = GitHubAppAuth(
             app_id=123456,
             installation_id=789012,
             private_key="test_key",
@@ -71,7 +74,7 @@ class TestGitHubConnection:
 
     def test_validate_with_app_and_key_path(self):
         """GitHub Apps認証（鍵ファイルパス）の検証"""
-        conn = GitHubConnection(
+        conn = GitHubAppAuth(
             app_id=123456,
             installation_id=789012,
             private_key_path="/path/to/key.pem",
@@ -80,21 +83,20 @@ class TestGitHubConnection:
 
     def test_validate_invalid(self):
         """認証情報なしは無効"""
-        conn = GitHubConnection()
+        conn = GitHubTokenAuth()  # tokenが空文字列
         assert conn.validate() is False
 
     def test_validate_app_incomplete(self):
         """GitHub Apps認証が不完全な場合は無効"""
-        conn = GitHubConnection(app_id=123456)  # installation_idとprivate_keyがない
+        conn = GitHubAppAuth(app_id=123456)  # installation_idとprivate_keyがない
         assert conn.validate() is False
 
     def test_to_dict(self):
         """辞書形式への変換（シークレット除外）"""
-        conn = GitHubConnection(token="secret_token")
+        conn = GitHubTokenAuth(token="secret_token")
         result = conn.to_dict()
 
-        assert result["type"] == "github"
-        assert result["auth_type"] == "token"
+        assert result["type"] == "github_token"
         assert result["has_token"] is True
         assert "token" not in result  # シークレットは含まれない
 
@@ -225,16 +227,18 @@ class TestConnectionRegistry:
 
         conn = ConnectionRegistry.get_github()
 
+        assert isinstance(conn, GitHubTokenAuth)
         assert conn.token == "test_token"
 
     def test_set_github(self):
         """GitHub接続を手動設定"""
         ConnectionRegistry.reset_all()
-        custom_conn = GitHubConnection(token="custom_token")
+        custom_conn = GitHubTokenAuth(token="custom_token")
 
         ConnectionRegistry.set_github(custom_conn)
         conn = ConnectionRegistry.get_github()
 
+        assert isinstance(conn, GitHubTokenAuth)
         assert conn.token == "custom_token"
 
     def test_get_database_from_env(self, monkeypatch: pytest.MonkeyPatch):

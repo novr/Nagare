@@ -1064,12 +1064,13 @@ class ConnectionRegistry:
         if "github" in config:
             gh_config = config["github"]
             # token と app_id のどちらが設定されているかで適切なクラスを選択
+            # base_url を _base_url にマッピング
+            if "base_url" in gh_config:
+                gh_config["_base_url"] = gh_config.pop("base_url")
+
             if "token" in gh_config:
                 cls._github = GitHubTokenAuth(**gh_config)
             elif "app_id" in gh_config and "installation_id" in gh_config:
-                # _base_url を base_url にマッピング
-                if "base_url" in gh_config:
-                    gh_config["_base_url"] = gh_config.pop("base_url")
                 cls._github = GitHubAppAuth(**gh_config)
             else:
                 raise ValueError(

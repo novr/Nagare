@@ -126,7 +126,7 @@ def test_github_client_init_invalid_app_id(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("GITHUB_APP_PRIVATE_KEY", "test_key")
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
 
-    with pytest.raises(ValueError, match="GITHUB_APP_ID must be an integer"):
+    with pytest.raises(ValueError, match="Invalid GITHUB_APP_ID or GITHUB_APP_INSTALLATION_ID"):
         GitHubClient()
 
 
@@ -143,7 +143,7 @@ def test_github_client_init_invalid_installation_id(
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
 
     with pytest.raises(
-        ValueError, match="GITHUB_APP_INSTALLATION_ID must be an integer"
+        ValueError, match="Invalid GITHUB_APP_ID or GITHUB_APP_INSTALLATION_ID"
     ):
         GitHubClient()
 
@@ -168,20 +168,19 @@ def test_github_client_init_private_key_file_not_found(
 def test_github_client_init_partial_arguments_with_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """引数を部分的に指定し、残りを環境変数から読み取ることを確認"""
+    """部分的な引数指定では初期化に失敗することを確認（新しいABC-based実装）"""
     from nagare.utils.github_client import GitHubClient
 
-    # app_idのみ引数で指定、残りは環境変数
+    # app_idのみ引数で指定、残りは環境変数にあっても無視される
     monkeypatch.setenv("GITHUB_APP_INSTALLATION_ID", "12345678")
     monkeypatch.setenv("GITHUB_APP_PRIVATE_KEY", "test_key_from_env")
     monkeypatch.delenv("GITHUB_APP_ID", raising=False)
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
 
-    # app_idは引数、installation_idとprivate_keyは環境変数から
-    client = GitHubClient(app_id=123456)
-
-    assert client.github is not None
-    client.close()
+    # app_idのみでは不十分（installation_idとprivate_keyが必要）
+    # 環境変数からの自動読み取りも行われない（明確な分離）
+    with pytest.raises(ValueError, match="GitHub authentication not configured"):
+        GitHubClient(app_id=123456)
 
 
 def test_github_client_repository_caching(monkeypatch: pytest.MonkeyPatch) -> None:

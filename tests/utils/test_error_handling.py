@@ -23,20 +23,20 @@ class TestGitHubClientErrorHandling:
 
     def test_github_connection_without_token(self) -> None:
         """トークン無しの接続"""
-        from nagare.utils.connections import GitHubConnection
+        from nagare.utils.connections import GitHubTokenAuth
 
-        # トークンもGitHub Appsも無い接続
-        connection = GitHubConnection()
+        # トークンが空の接続
+        connection = GitHubTokenAuth()  # token=""
 
         # validate()がFalseを返すことを確認
         assert connection.validate() is False
 
     def test_github_connection_with_invalid_app_config(self) -> None:
         """不完全なGitHub Apps設定"""
-        from nagare.utils.connections import GitHubConnection
+        from nagare.utils.connections import GitHubAppAuth
 
-        # app_idだけでinstallation_idが無い
-        connection = GitHubConnection(app_id=12345)
+        # app_idだけでinstallation_idとprivate_keyが無い
+        connection = GitHubAppAuth(app_id=12345)  # installation_id=0, private_key=None
 
         # validate()がFalseを返すことを確認
         assert connection.validate() is False
@@ -134,16 +134,18 @@ class TestConnectionRegistryErrorHandling:
     """ConnectionRegistryのエラーハンドリングテスト"""
 
     def test_get_github_without_env_vars(self) -> None:
-        """環境変数無しでGitHub接続を取得"""
+        """環境変数無しでGitHub接続を取得
+
+        新しいABC実装では、認証情報が無い場合はValueErrorを発生させる。
+        これは明示的なエラーハンドリングを促進する設計。
+        """
         from nagare.utils.connections import ConnectionRegistry
 
         # 環境変数をクリア
         with patch.dict("os.environ", {}, clear=True):
-            connection = ConnectionRegistry.get_github()
-
-            # 接続は作成されるが、validate()がFalseを返す
-            assert connection is not None
-            assert connection.validate() is False
+            # 認証情報が無い場合はValueErrorが発生する
+            with pytest.raises(ValueError, match="GitHub authentication not configured"):
+                ConnectionRegistry.get_github()
 
     def test_get_database_without_env_vars(self) -> None:
         """環境変数無しでDatabase接続を取得"""
