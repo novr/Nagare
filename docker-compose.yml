@@ -3,6 +3,10 @@ x-airflow-common: &airflow-common
   build:
     context: .
     dockerfile: Dockerfile
+    args:
+      # ローカル開発環境ではテスト実行のため development を指定
+      # 本番環境では BUILD_ENV を指定しない（デフォルト: production）
+      BUILD_ENV: development
   volumes:
     - ./src:/opt/airflow/src:ro
     - ./tests:/opt/airflow/tests:ro

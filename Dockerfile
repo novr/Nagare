@@ -24,11 +24,21 @@ WORKDIR /opt/airflow
 COPY --chown=airflow:root pyproject.toml README.md ./
 COPY --chown=airflow:root src/ ./src/
 
-# 追加の依存関係をインストール（本番環境用、editable installなし）
+# ビルド環境の指定（production or development）
+# デフォルトは production（安全側に倒す）
+ARG BUILD_ENV=production
+
+# 追加の依存関係をインストール
 # psycopg2-binaryを使用するため、build-essentialは不要
 # Airflowは既にベースイメージに含まれている
-# 開発環境用にdev依存関係も含める（テスト実行のため）
-RUN pip install --no-cache-dir ".[dev]"
+# BUILD_ENV=development の場合のみ開発依存関係（pytest, ruff, pyright）をインストール
+RUN if [ "$BUILD_ENV" = "development" ]; then \
+        echo "🔧 Installing development dependencies (pytest, ruff, pyright)..." && \
+        pip install --no-cache-dir ".[dev]"; \
+    else \
+        echo "🚀 Installing production dependencies only..." && \
+        pip install --no-cache-dir .; \
+    fi
 
 # PYTHONPATH設定（srcディレクトリをインポートパスに追加）
 ENV PYTHONPATH="${PYTHONPATH}:/opt/airflow/src"

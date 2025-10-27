@@ -178,22 +178,46 @@ http://localhost:8501 にアクセスして、Streamlit管理画面からリポ�
 
 ### Docker環境の管理
 
+#### 基本操作
+
 ```bash
 # 停止
-docker compose stop
+docker-compose stop
 
 # 再起動
-docker compose restart
+docker-compose restart
 
 # 完全削除（データも削除）
-docker compose down -v
+docker-compose down -v
 
 # ログ確認
-docker compose logs -f [service-name]
+docker-compose logs -f [service-name]
 
 # サービスのステータス確認
-docker compose ps
+docker-compose ps
 ```
+
+#### ビルド環境の選択
+
+Dockerイメージは環境に応じて2種類のビルドが可能です：
+
+**開発環境（デフォルト）**:
+```bash
+# docker-compose.yml のデフォルト設定（BUILD_ENV=development）
+# テスト実行に必要な開発依存関係（pytest, ruff, pyright）を含む
+docker-compose build
+docker-compose up -d
+```
+
+**本番環境**:
+```bash
+# 開発依存関係を除外した軽量イメージ（約50-100MB削減）
+docker build --build-arg BUILD_ENV=production -t nagare:latest .
+
+# または docker-compose.yml を編集して BUILD_ENV: production に変更
+```
+
+詳細は [ADR-004: Docker環境での開発依存関係管理戦略](docs/02_design/adr/004-docker-dev-dependencies-strategy.md) を参照。
 
 ## 開発ツール
 
