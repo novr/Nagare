@@ -36,16 +36,13 @@ st.set_page_config(
 
 @st.cache_resource
 def get_database_engine():
-    """データベースエンジンを取得する"""
-    db_host = os.getenv("DATABASE_HOST", "localhost")
-    db_port = os.getenv("DATABASE_PORT", "5432")
-    db_name = os.getenv("DATABASE_NAME", "nagare")
-    db_user = os.getenv("DATABASE_USER", "nagare_user")
-    db_password = os.getenv("DATABASE_PASSWORD", "")
+    """データベースエンジンを取得する
 
-    # パスワードをURLエンコード（特殊文字対策）
-    db_url = f"postgresql://{db_user}:{quote_plus(db_password)}@{db_host}:{db_port}/{db_name}"
-    return create_engine(db_url, pool_pre_ping=True)
+    ConnectionRegistryからデータベース接続情報を取得してエンジンを作成。
+    Docker環境では connections.yml から、ローカルでは環境変数から接続情報を取得。
+    """
+    db_conn = ConnectionRegistry.get_database()
+    return create_engine(db_conn.url, pool_pre_ping=True)
 
 
 def get_available_github_connections():
