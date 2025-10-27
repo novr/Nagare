@@ -9,6 +9,7 @@ Usage:
 
 import os
 from datetime import datetime
+from pathlib import Path
 from urllib.parse import quote_plus
 
 import pandas as pd
@@ -16,7 +17,13 @@ import streamlit as st
 from github import GithubException
 from sqlalchemy import create_engine, text
 
+from nagare.utils.connections import ConnectionRegistry
 from nagare.utils.github_client import GitHubClient
+
+# Connection設定ファイルの読み込み
+connections_file = os.getenv("NAGARE_CONNECTIONS_FILE")
+if connections_file and Path(connections_file).exists():
+    ConnectionRegistry.from_file(connections_file)
 
 # ページ設定
 st.set_page_config(

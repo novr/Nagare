@@ -7,6 +7,7 @@ x-airflow-common: &airflow-common
     - ./src:/opt/airflow/src:ro
     - ./tests:/opt/airflow/tests:ro
     - ./pyproject.toml:/opt/airflow/pyproject.toml:ro
+    - ./connections.yml:/opt/airflow/connections.yml:ro
     - airflow_logs:/opt/airflow/logs
   networks:
     - nagare-network
@@ -21,18 +22,8 @@ x-airflow-env: &airflow-env
   # データベース接続（Airflow用）
   AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${DATABASE_USER:-nagare_user}:${DATABASE_PASSWORD}@postgres:5432/${DATABASE_NAME:-nagare}
 
-  # データベース接続（アプリケーション用）
-  DATABASE_HOST: postgres
-  DATABASE_PORT: 5432
-  DATABASE_NAME: ${DATABASE_NAME:-nagare}
-  DATABASE_USER: ${DATABASE_USER:-nagare_user}
-  DATABASE_PASSWORD: ${DATABASE_PASSWORD}
-
-  # GitHub認証情報
-  GITHUB_APP_ID: ${GITHUB_APP_ID:-}
-  GITHUB_APP_INSTALLATION_ID: ${GITHUB_APP_INSTALLATION_ID:-}
-  GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
-  GITHUB_TOKEN: ${GITHUB_TOKEN}
+  # Connection設定ファイルのパス
+  NAGARE_CONNECTIONS_FILE: /opt/airflow/connections.yml
 
   # アプリケーション設定
   AIRFLOW_ALERT_EMAIL: ${AIRFLOW_ALERT_EMAIL:-admin@example.com}
@@ -195,18 +186,11 @@ services:
     container_name: nagare-streamlit-admin
     ports:
       - "${STREAMLIT_PORT:-8501}:8501"
+    volumes:
+      - ./connections.yml:/app/connections.yml:ro
     environment:
-      # データベース接続
-      DATABASE_HOST: postgres
-      DATABASE_PORT: 5432
-      DATABASE_NAME: ${DATABASE_NAME:-nagare}
-      DATABASE_USER: ${DATABASE_USER:-nagare_user}
-      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
-      # GitHub認証情報（リポジトリ検索用）
-      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
-      GITHUB_APP_INSTALLATION_ID: ${GITHUB_APP_INSTALLATION_ID:-}
-      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
-      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      # Connection設定ファイルのパス
+      NAGARE_CONNECTIONS_FILE: /app/connections.yml
     depends_on:
       postgres:
         condition: service_healthy

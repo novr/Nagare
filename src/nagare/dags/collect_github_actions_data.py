@@ -14,6 +14,7 @@ GitHub認証設定:
 
 import os
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
@@ -26,11 +27,17 @@ from nagare.tasks.fetch import (
 )
 from nagare.tasks.load import load_to_database
 from nagare.tasks.transform import transform_data
+from nagare.utils.connections import ConnectionRegistry
 from nagare.utils.dag_helpers import (
     with_database_client,
     with_github_and_database_clients,
     with_github_client,
 )
+
+# Connection設定ファイルの読み込み
+connections_file = os.getenv("NAGARE_CONNECTIONS_FILE")
+if connections_file and Path(connections_file).exists():
+    ConnectionRegistry.from_file(connections_file)
 
 # GitHub Connection ID（Streamlit管理画面で設定）
 # 環境変数 GITHUB_CONNECTION_ID で上書き可能
