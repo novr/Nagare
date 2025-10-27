@@ -127,7 +127,16 @@ services:
     command:
       - -c
       - |
+        # アプリケーションスキーマの初期化
+        echo "Initializing application database schema..."
+        PGPASSWORD=${DATABASE_PASSWORD} psql -h postgres -U ${DATABASE_USER:-nagare_user} -d ${DATABASE_NAME:-nagare} -f /opt/airflow/scripts/init_db.sql
+
+        # Airflowデータベースのマイグレーション
+        echo "Running Airflow database migration..."
         airflow db migrate
+
+        # Airflow管理ユーザーの作成
+        echo "Creating Airflow admin user..."
         airflow users create \
           --username ${AIRFLOW_ADMIN_USERNAME:-admin} \
           --password ${AIRFLOW_ADMIN_PASSWORD:-admin} \
@@ -137,6 +146,11 @@ services:
           --email ${AIRFLOW_ALERT_EMAIL:-admin@example.com} || true
     environment:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${DATABASE_USER:-nagare_user}:${DATABASE_PASSWORD}@postgres:5432/${DATABASE_NAME:-nagare}
+      DATABASE_USER: ${DATABASE_USER:-nagare_user}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+      DATABASE_NAME: ${DATABASE_NAME:-nagare}
+    volumes:
+      - ./scripts:/opt/airflow/scripts:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -198,6 +212,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
       interval: 30s
