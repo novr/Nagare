@@ -41,19 +41,116 @@ def get_database_engine():
     return create_engine(db_url, pool_pre_ping=True)
 
 
-@st.cache_resource
-def get_github_client():
-    """GitHubクライアントを取得する"""
+def get_available_github_connections():
+    """利用可能なGitHub Connectionsを取得する"""
+    engine = get_database_engine()
+    query = text(
+        """
+        SELECT conn_id, description
+        FROM connection
+        WHERE conn_type = 'http' AND password IS NOT NULL AND password != ''
+        ORDER BY conn_id
+        """
+    )
+    with engine.connect() as conn:
+        result = conn.execute(query)
+        rows = result.fetchall()
+        return [(row[0], row[1] or row[0]) for row in rows]
+
+
+def get_github_client_from_connection(conn_id: str = None):
+    """指定されたConnectionからGitHubクライアントを取得する
+
+    Args:
+        conn_id: Connection ID。Noneの場合はデフォルト動作
+
+    Returns:
+        GitHubClient or None
+    """
+    import os
+
+    # Connection IDが指定された場合
+    if conn_id:
+        try:
+            engine = get_database_engine()
+            with engine.connect() as conn:
+                result = conn.execute(
+                    text("SELECT password FROM connection WHERE conn_id = :conn_id"),
+                    {"conn_id": conn_id}
+                )
+                row = result.fetchone()
+                if row and row[0]:
+                    # 一時的に環境変数を設定
+                    original_token = os.environ.get("GITHUB_TOKEN")
+                    os.environ["GITHUB_TOKEN"] = row[0]
+                    try:
+                        client = GitHubClient()
+                        # 元に戻す
+                        if original_token:
+                            os.environ["GITHUB_TOKEN"] = original_token
+                        else:
+                            os.environ.pop("GITHUB_TOKEN", None)
+                        return client
+                    except Exception as e:
+                        # 元に戻す
+                        if original_token:
+                            os.environ["GITHUB_TOKEN"] = original_token
+                        else:
+                            os.environ.pop("GITHUB_TOKEN", None)
+                        raise e
+        except Exception as e:
+            st.error(f"Connection '{conn_id}' からの取得エラー: {e}")
+            return None
+
+    # Connection IDが指定されていない場合は、デフォルトの優先順位で取得
+    # 1. github_default Connection
+    try:
+        engine = get_database_engine()
+        with engine.connect() as conn:
+            result = conn.execute(
+                text("SELECT password FROM connection WHERE conn_id = :conn_id"),
+                {"conn_id": "github_default"}
+            )
+            row = result.fetchone()
+            if row and row[0]:
+                original_token = os.environ.get("GITHUB_TOKEN")
+                os.environ["GITHUB_TOKEN"] = row[0]
+                try:
+                    client = GitHubClient()
+                    if original_token:
+                        os.environ["GITHUB_TOKEN"] = original_token
+                    else:
+                        os.environ.pop("GITHUB_TOKEN", None)
+                    return client
+                except Exception:
+                    if original_token:
+                        os.environ["GITHUB_TOKEN"] = original_token
+                    else:
+                        os.environ.pop("GITHUB_TOKEN", None)
+    except Exception:
+        pass
+
+    # 2. 環境変数から取得
     try:
         return GitHubClient()
     except ValueError as e:
         st.error(f"GitHub認証エラー: {e}")
-        st.info("GitHub API機能を使用するには、環境変数を設定してください。")
+        st.info(
+            "GitHub API機能を使用するには、以下のいずれかを設定してください：\n"
+            "- 🔌 Connections管理で GitHub Connection を登録（推奨）\n"
+            "- 環境変数 `GITHUB_TOKEN` を設定"
+        )
         return None
 
 
+@st.cache_resource
+def get_github_client():
+    """GitHubクライアントを取得する（後方互換性のため残す）"""
+    return get_github_client_from_connection()
+
+
 def fetch_github_repositories(
-    search_type: str, search_value: str, page: int = 1, per_page: int = 30
+    search_type: str, search_value: str, page: int = 1, per_page: int = 30, conn_id: str = None
 ):
     """GitHubからリポジトリを取得する（ページング対応）
 
@@ -62,6 +159,7 @@ def fetch_github_repositories(
         search_value: 組織名、ユーザー名、または検索クエリ
         page: ページ番号（1から開始）
         per_page: 1ページあたりの件数
+        conn_id: 使用するConnection ID（Noneの場合はデフォルト）
 
     Returns:
         辞書形式の検索結果、またはエラー時はNone
@@ -71,7 +169,8 @@ def fetch_github_repositories(
         - has_next: 次のページがあるか
         - total_count: 総数（search_repositoriesのみ）
     """
-    github_client = get_github_client()
+    # 指定されたConnectionからGitHubクライアントを取得
+    github_client = get_github_client_from_connection(conn_id) if conn_id else get_github_client()
     if not github_client:
         return None
 
@@ -296,6 +395,133 @@ def get_recent_pipeline_runs(limit: int = 10):
         )
 
 
+def get_connections():
+    """Airflow Connectionsを取得する"""
+    engine = get_database_engine()
+    query = text(
+        """
+        SELECT id, conn_id, conn_type, description, host, schema, login, port, extra
+        FROM connection
+        ORDER BY conn_id
+        """
+    )
+    with engine.connect() as conn:
+        result = conn.execute(query)
+        rows = result.fetchall()
+        if rows:
+            return pd.DataFrame(
+                rows,
+                columns=["ID", "Connection ID", "Type", "Description", "Host", "Schema", "Login", "Port", "Extra"],
+            )
+        return pd.DataFrame(
+            columns=["ID", "Connection ID", "Type", "Description", "Host", "Schema", "Login", "Port", "Extra"]
+        )
+
+
+def add_connection(conn_id: str, conn_type: str, description: str = "", host: str = "",
+                   schema: str = "", login: str = "", password: str = "", port: int = None, extra: str = ""):
+    """Connectionを追加する"""
+    engine = get_database_engine()
+
+    with engine.begin() as conn:
+        # 既存チェック
+        result = conn.execute(
+            text("SELECT id FROM connection WHERE conn_id = :conn_id"),
+            {"conn_id": conn_id}
+        )
+        existing = result.fetchone()
+
+        if existing:
+            return False, f"Connection '{conn_id}' は既に存在します"
+
+        # 新規追加
+        conn.execute(
+            text(
+                """
+                INSERT INTO connection (conn_id, conn_type, description, host, schema, login, password, port, extra)
+                VALUES (:conn_id, :conn_type, :description, :host, :schema, :login, :password, :port, :extra)
+                """
+            ),
+            {
+                "conn_id": conn_id,
+                "conn_type": conn_type,
+                "description": description,
+                "host": host,
+                "schema": schema,
+                "login": login,
+                "password": password,
+                "port": port,
+                "extra": extra,
+            },
+        )
+        return True, f"Connection '{conn_id}' を追加しました"
+
+
+def update_connection(connection_id: int, conn_type: str, description: str = "", host: str = "",
+                      schema: str = "", login: str = "", password: str = "", port: int = None, extra: str = ""):
+    """Connectionを更新する"""
+    engine = get_database_engine()
+
+    with engine.begin() as conn:
+        # パスワードが空の場合は更新しない
+        if password:
+            conn.execute(
+                text(
+                    """
+                    UPDATE connection
+                    SET conn_type = :conn_type, description = :description, host = :host,
+                        schema = :schema, login = :login, password = :password, port = :port, extra = :extra
+                    WHERE id = :id
+                    """
+                ),
+                {
+                    "id": connection_id,
+                    "conn_type": conn_type,
+                    "description": description,
+                    "host": host,
+                    "schema": schema,
+                    "login": login,
+                    "password": password,
+                    "port": port,
+                    "extra": extra,
+                },
+            )
+        else:
+            conn.execute(
+                text(
+                    """
+                    UPDATE connection
+                    SET conn_type = :conn_type, description = :description, host = :host,
+                        schema = :schema, login = :login, port = :port, extra = :extra
+                    WHERE id = :id
+                    """
+                ),
+                {
+                    "id": connection_id,
+                    "conn_type": conn_type,
+                    "description": description,
+                    "host": host,
+                    "schema": schema,
+                    "login": login,
+                    "port": port,
+                    "extra": extra,
+                },
+            )
+        return True, f"Connection (ID: {connection_id}) を更新しました"
+
+
+def delete_connection(connection_id: int):
+    """Connectionを削除する"""
+    engine = get_database_engine()
+
+    with engine.begin() as conn:
+        conn.execute(
+            text("DELETE FROM connection WHERE id = :id"),
+            {"id": connection_id}
+        )
+        return True, f"Connection (ID: {connection_id}) を削除しました"
+
+
 # メインUI
 st.title("🌊 Nagare 管理画面")
 st.markdown("CI/CD監視システムの管理インターフェース")
@@ -305,7 +531,7 @@ with st.sidebar:
     st.header("ナビゲーション")
     page = st.radio(
         "ページ選択",
-        ["📊 ダッシュボード", "📦 リポジトリ管理", "📈 実行履歴"],
+        ["📊 ダッシュボード", "📦 リポジトリ管理", "🔌 Connections管理", "📈 実行履歴"],
         label_visibility="collapsed",
     )
 
@@ -407,6 +633,24 @@ elif page == "📦 リポジトリ管理":
     with st.expander("🔍 GitHubから検索して追加", expanded=False):
         st.markdown("**GitHub APIからリポジトリを検索**")
 
+        # Connection選択
+        available_connections = get_available_github_connections()
+        if available_connections:
+            col_conn, col_info = st.columns([2, 1])
+            with col_conn:
+                selected_conn_id = st.selectbox(
+                    "使用するConnection",
+                    options=[conn[0] for conn in available_connections],
+                    format_func=lambda x: next((conn[1] for conn in available_connections if conn[0] == x), x),
+                    help="Connections管理で登録したGitHub Connectionを選択"
+                )
+            with col_info:
+                st.caption(f"接続: {selected_conn_id}")
+        else:
+            st.warning("⚠️ GitHub Connectionが登録されていません")
+            st.info("🔌 Connections管理ページでGitHub Connectionを登録してください")
+            selected_conn_id = None
+
         # ページング用のセッションステート初期化
         if "gh_search_page" not in st.session_state:
             st.session_state.gh_search_page = 1
@@ -451,19 +695,20 @@ elif page == "📦 リポジトリ管理":
                 key="search_input"
             )
 
-        search_button = st.button("検索", type="primary", key="search_github")
+        search_button = st.button("検索", type="primary", key="search_github", disabled=not selected_conn_id)
 
         # 新規検索の場合
-        if search_button and search_value:
+        if search_button and search_value and selected_conn_id:
             st.session_state.gh_search_page = 1
             st.session_state.gh_search_params = {
                 "search_type": search_type,
                 "search_value": search_value,
-                "per_page": per_page
+                "per_page": per_page,
+                "conn_id": selected_conn_id
             }
             with st.spinner("GitHubから取得中..."):
                 result = fetch_github_repositories(
-                    search_type, search_value, page=1, per_page=per_page
+                    search_type, search_value, page=1, per_page=per_page, conn_id=selected_conn_id
                 )
                 st.session_state.gh_search_result = result
 
@@ -544,7 +789,8 @@ elif page == "📦 リポジトリ管理":
                                     params["search_type"],
                                     params["search_value"],
                                     page=current_page - 1,
-                                    per_page=params["per_page"]
+                                    per_page=params["per_page"],
+                                    conn_id=params.get("conn_id")
                                 )
                                 st.session_state.gh_search_result = result
                             st.rerun()
@@ -562,7 +808,8 @@ elif page == "📦 リポジトリ管理":
                                     params["search_type"],
                                     params["search_value"],
                                     page=current_page + 1,
-                                    per_page=params["per_page"]
+                                    per_page=params["per_page"],
+                                    conn_id=params.get("conn_id")
                                 )
                                 st.session_state.gh_search_result = result
                             st.rerun()
@@ -661,6 +908,160 @@ elif page == "📦 リポジトリ管理":
 
     except Exception as e:
         st.error(f"リポジトリ取得エラー: {e}")
+
+# Connections管理
+elif page == "🔌 Connections管理":
+    st.header("🔌 Airflow Connections管理")
+
+    # Connection追加フォーム
+    with st.expander("➕ 新しいConnectionを追加", expanded=False):
+        with st.form("add_connection_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                new_conn_id = st.text_input(
+                    "Connection ID *",
+                    placeholder="my_connection",
+                    help="一意の識別子"
+                )
+                new_conn_type = st.text_input(
+                    "Connection Type *",
+                    placeholder="http, postgres, mysql, etc.",
+                    help="接続タイプ"
+                )
+                new_host = st.text_input("Host", placeholder="localhost")
+                new_schema = st.text_input("Schema/Database", placeholder="database_name")
+
+            with col2:
+                new_login = st.text_input("Login/Username", placeholder="user")
+                new_password = st.text_input("Password", type="password")
+                new_port = st.number_input("Port", min_value=0, max_value=65535, value=0, step=1)
+                new_description = st.text_input("Description", placeholder="接続の説明")
+
+            new_extra = st.text_area(
+                "Extra (JSON形式)",
+                placeholder='{"key": "value"}',
+                help="追加のJSON設定（オプション）"
+            )
+
+            submitted = st.form_submit_button("追加", type="primary")
+
+            if submitted:
+                if new_conn_id and new_conn_type:
+                    try:
+                        port_value = new_port if new_port > 0 else None
+                        success, message = add_connection(
+                            new_conn_id, new_conn_type, new_description,
+                            new_host, new_schema, new_login, new_password,
+                            port_value, new_extra
+                        )
+                        if success:
+                            st.success(message)
+                            st.rerun()
+                        else:
+                            st.warning(message)
+                    except Exception as e:
+                        st.error(f"追加エラー: {e}")
+                else:
+                    st.error("Connection IDとConnection Typeは必須です")
+
+    st.divider()
+
+    # Connections一覧
+    st.subheader("登録済みConnections")
+
+    try:
+        conns_df = get_connections()
+
+        if not conns_df.empty:
+            st.caption(f"全{len(conns_df)}件")
+
+            # Connections一覧表示と操作
+            for idx, row in conns_df.iterrows():
+                with st.container():
+                    col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
+
+                    with col1:
+                        st.markdown(f"**🔌 {row['Connection ID']}**")
+                        st.caption(f"ID: {row['ID']} | Type: {row['Type']}")
+                        if row['Description']:
+                            st.caption(f"📝 {row['Description']}")
+
+                    with col2:
+                        if row['Host']:
+                            st.caption(f"🖥️ Host: {row['Host']}")
+                        if row['Port']:
+                            st.caption(f"🔌 Port: {row['Port']}")
+
+                    with col3:
+                        if row['Login']:
+                            st.caption(f"👤 Login: {row['Login']}")
+                        if row['Schema']:
+                            st.caption(f"🗄️ Schema: {row['Schema']}")
+
+                    with col4:
+                        # 編集ボタン
+                        if st.button("編集", key=f"edit_{row['ID']}"):
+                            st.session_state[f"editing_{row['ID']}"] = True
+                            st.rerun()
+
+                        # 削除ボタン
+                        if st.button("削除", key=f"delete_{row['ID']}", type="secondary"):
+                            try:
+                                success, message = delete_connection(row['ID'])
+                                st.success(message)
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"削除エラー: {e}")
+
+                    # 編集フォーム
+                    if st.session_state.get(f"editing_{row['ID']}", False):
+                        with st.form(f"edit_form_{row['ID']}"):
+                            st.markdown(f"**Connection '{row['Connection ID']}' を編集**")
+
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                edit_conn_type = st.text_input("Connection Type *", value=row['Type'])
+                                edit_host = st.text_input("Host", value=row['Host'] or "")
+                                edit_schema = st.text_input("Schema", value=row['Schema'] or "")
+
+                            with col2:
+                                edit_login = st.text_input("Login", value=row['Login'] or "")
+                                edit_password = st.text_input("Password (変更する場合のみ入力)", type="password")
+                                edit_port = st.number_input("Port", min_value=0, max_value=65535, value=int(row['Port']) if row['Port'] else 0, step=1)
+
+                            edit_description = st.text_input("Description", value=row['Description'] or "")
+                            edit_extra = st.text_area("Extra", value=row['Extra'] or "")
+
+                            col_save, col_cancel = st.columns(2)
+                            with col_save:
+                                save_button = st.form_submit_button("保存", type="primary")
+                            with col_cancel:
+                                cancel_button = st.form_submit_button("キャンセル")
+
+                            if save_button:
+                                try:
+                                    port_value = edit_port if edit_port > 0 else None
+                                    success, message = update_connection(
+                                        row['ID'], edit_conn_type, edit_description,
+                                        edit_host, edit_schema, edit_login, edit_password,
+                                        port_value, edit_extra
+                                    )
+                                    st.success(message)
+                                    del st.session_state[f"editing_{row['ID']}"]
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"更新エラー: {e}")
+
+                            if cancel_button:
+                                del st.session_state[f"editing_{row['ID']}"]
+                                st.rerun()
+
+                    st.divider()
+        else:
+            st.info("登録されているConnectionがありません。上のフォームから追加してください。")
+
+    except Exception as e:
+        st.error(f"Connections取得エラー: {e}")
 
 # 実行履歴
 elif page == "📈 実行履歴":
