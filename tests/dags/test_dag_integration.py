@@ -331,14 +331,21 @@ class TestDAGPerformance:
         mock_db_factory: MagicMock,
         mock_airflow_context: dict[str, Any],
     ) -> None:
-        """upsert操作の冪等性を確認"""
+        """upsert操作の冪等性を確認
+
+        冪等性とは、同じ操作を複数回実行しても結果が同じになる性質。
+        UPSERTでは、同じsource_run_idのデータを複数回挿入しても、
+        データは1件のみ存在し、最新のデータで上書きされる。
+        """
         from tests.conftest import MockDatabaseClient
 
         mock_db = MockDatabaseClient()
         mock_db_factory.return_value = mock_db
 
-        # 同じデータを2回upsert
+        # 同じsource_run_idのデータを2回upsert（2回目でstatusを変更）
         ti = mock_airflow_context["ti"]
+
+        # 1回目: status=SUCCESS
         ti.xcom_data["transformed_runs"] = [
             {
                 "source_run_id": "123456",
@@ -354,15 +361,31 @@ class TestDAGPerformance:
 
         wrapped_func = with_database_client(load_to_database)
 
-        # 1回目
+        # 1回目の実行
         wrapped_func(**mock_airflow_context)
         first_count = len(mock_db.upserted_runs)
+        first_status = mock_db.upserted_runs[0]["status"]
 
-        # 2回目（同じデータ）
+        # 2回目: 同じsource_run_idでstatusをFAILUREに変更
+        ti.xcom_data["transformed_runs"] = [
+            {
+                "source_run_id": "123456",
+                "source": "github_actions",
+                "pipeline_name": "CI",
+                "status": "FAILURE",  # 変更
+            }
+        ]
+
+        # 2回目の実行
         wrapped_func(**mock_airflow_context)
         second_count = len(mock_db.upserted_runs)
+        second_status = mock_db.upserted_runs[0]["status"]
 
-        # 冪等性: 2回実行しても結果が同じ
-        # （MockDatabaseClientは単純にappendするので、実際のDBでは上書きされる）
+        # 冪等性の検証:
+        # 1. レコード数は1件のまま（重複しない）
         assert first_count == 1
-        assert second_count == 2  # モックなので累積される
+        assert second_count == 1  # UPSERTなので1件のまま
+
+        # 2. データは最新のもので上書きされている
+        assert first_status == "SUCCESS"
+        assert second_status == "FAILURE"  # 更新されている

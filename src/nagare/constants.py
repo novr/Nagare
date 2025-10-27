@@ -96,7 +96,10 @@ class GitHubConfig:
     # リトライ設定
     RETRY_TOTAL = 3
     RETRY_BACKOFF_FACTOR = 1.0  # 1秒、2秒、4秒と指数バックオフ
-    RETRY_STATUS_FORCELIST = [429, 500, 502, 503, 504]
+    # 403: Forbidden (レート制限などで使用)
+    # 429: Too Many Requests (レート制限超過)
+    # 500-504: サーバーエラー
+    RETRY_STATUS_FORCELIST = [403, 429, 500, 502, 503, 504]
 
     # ページネーション
     PER_PAGE = 100

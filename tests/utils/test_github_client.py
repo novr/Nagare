@@ -217,3 +217,107 @@ def test_github_client_repository_caching(monkeypatch: pytest.MonkeyPatch) -> No
     assert client.github.get_repo.call_count == 2  # 2回目のAPI呼び出し
 
     client.close()
+
+
+def test_github_client_retry_configuration() -> None:
+    """リトライ設定が正しくGitHubクライアントに渡されていることを確認
+
+    Note: PyGithubの内部実装に依存せず、GitHubClientの初期化パラメータを確認。
+    実際のリトライ動作はPyGithubライブラリに委ねる。
+    """
+    from unittest.mock import MagicMock, patch
+
+    from nagare.constants import GitHubConfig
+
+    # Githubクラスをモック
+    with patch("nagare.utils.github_client.Github") as mock_github_class:
+        mock_github_instance = MagicMock()
+        mock_github_class.return_value = mock_github_instance
+
+        from nagare.utils.github_client import GitHubClient
+
+        # GitHubClientを初期化
+        client = GitHubClient(token="test_token")
+
+        # Githubクラスが正しい引数で呼ばれたことを確認
+        assert mock_github_class.called
+
+        # 呼び出し時の引数を取得
+        call_kwargs = mock_github_class.call_args.kwargs
+
+        # retryパラメータが渡されていることを確認
+        assert "retry" in call_kwargs
+        retry = call_kwargs["retry"]
+
+        # リトライ設定の検証
+        assert retry.total == GitHubConfig.RETRY_TOTAL  # 3回
+        assert retry.backoff_factor == GitHubConfig.RETRY_BACKOFF_FACTOR  # 1.0
+
+        # status_forcelistに必要なステータスコードがすべて含まれていることを確認
+        # Note: PyGithubが自動的に追加するステータスコードもあるため、完全一致ではなく包含チェック
+        for status_code in GitHubConfig.RETRY_STATUS_FORCELIST:
+            assert status_code in retry.status_forcelist
+
+        client.close()
+
+
+def test_github_client_retry_status_codes() -> None:
+    """リトライ対象のHTTPステータスコードが正しく設定されていることを確認"""
+    from unittest.mock import MagicMock, patch
+
+    with patch("nagare.utils.github_client.Github") as mock_github_class:
+        mock_github_instance = MagicMock()
+        mock_github_class.return_value = mock_github_instance
+
+        from nagare.utils.github_client import GitHubClient
+
+        client = GitHubClient(token="test_token")
+
+        # リトライ設定を取得
+        retry = mock_github_class.call_args.kwargs["retry"]
+
+        # Forbiddenエラー（403、レート制限などで使用）が含まれていることを確認
+        assert 403 in retry.status_forcelist
+
+        # レート制限エラー（429）が含まれていることを確認
+        assert 429 in retry.status_forcelist
+
+        # サーバーエラー（5xx）が含まれていることを確認
+        assert 500 in retry.status_forcelist
+        assert 502 in retry.status_forcelist
+        assert 503 in retry.status_forcelist
+        assert 504 in retry.status_forcelist
+
+        client.close()
+
+
+def test_github_client_retry_backoff_factor() -> None:
+    """指数バックオフの設定が正しいことを確認
+
+    backoff_factor=1.0の場合、リトライ間隔は:
+    - 1回目のリトライ: 1秒
+    - 2回目のリトライ: 2秒
+    - 3回目のリトライ: 4秒
+    """
+    from unittest.mock import MagicMock, patch
+
+    with patch("nagare.utils.github_client.Github") as mock_github_class:
+        mock_github_instance = MagicMock()
+        mock_github_class.return_value = mock_github_instance
+
+        from nagare.constants import GitHubConfig
+        from nagare.utils.github_client import GitHubClient
+
+        client = GitHubClient(token="test_token")
+
+        # リトライ設定を取得
+        retry = mock_github_class.call_args.kwargs["retry"]
+
+        # バックオフファクターの検証
+        assert retry.backoff_factor == GitHubConfig.RETRY_BACKOFF_FACTOR
+        assert retry.backoff_factor == 1.0  # 明示的な値の確認
+
+        # リトライ回数の検証
+        assert retry.total == 3
+
+        client.close()

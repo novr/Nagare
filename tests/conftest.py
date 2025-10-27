@@ -111,33 +111,68 @@ class MockDatabaseClient:
         return None
 
     def upsert_pipeline_runs(self, runs: list[dict[str, Any]]) -> None:
-        """モックのUPSERT処理
+        """モックのUPSERT処理（冪等性を実装）
 
         Args:
             runs: UPSERTするパイプライン実行データのリスト
 
         Note:
-            実際のDBではUPSERTは冪等的（同じデータは上書き）だが、
-            このモックは単純にappendして累積する。
-            冪等性のテストは実DBで行うべき。
+            実際のDBのUPSERT動作を模倣し、冪等性を実現：
+            - source_run_idで既存データを検索
+            - 存在すれば上書き（UPDATE）
+            - 存在しなければ追加（INSERT）
         """
         self.upsert_pipeline_runs_called = True
         self.upsert_pipeline_runs_call_count += 1
-        self.upserted_runs.extend(runs)
+
+        # UPSERT動作: source_run_idで重複チェック
+        for new_run in runs:
+            source_run_id = new_run.get("source_run_id")
+
+            # 既存データを検索
+            existing_index = None
+            for i, existing_run in enumerate(self.upserted_runs):
+                if existing_run.get("source_run_id") == source_run_id:
+                    existing_index = i
+                    break
+
+            # 既存データがあれば上書き、なければ追加
+            if existing_index is not None:
+                self.upserted_runs[existing_index] = new_run  # UPDATE
+            else:
+                self.upserted_runs.append(new_run)  # INSERT
 
     def upsert_jobs(self, jobs: list[dict[str, Any]]) -> None:
-        """モックのUPSERT処理（ジョブ）
+        """モックのUPSERT処理（ジョブ、冪等性を実装）
 
         Args:
             jobs: UPSERTするジョブデータのリスト
 
         Note:
-            実際のDBではUPSERTは冪等的（同じデータは上書き）だが、
-            このモックは単純にappendして累積する。
+            実際のDBのUPSERT動作を模倣し、冪等性を実現：
+            - source_job_idで既存データを検索
+            - 存在すれば上書き（UPDATE）
+            - 存在しなければ追加（INSERT）
         """
         self.upsert_jobs_called = True
         self.upsert_jobs_call_count += 1
-        self.upserted_jobs.extend(jobs)
+
+        # UPSERT動作: source_job_idで重複チェック
+        for new_job in jobs:
+            source_job_id = new_job.get("source_job_id")
+
+            # 既存データを検索
+            existing_index = None
+            for i, existing_job in enumerate(self.upserted_jobs):
+                if existing_job.get("source_job_id") == source_job_id:
+                    existing_index = i
+                    break
+
+            # 既存データがあれば上書き、なければ追加
+            if existing_index is not None:
+                self.upserted_jobs[existing_index] = new_job  # UPDATE
+            else:
+                self.upserted_jobs.append(new_job)  # INSERT
 
     @contextmanager
     def transaction(self) -> Generator[None, None, None]:
