@@ -522,6 +522,169 @@ def delete_connection(connection_id: int):
         return True, f"Connection (ID: {connection_id}) を削除しました"
 
 
+def export_connections_to_yaml(include_passwords: bool = False) -> str:
+    """Connectionsを YAML形式でエクスポートする
+
+    Args:
+        include_passwords: パスワードを含めるかどうか
+
+    Returns:
+        YAML形式の文字列
+    """
+    import yaml
+
+    engine = get_database_engine()
+    query = text(
+        """
+        SELECT conn_id, conn_type, description, host, schema, login, password, port, extra
+        FROM connection
+        WHERE conn_type = 'http'
+        ORDER BY conn_id
+        """
+    )
+
+    connections = {}
+    with engine.connect() as conn:
+        result = conn.execute(query)
+        for row in result:
+            conn_data = {
+                "conn_type": row[1],
+                "description": row[2] or "",
+                "host": row[3] or "",
+                "schema": row[4] or "",
+                "login": row[5] or "",
+                "port": int(row[7]) if row[7] else None,
+                "extra": row[8] or "",
+            }
+
+            # パスワードの処理
+            if include_passwords:
+                conn_data["password"] = row[6] or ""
+            else:
+                conn_data["password"] = "*** MASKED ***" if row[6] else ""
+
+            # Noneや空文字列のフィールドを削除
+            conn_data = {k: v for k, v in conn_data.items() if v not in (None, "", 0)}
+
+            connections[row[0]] = conn_data
+
+    # YAML形式に変換
+    yaml_data = {
+        "connections": connections,
+        "exported_at": datetime.now().isoformat(),
+        "exported_by": "Streamlit Admin UI",
+    }
+
+    return yaml.dump(yaml_data, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+
+def import_connections_from_yaml(yaml_content: str, overwrite: bool = False) -> tuple[int, int, list[str]]:
+    """YAML形式からConnectionsをインポートする
+
+    Args:
+        yaml_content: YAML形式の文字列
+        overwrite: 既存のConnectionを上書きするかどうか
+
+    Returns:
+        (成功数, スキップ数, エラーメッセージリスト)
+    """
+    import yaml
+
+    try:
+        data = yaml.safe_load(yaml_content)
+    except yaml.YAMLError as e:
+        return 0, 0, [f"YAML解析エラー: {e}"]
+
+    if not data or "connections" not in data:
+        return 0, 0, ["無効なYAML形式: 'connections'キーが見つかりません"]
+
+    connections = data["connections"]
+    success_count = 0
+    skip_count = 0
+    errors = []
+
+    engine = get_database_engine()
+
+    for conn_id, conn_data in connections.items():
+        try:
+            # 必須フィールドの確認
+            if "conn_type" not in conn_data:
+                errors.append(f"{conn_id}: conn_typeが指定されていません")
+                continue
+
+            # パスワードがマスクされている場合はスキップ
+            password = conn_data.get("password", "")
+            if password == "*** MASKED ***":
+                errors.append(f"{conn_id}: パスワードがマスクされているためスキップ")
+                skip_count += 1
+                continue
+
+            with engine.begin() as conn:
+                # 既存チェック
+                result = conn.execute(
+                    text("SELECT id FROM connection WHERE conn_id = :conn_id"),
+                    {"conn_id": conn_id}
+                )
+                existing = result.fetchone()
+
+                if existing and not overwrite:
+                    skip_count += 1
+                    continue
+
+                if existing and overwrite:
+                    # 更新
+                    conn.execute(
+                        text(
+                            """
+                            UPDATE connection
+                            SET conn_type = :conn_type, description = :description, host = :host,
+                                schema = :schema, login = :login, password = :password,
+                                port = :port, extra = :extra
+                            WHERE conn_id = :conn_id
+                            """
+                        ),
+                        {
+                            "conn_id": conn_id,
+                            "conn_type": conn_data.get("conn_type", "http"),
+                            "description": conn_data.get("description", ""),
+                            "host": conn_data.get("host", ""),
+                            "schema": conn_data.get("schema", ""),
+                            "login": conn_data.get("login", ""),
+                            "password": password,
+                            "port": conn_data.get("port"),
+                            "extra": conn_data.get("extra", ""),
+                        },
+                    )
+                else:
+                    # 新規追加
+                    conn.execute(
+                        text(
+                            """
+                            INSERT INTO connection (conn_id, conn_type, description, host, schema, login, password, port, extra)
+                            VALUES (:conn_id, :conn_type, :description, :host, :schema, :login, :password, :port, :extra)
+                            """
+                        ),
+                        {
+                            "conn_id": conn_id,
+                            "conn_type": conn_data.get("conn_type", "http"),
+                            "description": conn_data.get("description", ""),
+                            "host": conn_data.get("host", ""),
+                            "schema": conn_data.get("schema", ""),
+                            "login": conn_data.get("login", ""),
+                            "password": password,
+                            "port": conn_data.get("port"),
+                            "extra": conn_data.get("extra", ""),
+                        },
+                    )
+
+                success_count += 1
+
+        except Exception as e:
+            errors.append(f"{conn_id}: {str(e)}")
+
+    return success_count, skip_count, errors
+
+
 # メインUI
 st.title("🌊 Nagare 管理画面")
 st.markdown("CI/CD監視システムの管理インターフェース")
@@ -1062,6 +1225,117 @@ elif page == "🔌 Connections管理":
 
     except Exception as e:
         st.error(f"Connections取得エラー: {e}")
+
+    # エクスポート/インポート機能
+    st.divider()
+    st.subheader("📦 エクスポート/インポート")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("**📤 エクスポート（バックアップ）**")
+        include_passwords = st.checkbox(
+            "パスワードを含める",
+            value=False,
+            help="⚠️ パスワードを含める場合は、ファイルを安全に保管してください"
+        )
+
+        if st.button("YAMLにエクスポート", type="primary"):
+            try:
+                yaml_content = export_connections_to_yaml(include_passwords=include_passwords)
+                st.download_button(
+                    label="📥 connections.ymlをダウンロード",
+                    data=yaml_content,
+                    file_name="connections.yml",
+                    mime="text/yaml",
+                )
+                st.success("エクスポート成功！上のボタンからダウンロードしてください。")
+            except Exception as e:
+                st.error(f"エクスポートエラー: {e}")
+
+    with col2:
+        st.markdown("**📥 インポート（復元）**")
+        uploaded_file = st.file_uploader(
+            "YAMLファイルを選択",
+            type=["yml", "yaml"],
+            help="connections.ymlファイルをアップロード"
+        )
+
+        if uploaded_file is not None:
+            overwrite = st.checkbox(
+                "既存のConnectionを上書き",
+                value=False,
+                help="同じConnection IDが存在する場合に上書きします"
+            )
+
+            if st.button("インポート実行", type="primary"):
+                try:
+                    yaml_content = uploaded_file.read().decode("utf-8")
+                    success_count, skip_count, errors = import_connections_from_yaml(
+                        yaml_content, overwrite=overwrite
+                    )
+
+                    if success_count > 0:
+                        st.success(f"✅ {success_count}件のConnectionをインポートしました")
+                    if skip_count > 0:
+                        st.warning(f"⚠️ {skip_count}件をスキップしました")
+                    if errors:
+                        st.error(f"❌ エラー: {len(errors)}件")
+                        with st.expander("エラー詳細を表示"):
+                            for error in errors:
+                                st.text(error)
+
+                    if success_count > 0:
+                        st.rerun()
+
+                except Exception as e:
+                    st.error(f"インポートエラー: {e}")
+
+    # 使用例
+    with st.expander("💡 使用方法とベストプラクティス"):
+        st.markdown("""
+        ### エクスポート（バックアップ）
+        1. **パスワードなし**: Git管理用（推奨）
+           - パスワードをマスクしてエクスポート
+           - GitHubなどにコミット可能
+           - チームで設定を共有
+
+        2. **パスワードあり**: フルバックアップ
+           - すべての認証情報を含む
+           - 安全な場所に保管（1Password、Vault等）
+           - 環境の完全な復元が可能
+
+        ### インポート（復元）
+        1. **新規環境セットアップ**
+           - connections.ymlをアップロード
+           - パスワードは手動で入力
+           - 「上書き」は不要
+
+        2. **既存環境の更新**
+           - 「上書き」をチェック
+           - 既存のConnectionが更新される
+
+        ### GitOps ワークフロー例
+        ```bash
+        # 1. 設定をエクスポート（パスワードなし）
+        # Streamlit UI → connections.yml をダウンロード
+
+        # 2. Gitにコミット
+        git add connections.yml
+        git commit -m "Update connections configuration"
+        git push
+
+        # 3. 他の環境でインポート
+        # connections.yml をアップロード
+        # パスワードは環境変数または手動設定
+        ```
+
+        ### セキュリティのベストプラクティス
+        - ⚠️ パスワードを含むYAMLファイルはGitにコミットしない
+        - ✅ パスワードなしのYAMLはGit管理OK
+        - ✅ パスワードは環境変数やSecrets管理ツールで管理
+        - ✅ 定期的にバックアップを取得
+        """)
 
 # 実行履歴
 elif page == "📈 実行履歴":
