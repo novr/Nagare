@@ -701,7 +701,7 @@ with st.sidebar:
     st.header("ナビゲーション")
     page = st.radio(
         "ページ選択",
-        ["📊 ダッシュボード", "📦 リポジトリ管理", "🔌 Connections管理", "📈 実行履歴"],
+        ["📊 ダッシュボード", "📦 リポジトリ管理", "🔌 Connections管理", "📈 実行履歴", "⚙️ 設定"],
         label_visibility="collapsed",
     )
 
@@ -1385,3 +1385,113 @@ elif page == "📈 実行履歴":
 
     except Exception as e:
         st.error(f"データ取得エラー: {e}")
+
+# 設定ページ
+elif page == "⚙️ 設定":
+    st.header("⚙️ 設定")
+
+    tab1, tab2 = st.tabs(["接続設定", "システム情報"])
+
+    # タブ1: 接続設定
+    with tab1:
+        st.subheader("接続設定の確認")
+
+        connections_file = os.getenv("NAGARE_CONNECTIONS_FILE")
+
+        if connections_file and Path(connections_file).exists():
+            st.success(f"✅ 設定ファイル: `{connections_file}`")
+
+            # GitHub接続設定
+            st.markdown("### GitHub接続設定")
+            try:
+                github_conn = ConnectionRegistry.get_github()
+
+                col1, col2 = st.columns([1, 3])
+                with col1:
+                    st.metric("認証方式", "Token" if github_conn.token else "GitHub App")
+                with col2:
+                    if github_conn.token:
+                        masked_token = github_conn.token[:8] + "..." + github_conn.token[-4:] if len(github_conn.token) > 12 else "***"
+                        st.code(f"Token: {masked_token}", language="text")
+                    else:
+                        st.code(f"App ID: {github_conn.app_id}\nInstallation ID: {github_conn.installation_id}", language="text")
+
+                # 接続テスト
+                if st.button("🔍 GitHub接続テスト", key="test_github"):
+                    with st.spinner("GitHub APIに接続中..."):
+                        try:
+                            client = GitHubClient(connection=github_conn)
+                            # 簡単な接続テスト（認証ユーザー情報取得）
+                            user = client.github.get_user()
+                            st.success(f"✅ 接続成功！ ユーザー: {user.login}")
+                            client.close()
+                        except Exception as e:
+                            st.error(f"❌ 接続失敗: {e}")
+
+            except Exception as e:
+                st.error(f"GitHub設定の読み込みエラー: {e}")
+
+            st.divider()
+
+            # Database接続設定
+            st.markdown("### Database接続設定")
+            try:
+                db_conn = ConnectionRegistry.get_database()
+
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("ホスト", db_conn.host)
+                with col2:
+                    st.metric("ポート", db_conn.port)
+                with col3:
+                    st.metric("データベース", db_conn.database)
+
+                st.code(f"User: {db_conn.user}\nPassword: {'*' * len(db_conn.password) if db_conn.password else 'Not set'}", language="text")
+
+                # 接続テスト
+                if st.button("🔍 Database接続テスト", key="test_database"):
+                    with st.spinner("PostgreSQLに接続中..."):
+                        try:
+                            engine = get_database_engine()
+                            with engine.connect() as conn:
+                                result = conn.execute(text("SELECT version()"))
+                                version = result.fetchone()[0]
+                                st.success(f"✅ 接続成功！")
+                                st.info(f"PostgreSQL version: {version[:50]}...")
+                        except Exception as e:
+                            st.error(f"❌ 接続失敗: {e}")
+
+            except Exception as e:
+                st.error(f"Database設定の読み込みエラー: {e}")
+
+        else:
+            st.warning("⚠️ 設定ファイルが見つかりません")
+            if connections_file:
+                st.code(f"探索パス: {connections_file}", language="text")
+            else:
+                st.info("環境変数 `NAGARE_CONNECTIONS_FILE` が設定されていません")
+
+    # タブ2: システム情報
+    with tab2:
+        st.subheader("システム情報")
+
+        import sys
+        import platform
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("**Python**")
+            st.code(f"Version: {sys.version.split()[0]}\nPath: {sys.executable}", language="text")
+
+            st.markdown("**プラットフォーム**")
+            st.code(f"OS: {platform.system()}\nVersion: {platform.release()}", language="text")
+
+        with col2:
+            st.markdown("**環境変数**")
+            env_vars = {
+                "NAGARE_CONNECTIONS_FILE": os.getenv("NAGARE_CONNECTIONS_FILE", "Not set"),
+                "AIRFLOW_HOME": os.getenv("AIRFLOW_HOME", "Not set"),
+            }
+            for key, value in env_vars.items():
+                st.code(f"{key}={value}", language="text")

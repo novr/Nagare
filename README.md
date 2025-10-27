@@ -84,25 +84,50 @@ vi .env  # または任意のエディタ
 
 以下の必須項目を設定してください：
 
-**GITHUB_TOKEN（必須）**:
-1. GitHub Settings → Developer settings → Personal access tokens → Generate new token
-2. 必要な権限: `repo`, `read:org`, `workflow`
-3. トークンを`.env`の`GITHUB_TOKEN`に設定
+**GitHub認証設定（必須）**:
+
+Nagareは2つの認証方式をサポートしています。**Personal Access Token（推奨）**を使用するか、GitHub Apps認証を選択できます。
+
+**方法A: Personal Access Token（推奨）** - 個人利用・小規模チーム向け
+1. [GitHub Settings → Developer settings → Personal access tokens → Tokens (classic)](https://github.com/settings/tokens)
+2. "Generate new token (classic)" をクリック
+3. 必要な権限を選択:
+   - ✅ `repo` - プライベートリポジトリへのアクセス
+   - ✅ `read:org` - 組織情報の読み取り
+   - ✅ `workflow` - GitHub Actionsワークフローへのアクセス
+4. トークンを生成し、**コピー**（後で確認できないため注意）
+5. `connections.yml`を編集:
+   ```yaml
+   github:
+     token: "ghp_xxxxxxxxxxxxxxxxxxxx"
+   ```
+
+**方法B: GitHub Apps認証** - エンタープライズ・大規模チーム向け
+1. [GitHub Settings → Developer settings → GitHub Apps](https://github.com/settings/apps) で新規App作成
+2. Repository permissions設定:
+   - Actions: Read
+   - Metadata: Read
+   - Workflows: Read
+3. Private keyを生成してダウンロード
+4. `connections.yml`を編集:
+   ```yaml
+   github:
+     app_id: 123456
+     installation_id: 789012
+     private_key_path: "/path/to/private-key.pem"
+   ```
+
+**どちらを選ぶべき？**
+- 👤 **個人利用・小規模チーム**: Personal Access Token（シンプル、5分で設定完了）
+- 🏢 **エンタープライズ・大規模チーム**: GitHub Apps（セキュアな権限管理、監査ログ）
 
 **AIRFLOW_ADMIN_PASSWORD（必須）**:
 - Airflow管理画面にログインするためのパスワード
-- 推奨: 16文字以上の強力なパスワード
+- 推奨: 16文字以上の強力なパスワード（`./scripts/setup-secrets.sh`で自動生成可能）
 
 **⚠️ セキュリティ警告**:
-- `.env`ファイルは`.gitignore`で除外されています
-- `.env`ファイルを誤ってコミットしないよう注意してください
-
-**オプション: 設定ファイルでの管理**:
-```bash
-# 環境変数の代わりに設定ファイルで管理することも可能
-cp connections.yml.sample connections.yml
-vi connections.yml  # 接続情報を編集
-```
+- `connections.yml`ファイルは`.gitignore`で除外されています
+- GitHubトークンや秘密鍵を**絶対に**コミットしないでください
 
 詳細は [ADR-002: Connection管理アーキテクチャ](docs/02_design/adr/002-connection-management-architecture.md) を参照。
 
@@ -115,6 +140,16 @@ docker compose up -d
 # ログを確認
 docker compose logs -f
 ```
+
+**⏱️ 初回起動の待ち時間について**:
+- **初回起動時は5-10分程度かかります**（Airflow/Supersetの初期化）
+- 起動状況の確認:
+  ```bash
+  docker compose ps  # ステータス確認
+  docker compose logs -f airflow-init  # 初期化ログ
+  ```
+- すべてのサービスが`healthy`になるまで待機してください
+- 2回目以降の起動は約30秒で完了します
 
 6. サービスへのアクセス
 
