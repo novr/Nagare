@@ -61,18 +61,48 @@ class ClientFactory:
     @staticmethod
     def create_github_client(
         connection: GitHubConnection | None = None,
+        conn_id: str | None = None,
     ) -> GitHubClientProtocol:
         """GitHubClientインスタンスを生成する
 
+        優先順位:
+        1. connection引数（明示的に指定されたConnection）
+        2. conn_id引数（Airflow Connection ID）
+        3. ConnectionRegistry（環境変数または設定ファイル）
+
         Args:
-            connection: GitHub接続設定（省略時はRegistryから取得）
+            connection: GitHub接続設定（省略時はconn_idまたはRegistryから取得）
+            conn_id: Airflow Connection ID（省略時はRegistryから取得）
 
         Returns:
             GitHubClientProtocol実装インスタンス
+
+        Example:
+            # Airflow Connectionから作成
+            client = ClientFactory.create_github_client(conn_id="github_default")
+
+            # 環境変数から作成（デフォルト）
+            client = ClientFactory.create_github_client()
         """
-        # Connection優先、なければRegistryから取得
-        if connection is None:
-            connection = ConnectionRegistry.get_github()
+        # 1. connection引数が指定されている場合はそれを使用
+        if connection is not None:
+            return GitHubClient(connection=connection)
+
+        # 2. conn_id が指定されている場合はAirflow Connectionから取得
+        if conn_id is not None:
+            try:
+                connection = GitHubConnection.from_airflow_connection(conn_id)
+                logger.debug(f"Using Airflow Connection: {conn_id}")
+                return GitHubClient(connection=connection)
+            except (ImportError, ValueError) as e:
+                logger.warning(
+                    f"Failed to load Airflow Connection '{conn_id}': {e}. "
+                    f"Falling back to environment variables."
+                )
+
+        # 3. ConnectionRegistryから取得（環境変数）
+        connection = ConnectionRegistry.get_github()
+        logger.debug("Using environment variables for GitHub authentication")
         return GitHubClient(connection=connection)
 
 

@@ -59,12 +59,14 @@ def with_database_client(
 def with_github_client(
     task_func: Callable[..., T],
     factory: ClientFactory | None = None,
+    conn_id: str | None = None,
 ) -> Callable[..., T]:
     """GitHubClientを注入してタスク関数を実行するラッパーを生成する
 
     Args:
         task_func: GitHubClientを第一引数として受け取るタスク関数
         factory: ClientFactoryインスタンス（省略時はget_factory()を使用）
+        conn_id: Airflow Connection ID（省略時は環境変数から取得）
 
     Returns:
         ラップされた関数（Airflowのコンテキストを受け取る）
@@ -75,7 +77,13 @@ def with_github_client(
             runs = github_client.get_workflow_runs(...)
             ...
 
-        # DAGで使用
+        # Airflow Connectionを使用（推奨）
+        task = PythonOperator(
+            task_id="my_task",
+            python_callable=with_github_client(my_task, conn_id="github_default"),
+        )
+
+        # 環境変数を使用（後方互換性）
         task = PythonOperator(
             task_id="my_task",
             python_callable=with_github_client(my_task),
@@ -90,7 +98,7 @@ def with_github_client(
         else:
             current_factory = factory
 
-        with current_factory.create_github_client() as github_client:
+        with current_factory.create_github_client(conn_id=conn_id) as github_client:
             return task_func(github_client=github_client, **context)
 
     # 元の関数名とdocstringを保持
@@ -103,12 +111,14 @@ def with_github_client(
 def with_github_and_database_clients(
     task_func: Callable[..., T],
     factory: ClientFactory | None = None,
+    conn_id: str | None = None,
 ) -> Callable[..., T]:
     """GitHubClientとDatabaseClientの両方を注入してタスク関数を実行するラッパーを生成する
 
     Args:
         task_func: GitHubClientとDatabaseClientを引数として受け取るタスク関数
         factory: ClientFactoryインスタンス（省略時はget_factory()を使用）
+        conn_id: GitHub用のAirflow Connection ID（省略時は環境変数から取得）
 
     Returns:
         ラップされた関数（Airflowのコンテキストを受け取る）
@@ -124,7 +134,15 @@ def with_github_and_database_clients(
             runs = github_client.get_workflow_runs(..., created_after=latest_timestamp)
             ...
 
-        # DAGで使用
+        # Airflow Connectionを使用（推奨）
+        task = PythonOperator(
+            task_id="my_task",
+            python_callable=with_github_and_database_clients(
+                my_task, conn_id="github_default"
+            ),
+        )
+
+        # 環境変数を使用（後方互換性）
         task = PythonOperator(
             task_id="my_task",
             python_callable=with_github_and_database_clients(my_task),
@@ -139,7 +157,7 @@ def with_github_and_database_clients(
         else:
             current_factory = factory
 
-        with current_factory.create_github_client() as github_client:
+        with current_factory.create_github_client(conn_id=conn_id) as github_client:
             with current_factory.create_database_client() as db:
                 return task_func(github_client=github_client, db=db, **context)
 

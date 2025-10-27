@@ -146,6 +146,89 @@ class GitHubConnection:
             base_url=os.getenv("GITHUB_API_URL", "https://api.github.com"),
         )
 
+    @classmethod
+    def from_airflow_connection(cls, conn_id: str = "github_default") -> "GitHubConnection":
+        """Airflow Connectionから生成
+
+        Airflow Connectionからトークンや設定を読み取る。
+        Connection typeは"http"を想定し、以下のフィールドを使用：
+        - password: Personal Access Token
+        - host: API base URL（デフォルト: api.github.com）
+        - extra: JSON形式の追加設定
+          - app_id: GitHub App ID
+          - installation_id: GitHub App Installation ID
+          - private_key: Private Key（文字列）
+
+        Args:
+            conn_id: Airflow Connection ID（デフォルト: github_default）
+
+        Returns:
+            GitHubConnection: Airflow Connectionから生成されたConnection
+
+        Raises:
+            ImportError: Airflow がインストールされていない場合
+            ValueError: Connectionが見つからない、または認証情報が不足している場合
+
+        Example:
+            # DAG内での使用
+            conn = GitHubConnection.from_airflow_connection("github_default")
+            client = GitHubClient(connection=conn)
+        """
+        try:
+            from airflow.hooks.base import BaseHook
+        except ImportError as e:
+            raise ImportError(
+                "Apache Airflow is required to use from_airflow_connection(). "
+                "Install it with: pip install apache-airflow"
+            ) from e
+
+        try:
+            # Airflow Connectionを取得
+            connection = BaseHook.get_connection(conn_id)
+
+            # Base URLの決定（hostが指定されていない場合はデフォルト）
+            base_url = "https://api.github.com"
+            if connection.host:
+                # プロトコルが含まれていない場合は追加
+                if not connection.host.startswith(("http://", "https://")):
+                    base_url = f"https://{connection.host}"
+                else:
+                    base_url = connection.host
+
+            # extraフィールドからGitHub Apps設定を読み取る
+            extra = connection.extra_dejson if hasattr(connection, 'extra_dejson') else {}
+            app_id = extra.get("app_id")
+            installation_id = extra.get("installation_id")
+            private_key = extra.get("private_key")
+
+            # app_id と installation_id を整数に変換
+            if app_id:
+                try:
+                    app_id = int(app_id)
+                except (ValueError, TypeError):
+                    logger.warning(f"Invalid app_id in Connection '{conn_id}': {app_id}")
+                    app_id = None
+
+            if installation_id:
+                try:
+                    installation_id = int(installation_id)
+                except (ValueError, TypeError):
+                    logger.warning(f"Invalid installation_id in Connection '{conn_id}': {installation_id}")
+                    installation_id = None
+
+            return cls(
+                token=connection.password or None,  # passwordフィールドをtokenとして使用
+                app_id=app_id,
+                installation_id=installation_id,
+                private_key=private_key,
+                base_url=base_url,
+            )
+
+        except Exception as e:
+            raise ValueError(
+                f"Failed to load Airflow Connection '{conn_id}': {e}"
+            ) from e
+
     def validate(self) -> bool:
         """接続情報の検証
 
@@ -305,6 +388,19 @@ class CircleCIConnection:
 class DatabaseConnection:
     """データベース接続設定
 
+    IMPORTANT: データベース接続は環境変数で管理し、Airflow Connectionとは分離する。
+    理由:
+    - データベースはインフラストラクチャの一部であり、アプリケーション設定とは異なる
+    - Airflow自体もこのデータベースを使用するため、Airflowメタストアと分離が必要
+    - 環境ごと（dev/staging/prod）で異なる接続情報を使用
+    - コンテナ起動時に環境変数として注入するのが標準的な運用
+
+    一方、GitHub/GitLab等のAPI認証情報は:
+    - アプリケーションレベルの設定
+    - UI（Streamlit管理画面）から変更可能
+    - 複数アカウントの管理が必要
+    - Airflow Connectionでの管理が適切
+
     Attributes:
         host: データベースホスト
         port: ポート番号
@@ -323,7 +419,7 @@ class DatabaseConnection:
             password="secret"
         )
 
-        # 環境変数から自動生成
+        # 環境変数から自動生成（推奨）
         conn = DatabaseConnection.from_env()
 
         # SQLAlchemy URL取得

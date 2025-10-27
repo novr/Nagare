@@ -2,6 +2,14 @@
 
 このDAGは1時間に1回実行され、監視対象リポジトリのCI/CD実行データを
 GitHub APIから取得し、PostgreSQLに保存する。
+
+GitHub認証設定:
+  推奨: Airflow Connectionを使用（Streamlit管理画面で設定可能）
+  - Streamlit管理画面の「Connections管理」でConnection IDを作成
+  - デフォルトでは 'github_default' を使用
+  - 環境変数 GITHUB_CONNECTION_ID で変更可能
+
+  後方互換: 環境変数 GITHUB_TOKEN でも動作（非推奨）
 """
 
 import os
@@ -23,6 +31,10 @@ from nagare.utils.dag_helpers import (
     with_github_and_database_clients,
     with_github_client,
 )
+
+# GitHub Connection ID（Streamlit管理画面で設定）
+# 環境変数 GITHUB_CONNECTION_ID で上書き可能
+GITHUB_CONNECTION_ID = os.getenv("GITHUB_CONNECTION_ID", "github_default")
 
 # デフォルト引数
 default_args = {
@@ -55,13 +67,17 @@ with DAG(
     # タスク2: ワークフロー実行データの取得
     task_fetch_workflow_runs = PythonOperator(
         task_id=TaskIds.FETCH_WORKFLOW_RUNS,
-        python_callable=with_github_and_database_clients(fetch_workflow_runs),
+        python_callable=with_github_and_database_clients(
+            fetch_workflow_runs, conn_id=GITHUB_CONNECTION_ID
+        ),
     )
 
     # タスク3: ジョブデータの取得
     task_fetch_workflow_run_jobs = PythonOperator(
         task_id=TaskIds.FETCH_WORKFLOW_RUN_JOBS,
-        python_callable=with_github_client(fetch_workflow_run_jobs),
+        python_callable=with_github_client(
+            fetch_workflow_run_jobs, conn_id=GITHUB_CONNECTION_ID
+        ),
     )
 
     # タスク4: データ変換
