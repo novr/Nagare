@@ -91,7 +91,7 @@ class ClientFactory:
         # 2. conn_id が指定されている場合はAirflow Connectionから取得
         if conn_id is not None:
             try:
-                connection = GitHubConnection.from_airflow_connection(conn_id)
+                connection = GitHubConnection.from_airflow(conn_id)
                 logger.debug(f"Using Airflow Connection: {conn_id}")
                 return GitHubClient(connection=connection)
             except (ImportError, ValueError) as e:

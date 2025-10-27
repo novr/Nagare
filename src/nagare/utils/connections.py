@@ -1,27 +1,36 @@
 """Connection管理モジュール
 
 CI/CDプラットフォームおよびデータベースへの接続情報を一元管理する。
-新しいプラットフォーム追加時は、以下の3ステップで拡張可能：
-1. Connectionクラスの追加
-2. ConnectionRegistryへのメソッド追加
-3. ClientFactoryへの統合
+
+アーキテクチャ:
+    - BaseConnection: 基底抽象クラス（Airflow Connection統合）
+    - Platform-specific: GitHubConnection, GitLabConnectionなど
+    - ConnectionRegistry: シングルトンレジストリ
+    - ConnectionLoader: Airflow Connection読み込みユーティリティ
+
+新しいプラットフォーム追加時の手順:
+    1. BaseConnectionを継承した具体クラスを作成
+    2. from_airflow_extra()メソッドを実装
+    3. ConnectionRegistryにgetter/setterを追加
+    4. ClientFactoryに統合
 
 使用例:
-    # 環境変数から自動取得
+    # Airflow Connectionから（推奨）
+    github_conn = GitHubConnection.from_airflow("github_default")
+
+    # 環境変数から（後方互換）
+    github_conn = GitHubConnection.from_env()
+
+    # Registryから
     github_conn = ConnectionRegistry.get_github()
-
-    # テスト時のモック注入
-    ConnectionRegistry.set_github(GitHubConnection(token="test"))
-
-    # 設定ファイルから一括読み込み
-    ConnectionRegistry.from_file("connections.yml")
 """
 
 import logging
 import os
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, ClassVar, Protocol, runtime_checkable
 from urllib.parse import quote_plus
 
 logger = logging.getLogger(__name__)
@@ -53,12 +62,150 @@ class ConnectionProtocol(Protocol):
 
 
 # ============================================================================
-# 2. GitHub Connection
+# 2. Base Connection（基底クラス）
 # ============================================================================
 
 
 @dataclass
-class GitHubConnection:
+class BaseConnection(ABC):
+    """Connection設定の基底クラス
+
+    すべてのプラットフォーム固有のConnection設定はこのクラスを継承する。
+    Airflow Connectionからの読み込みロジックを共通化。
+
+    Attributes:
+        conn_type: Airflow Connection Type（例: "http", "postgres"）
+        description: 説明（オプション）
+    """
+
+    # クラス変数：各サブクラスで定義
+    CONN_TYPE: ClassVar[str] = "generic"
+
+    description: str = ""
+
+    @classmethod
+    @abstractmethod
+    def from_env(cls) -> "BaseConnection":
+        """環境変数から生成（各プラットフォームで実装）
+
+        Returns:
+            BaseConnection: 環境変数から生成されたConnection
+        """
+        ...
+
+    @classmethod
+    def from_airflow(cls, conn_id: str) -> "BaseConnection":
+        """Airflow Connectionから生成（共通ロジック）
+
+        Args:
+            conn_id: Airflow Connection ID
+
+        Returns:
+            BaseConnection: Airflow Connectionから生成されたConnection
+
+        Raises:
+            ImportError: Airflow がインストールされていない場合
+            ValueError: Connectionが見つからない、または型が一致しない場合
+        """
+        try:
+            from airflow.hooks.base import BaseHook
+        except ImportError as e:
+            raise ImportError(
+                "Apache Airflow is required to use from_airflow(). "
+                "Install it with: pip install apache-airflow"
+            ) from e
+
+        try:
+            # Airflow Connectionを取得
+            connection = BaseHook.get_connection(conn_id)
+
+            # Connection typeのチェック（サブクラスのCONN_TYPEと一致するか）
+            if hasattr(cls, "CONN_TYPE") and cls.CONN_TYPE != "generic":
+                expected_type = cls.CONN_TYPE
+                if connection.conn_type != expected_type:
+                    logger.warning(
+                        f"Connection '{conn_id}' type mismatch: "
+                        f"expected '{expected_type}', got '{connection.conn_type}'"
+                    )
+
+            # extraフィールドからJSON読み取り
+            extra = connection.extra_dejson if hasattr(connection, "extra_dejson") else {}
+
+            # プラットフォーム固有のパース処理を呼び出す
+            return cls.from_airflow_extra(
+                conn_id=conn_id,
+                password=connection.password,
+                host=connection.host,
+                port=connection.port,
+                schema=connection.schema,
+                login=connection.login,
+                extra=extra,
+                description=connection.description or "",
+            )
+
+        except Exception as e:
+            raise ValueError(f"Failed to load Airflow Connection '{conn_id}': {e}") from e
+
+    @classmethod
+    @abstractmethod
+    def from_airflow_extra(
+        cls,
+        conn_id: str,
+        password: str | None,
+        host: str | None,
+        port: int | None,
+        schema: str | None,
+        login: str | None,
+        extra: dict[str, Any],
+        description: str,
+    ) -> "BaseConnection":
+        """Airflow Connectionの各フィールドからインスタンスを生成
+
+        各プラットフォーム固有のパース処理を実装する。
+
+        Args:
+            conn_id: Connection ID
+            password: パスワードフィールド（多くの場合、トークンとして使用）
+            host: ホスト
+            port: ポート
+            schema: スキーマ/データベース名
+            login: ログイン/ユーザー名
+            extra: 追加設定（JSON）
+            description: 説明
+
+        Returns:
+            BaseConnection: 生成されたConnectionインスタンス
+        """
+        ...
+
+    @abstractmethod
+    def validate(self) -> bool:
+        """接続情報の検証（各プラットフォームで実装）
+
+        Returns:
+            有効な設定の場合True
+        """
+        ...
+
+    @abstractmethod
+    def to_dict(self) -> dict[str, Any]:
+        """辞書形式に変換（シークレットは除外）
+
+        各プラットフォームで実装。
+
+        Returns:
+            シークレットを含まない設定情報
+        """
+        ...
+
+
+# ============================================================================
+# 3. GitHub Connection（プラットフォーム固有）
+# ============================================================================
+
+
+@dataclass
+class GitHubConnection(BaseConnection):
     """GitHub接続設定
 
     Personal Access Token または GitHub Apps 認証に対応。
@@ -70,8 +217,12 @@ class GitHubConnection:
         private_key: GitHub App Private Key（文字列）
         private_key_path: GitHub App Private Keyファイルパス
         base_url: GitHub API ベースURL（GitHub Enterpriseの場合に変更）
+        description: 説明（BaseConnectionから継承）
 
     使用例:
+        # Airflow Connectionから（推奨）
+        conn = GitHubConnection.from_airflow("github_default")
+
         # Personal Access Token認証
         conn = GitHubConnection(token="ghp_xxx")
 
@@ -85,6 +236,9 @@ class GitHubConnection:
         # 環境変数から自動生成
         conn = GitHubConnection.from_env()
     """
+
+    # クラス変数
+    CONN_TYPE: ClassVar[str] = "http"
 
     # Personal Access Token認証
     token: str | None = None
@@ -147,87 +301,78 @@ class GitHubConnection:
         )
 
     @classmethod
-    def from_airflow_connection(cls, conn_id: str = "github_default") -> "GitHubConnection":
-        """Airflow Connectionから生成
+    def from_airflow_extra(
+        cls,
+        conn_id: str,
+        password: str | None,
+        host: str | None,
+        port: int | None,
+        schema: str | None,
+        login: str | None,
+        extra: dict[str, Any],
+        description: str,
+    ) -> "GitHubConnection":
+        """Airflow Connectionの各フィールドからインスタンスを生成
 
-        Airflow Connectionからトークンや設定を読み取る。
-        Connection typeは"http"を想定し、以下のフィールドを使用：
+        Airflow Connectionのフィールドマッピング：
         - password: Personal Access Token
-        - host: API base URL（デフォルト: api.github.com）
-        - extra: JSON形式の追加設定
-          - app_id: GitHub App ID
-          - installation_id: GitHub App Installation ID
-          - private_key: Private Key（文字列）
+        - host: API base URL（例: api.github.com）
+        - extra.app_id: GitHub App ID
+        - extra.installation_id: GitHub App Installation ID
+        - extra.private_key: Private Key文字列
 
         Args:
-            conn_id: Airflow Connection ID（デフォルト: github_default）
+            conn_id: Connection ID（ロギング用）
+            password: Personal Access Token
+            host: APIホスト
+            port: ポート（未使用）
+            schema: スキーマ（未使用）
+            login: ログイン（未使用）
+            extra: 追加設定（GitHub Apps認証用）
+            description: 説明
 
         Returns:
-            GitHubConnection: Airflow Connectionから生成されたConnection
-
-        Raises:
-            ImportError: Airflow がインストールされていない場合
-            ValueError: Connectionが見つからない、または認証情報が不足している場合
-
-        Example:
-            # DAG内での使用
-            conn = GitHubConnection.from_airflow_connection("github_default")
-            client = GitHubClient(connection=conn)
+            GitHubConnection: 生成されたインスタンス
         """
-        try:
-            from airflow.hooks.base import BaseHook
-        except ImportError as e:
-            raise ImportError(
-                "Apache Airflow is required to use from_airflow_connection(). "
-                "Install it with: pip install apache-airflow"
-            ) from e
+        # Base URLの決定
+        base_url = "https://api.github.com"
+        if host:
+            # プロトコルが含まれていない場合は追加
+            if not host.startswith(("http://", "https://")):
+                base_url = f"https://{host}"
+            else:
+                base_url = host
 
-        try:
-            # Airflow Connectionを取得
-            connection = BaseHook.get_connection(conn_id)
+        # GitHub Apps認証情報の読み取り
+        app_id = extra.get("app_id")
+        installation_id = extra.get("installation_id")
+        private_key = extra.get("private_key")
 
-            # Base URLの決定（hostが指定されていない場合はデフォルト）
-            base_url = "https://api.github.com"
-            if connection.host:
-                # プロトコルが含まれていない場合は追加
-                if not connection.host.startswith(("http://", "https://")):
-                    base_url = f"https://{connection.host}"
-                else:
-                    base_url = connection.host
+        # app_id と installation_id を整数に変換
+        if app_id:
+            try:
+                app_id = int(app_id)
+            except (ValueError, TypeError):
+                logger.warning(f"Invalid app_id in Connection '{conn_id}': {app_id}")
+                app_id = None
 
-            # extraフィールドからGitHub Apps設定を読み取る
-            extra = connection.extra_dejson if hasattr(connection, 'extra_dejson') else {}
-            app_id = extra.get("app_id")
-            installation_id = extra.get("installation_id")
-            private_key = extra.get("private_key")
+        if installation_id:
+            try:
+                installation_id = int(installation_id)
+            except (ValueError, TypeError):
+                logger.warning(
+                    f"Invalid installation_id in Connection '{conn_id}': {installation_id}"
+                )
+                installation_id = None
 
-            # app_id と installation_id を整数に変換
-            if app_id:
-                try:
-                    app_id = int(app_id)
-                except (ValueError, TypeError):
-                    logger.warning(f"Invalid app_id in Connection '{conn_id}': {app_id}")
-                    app_id = None
-
-            if installation_id:
-                try:
-                    installation_id = int(installation_id)
-                except (ValueError, TypeError):
-                    logger.warning(f"Invalid installation_id in Connection '{conn_id}': {installation_id}")
-                    installation_id = None
-
-            return cls(
-                token=connection.password or None,  # passwordフィールドをtokenとして使用
-                app_id=app_id,
-                installation_id=installation_id,
-                private_key=private_key,
-                base_url=base_url,
-            )
-
-        except Exception as e:
-            raise ValueError(
-                f"Failed to load Airflow Connection '{conn_id}': {e}"
-            ) from e
+        return cls(
+            token=password or None,
+            app_id=app_id,
+            installation_id=installation_id,
+            private_key=private_key,
+            base_url=base_url,
+            description=description,
+        )
 
     def validate(self) -> bool:
         """接続情報の検証
@@ -264,22 +409,28 @@ class GitHubConnection:
 
 
 # ============================================================================
-# 3. GitLab Connection（将来の拡張用）
+# 4. GitLab Connection（将来の拡張用）
 # ============================================================================
 
 
 @dataclass
-class GitLabConnection:
+class GitLabConnection(BaseConnection):
     """GitLab接続設定（将来の拡張用）
 
     Attributes:
         token: Personal Access Token
         base_url: GitLab API ベースURL
+        description: 説明（BaseConnectionから継承）
 
     使用例:
-        conn = GitLabConnection(token="glpat-xxx")
+        # Airflow Connectionから
+        conn = GitLabConnection.from_airflow("gitlab_default")
+
+        # 環境変数から
         conn = GitLabConnection.from_env()
     """
+
+    CONN_TYPE: ClassVar[str] = "http"
 
     token: str | None = None
     base_url: str = "https://gitlab.com"
@@ -298,6 +449,50 @@ class GitLabConnection:
         return cls(
             token=os.getenv("GITLAB_TOKEN"),
             base_url=os.getenv("GITLAB_URL", "https://gitlab.com"),
+        )
+
+    @classmethod
+    def from_airflow_extra(
+        cls,
+        conn_id: str,
+        password: str | None,
+        host: str | None,
+        port: int | None,
+        schema: str | None,
+        login: str | None,
+        extra: dict[str, Any],
+        description: str,
+    ) -> "GitLabConnection":
+        """Airflow Connectionの各フィールドからインスタンスを生成
+
+        Airflow Connectionのフィールドマッピング：
+        - password: Personal Access Token
+        - host: GitLab base URL（例: gitlab.com）
+
+        Args:
+            conn_id: Connection ID（ロギング用）
+            password: Personal Access Token
+            host: GitLabホスト
+            port: ポート（未使用）
+            schema: スキーマ（未使用）
+            login: ログイン（未使用）
+            extra: 追加設定（未使用）
+            description: 説明
+
+        Returns:
+            GitLabConnection: 生成されたインスタンス
+        """
+        base_url = "https://gitlab.com"
+        if host:
+            if not host.startswith(("http://", "https://")):
+                base_url = f"https://{host}"
+            else:
+                base_url = host
+
+        return cls(
+            token=password or None,
+            base_url=base_url,
+            description=description,
         )
 
     def validate(self) -> bool:
@@ -322,22 +517,28 @@ class GitLabConnection:
 
 
 # ============================================================================
-# 4. CircleCI Connection（将来の拡張用）
+# 5. CircleCI Connection（将来の拡張用）
 # ============================================================================
 
 
 @dataclass
-class CircleCIConnection:
+class CircleCIConnection(BaseConnection):
     """CircleCI接続設定（将来の拡張用）
 
     Attributes:
         api_token: API Token
         base_url: CircleCI API ベースURL
+        description: 説明（BaseConnectionから継承）
 
     使用例:
-        conn = CircleCIConnection(api_token="xxx")
+        # Airflow Connectionから
+        conn = CircleCIConnection.from_airflow("circleci_default")
+
+        # 環境変数から
         conn = CircleCIConnection.from_env()
     """
+
+    CONN_TYPE: ClassVar[str] = "http"
 
     api_token: str | None = None
     base_url: str = "https://circleci.com/api"
@@ -356,6 +557,50 @@ class CircleCIConnection:
         return cls(
             api_token=os.getenv("CIRCLECI_TOKEN"),
             base_url=os.getenv("CIRCLECI_API_URL", "https://circleci.com/api"),
+        )
+
+    @classmethod
+    def from_airflow_extra(
+        cls,
+        conn_id: str,
+        password: str | None,
+        host: str | None,
+        port: int | None,
+        schema: str | None,
+        login: str | None,
+        extra: dict[str, Any],
+        description: str,
+    ) -> "CircleCIConnection":
+        """Airflow Connectionの各フィールドからインスタンスを生成
+
+        Airflow Connectionのフィールドマッピング：
+        - password: API Token
+        - host: CircleCI base URL（例: circleci.com/api）
+
+        Args:
+            conn_id: Connection ID（ロギング用）
+            password: API Token
+            host: CircleCIホスト
+            port: ポート（未使用）
+            schema: スキーマ（未使用）
+            login: ログイン（未使用）
+            extra: 追加設定（未使用）
+            description: 説明
+
+        Returns:
+            CircleCIConnection: 生成されたインスタンス
+        """
+        base_url = "https://circleci.com/api"
+        if host:
+            if not host.startswith(("http://", "https://")):
+                base_url = f"https://{host}"
+            else:
+                base_url = host
+
+        return cls(
+            api_token=password or None,
+            base_url=base_url,
+            description=description,
         )
 
     def validate(self) -> bool:
@@ -380,7 +625,7 @@ class CircleCIConnection:
 
 
 # ============================================================================
-# 5. Database Connection
+# 6. Database Connection（インフラストラクチャ設定）
 # ============================================================================
 
 
@@ -498,7 +743,7 @@ class DatabaseConnection:
 
 
 # ============================================================================
-# 6. ConnectionRegistry（一元管理）
+# 7. ConnectionRegistry（一元管理）
 # ============================================================================
 
 
