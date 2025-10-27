@@ -768,6 +768,77 @@ class CircleCIConnection(BaseConnection):
         }
 
 
+@dataclass
+class BitriseConnection(ConnectionBase):
+    """Bitrise API接続設定
+
+    Bitriseはモバイルアプリ向けCI/CDプラットフォーム。
+    Personal Access Token認証を使用。
+
+    Reference:
+        https://api-docs.bitrise.io/
+    """
+
+    CONN_TYPE: ClassVar[str] = "http"
+
+    api_token: str | None = None
+    base_url: str = "https://api.bitrise.io/v0.1"
+
+    @classmethod
+    def from_env(cls) -> "BitriseConnection":
+        """環境変数から生成
+
+        Environment Variables:
+            BITRISE_TOKEN: Personal Access Token
+            BITRISE_API_URL: ベースURL（デフォルト: https://api.bitrise.io/v0.1）
+
+        Returns:
+            BitriseConnection インスタンス
+        """
+        return cls(
+            api_token=os.getenv("BITRISE_TOKEN"),
+            base_url=os.getenv("BITRISE_API_URL", "https://api.bitrise.io/v0.1"),
+        )
+
+    @classmethod
+    def from_airflow_extra(
+        cls, conn_id: str, extra: dict[str, Any]
+    ) -> "BitriseConnection":
+        """Airflow Connectionから生成
+
+        Args:
+            conn_id: Connection ID
+            extra: Airflow ConnectionのExtra JSON
+
+        Returns:
+            BitriseConnection インスタンス
+        """
+        return cls(
+            api_token=extra.get("api_token"),
+            base_url=extra.get("base_url", "https://api.bitrise.io/v0.1"),
+        )
+
+    def validate(self) -> bool:
+        """接続情報の検証
+
+        Returns:
+            有効な設定の場合True
+        """
+        return bool(self.api_token)
+
+    def to_dict(self) -> dict[str, Any]:
+        """辞書形式に変換（シークレットは除外）
+
+        Returns:
+            シークレットを含まない設定情報
+        """
+        return {
+            "type": "bitrise",
+            "base_url": self.base_url,
+            "has_token": bool(self.api_token),
+        }
+
+
 # ============================================================================
 # 6. Database Connection（インフラストラクチャ設定）
 # ============================================================================
@@ -914,6 +985,7 @@ class ConnectionRegistry:
     _github: GitHubConnection | None = None
     _gitlab: GitLabConnection | None = None
     _circleci: CircleCIConnection | None = None
+    _bitrise: BitriseConnection | None = None
     _database: DatabaseConnection | None = None
 
     @classmethod
@@ -980,6 +1052,27 @@ class ConnectionRegistry:
         logger.debug("CircleCI connection updated")
 
     @classmethod
+    def get_bitrise(cls) -> BitriseConnection:
+        """Bitrise接続設定を取得
+
+        Returns:
+            BitriseConnection: Bitrise接続設定
+        """
+        if cls._bitrise is None:
+            cls._bitrise = BitriseConnection.from_env()
+        return cls._bitrise
+
+    @classmethod
+    def set_bitrise(cls, conn: BitriseConnection) -> None:
+        """Bitrise接続設定を設定（テスト用）
+
+        Args:
+            conn: BitriseConnection
+        """
+        cls._bitrise = conn
+        logger.debug("Bitrise connection updated")
+
+    @classmethod
     def get_database(cls) -> DatabaseConnection:
         """データベース接続設定を取得
 
@@ -1006,6 +1099,7 @@ class ConnectionRegistry:
         cls._github = None
         cls._gitlab = None
         cls._circleci = None
+        cls._bitrise = None
         cls._database = None
         logger.debug("All connections reset")
 
@@ -1089,6 +1183,12 @@ class ConnectionRegistry:
             ci_config = config["circleci"]
             cls._circleci = CircleCIConnection(**ci_config)
             logger.info("CircleCI connection loaded from file")
+
+        # Bitriseの設定
+        if "bitrise" in config:
+            br_config = config["bitrise"]
+            cls._bitrise = BitriseConnection(**br_config)
+            logger.info("Bitrise connection loaded from file")
 
         # Databaseの設定
         if "database" in config:

@@ -119,3 +119,48 @@ class GitHubClientProtocol(Protocol):
     def __exit__(self, *args: Any) -> None:
         """Context manager: with文での終了処理"""
         ...
+
+
+@runtime_checkable
+class BitriseClientProtocol(Protocol):
+    """BitriseClientのインターフェース
+
+    このProtocolを実装するクラス:
+    - BitriseClient (src/nagare/utils/bitrise_client.py)
+    - MockBitriseClient (tests/conftest.py) - テスト用（将来追加予定）
+    """
+
+    def get_apps(self, limit: int = 50) -> list[dict[str, Any]]:
+        """アプリ一覧を取得する"""
+        ...
+
+    def get_builds(
+        self,
+        app_slug: str,
+        branch: str | None = None,
+        workflow: str | None = None,
+        created_after: datetime | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """アプリのビルド一覧を取得する"""
+        ...
+
+    def get_build(self, app_slug: str, build_slug: str) -> dict[str, Any]:
+        """特定のビルドの詳細情報を取得する"""
+        ...
+
+    def get_build_log(self, app_slug: str, build_slug: str) -> str:
+        """ビルドのログを取得する"""
+        ...
+
+    def close(self) -> None:
+        """クライアントをクローズする"""
+        ...
+
+    def __enter__(self) -> "BitriseClientProtocol":
+        """Context manager: with文でのエントリーポイント"""
+        ...
+
+    def __exit__(self, *args: Any) -> None:
+        """Context manager: with文での終了処理"""
+        ...

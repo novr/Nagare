@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from nagare.utils.connections import (
+    BitriseConnection,
     CircleCIConnection,
     ConnectionRegistry,
     DatabaseConnection,
@@ -151,6 +152,47 @@ class TestCircleCIConnection:
 
         conn_invalid = CircleCIConnection()
         assert conn_invalid.validate() is False
+
+
+class TestBitriseConnection:
+    """BitriseConnection のテスト"""
+
+    def test_from_env(self, monkeypatch: pytest.MonkeyPatch):
+        """環境変数から設定を生成"""
+        monkeypatch.setenv("BITRISE_TOKEN", "test_bitrise_token")
+
+        conn = BitriseConnection.from_env()
+
+        assert conn.api_token == "test_bitrise_token"
+        assert conn.base_url == "https://api.bitrise.io/v0.1"
+
+    def test_from_env_with_custom_url(self, monkeypatch: pytest.MonkeyPatch):
+        """環境変数からカスタムベースURLを読み取り"""
+        monkeypatch.setenv("BITRISE_TOKEN", "test_token")
+        monkeypatch.setenv("BITRISE_API_URL", "https://bitrise.example.com/v0.1")
+
+        conn = BitriseConnection.from_env()
+
+        assert conn.api_token == "test_token"
+        assert conn.base_url == "https://bitrise.example.com/v0.1"
+
+    def test_validate(self):
+        """検証"""
+        conn = BitriseConnection(api_token="test_token")
+        assert conn.validate() is True
+
+        conn_invalid = BitriseConnection()
+        assert conn_invalid.validate() is False
+
+    def test_to_dict(self):
+        """辞書形式への変換（シークレット除外）"""
+        conn = BitriseConnection(api_token="secret_token")
+        result = conn.to_dict()
+
+        assert result["type"] == "bitrise"
+        assert result["base_url"] == "https://api.bitrise.io/v0.1"
+        assert result["has_token"] is True
+        assert "api_token" not in result  # シークレットは含まれない
 
 
 class TestDatabaseConnection:

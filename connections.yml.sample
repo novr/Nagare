@@ -64,6 +64,20 @@ circleci:
 
 
 # ==============================================================================
+# Bitrise接続設定
+# ==============================================================================
+bitrise:
+  # Personal Access Token
+  # Bitrise → Account Settings → Security → Personal Access Token → Generate new
+  # 必要な権限: ビルド情報の読み取り
+  api_token: YOUR_BITRISE_TOKEN_HERE
+
+  # Bitrise API ベースURL
+  # デフォルト: https://api.bitrise.io/v0.1
+  # base_url: https://api.bitrise.io/v0.1
+
+
+# ==============================================================================
 # データベース接続設定
 # ==============================================================================
 database:
