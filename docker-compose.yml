@@ -2,7 +2,7 @@
 x-airflow-common: &airflow-common
   build:
     context: .
-    dockerfile: Dockerfile
+    dockerfile: docker/Dockerfile.airflow
     args:
       # ローカル開発環境ではテスト実行のため development を指定
       # 本番環境では BUILD_ENV を指定しない（デフォルト: production）
@@ -17,10 +17,9 @@ x-airflow-common: &airflow-common
     - nagare-network
   restart: unless-stopped
 
-x-airflow-env: &airflow-env
-  # Airflow Core設定
+x-airflow-env: &airflow-env # Airflow Core設定
   AIRFLOW__CORE__EXECUTOR: LocalExecutor
-  AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+  AIRFLOW__CORE__LOAD_EXAMPLES: "false"
   AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/src/nagare/dags
 
   # データベース接続（Airflow用）
@@ -68,7 +67,7 @@ services:
     environment:
       <<: *airflow-env
       # Webserver固有の設定
-      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'false'
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "false"
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
       AIRFLOW__WEBSERVER__WORKERS: 1
       AIRFLOW__WEBSERVER__WORKER_REFRESH_INTERVAL: 1800
@@ -114,7 +113,7 @@ services:
   airflow-init:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: docker/Dockerfile.airflow
     container_name: nagare-airflow-init
     entrypoint: /bin/bash
     command:
@@ -154,7 +153,7 @@ services:
   superset:
     build:
       context: .
-      dockerfile: Dockerfile.superset
+      dockerfile: docker/Dockerfile.superset
     container_name: nagare-superset
     environment:
       SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY}
@@ -164,7 +163,7 @@ services:
       DATABASE_USER: ${DATABASE_USER:-nagare_user}
       DATABASE_PORT: 5432
       DATABASE_DIALECT: postgresql
-      SUPERSET_LOAD_EXAMPLES: 'no'
+      SUPERSET_LOAD_EXAMPLES: "no"
     ports:
       - "${SUPERSET_PORT:-8088}:8088"
     depends_on:
@@ -186,7 +185,7 @@ services:
   streamlit-admin:
     build:
       context: .
-      dockerfile: Dockerfile.streamlit
+      dockerfile: docker/Dockerfile.streamlit
     container_name: nagare-streamlit-admin
     ports:
       - "${STREAMLIT_PORT:-8501}:8501"
