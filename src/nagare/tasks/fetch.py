@@ -9,7 +9,7 @@ from airflow.models import TaskInstance
 from github import GithubException
 
 from nagare.constants import FetchConfig, TaskIds, XComKeys
-from nagare.utils.protocols import DatabaseClientProtocol, GitHubClientProtocol
+from nagare.utils.protocols import BitriseClientProtocol, DatabaseClientProtocol, GitHubClientProtocol
 from nagare.utils.xcom_utils import check_xcom_size
 
 logger = logging.getLogger(__name__)
@@ -159,6 +159,113 @@ def fetch_workflow_runs(
         logger.warning("No repositories found to fetch workflow runs")
         return
 
+    _fetch_workflow_runs_impl(repositories, github_client, db, ti)
+
+
+def fetch_workflow_runs_batch(
+    github_client: GitHubClientProtocol,
+    db: DatabaseClientProtocol,
+    batch_index: int,
+    batch_size: int,
+    **context: Any
+) -> None:
+    """リポジトリのバッチでワークフロー実行データを取得する（並列処理用）
+
+    Args:
+        github_client: GitHubClientインスタンス
+        db: DatabaseClientインスタンス
+        batch_index: バッチインデックス（0始まり）
+        batch_size: バッチサイズ
+        **context: Airflowのコンテキスト
+    """
+    ti: TaskInstance = context["ti"]
+
+    # 前のタスクからリポジトリリストを取得
+    repositories: list[dict[str, str]] = ti.xcom_pull(
+        task_ids=TaskIds.FETCH_REPOSITORIES, key=XComKeys.REPOSITORIES
+    )
+
+    if not repositories:
+        logger.warning("No repositories found to fetch workflow runs")
+        return
+
+    # バッチスライス
+    start_idx = batch_index * batch_size
+    end_idx = start_idx + batch_size
+    batch_repos = repositories[start_idx:end_idx]
+
+    logger.info(
+        f"Processing batch {batch_index}: repositories {start_idx} to {end_idx-1} "
+        f"({len(batch_repos)} repos)"
+    )
+
+    _fetch_workflow_runs_impl(
+        batch_repos, github_client, db, ti, xcom_suffix=f"_batch_{batch_index}"
+    )
+
+
+def _collect_workflow_runs_from_xcom(ti: TaskInstance) -> list[dict[str, Any]]:
+    """複数のバッチタスクからワークフロー実行データを収集する
+
+    Args:
+        ti: TaskInstanceインスタンス
+
+    Returns:
+        全バッチからのワークフロー実行リスト
+    """
+    # まず通常のXComキーを試す
+    workflow_runs = ti.xcom_pull(
+        task_ids=TaskIds.FETCH_WORKFLOW_RUNS, key=XComKeys.WORKFLOW_RUNS
+    )
+
+    if workflow_runs:
+        logger.info(f"Found {len(workflow_runs)} workflow runs from single task")
+        return workflow_runs
+
+    # バッチタスクからの収集を試みる
+    all_runs = []
+    batch_index = 0
+
+    while True:
+        task_id = f"fetch_workflow_runs_batch_{batch_index}"
+        xcom_key = f"{XComKeys.WORKFLOW_RUNS}_batch_{batch_index}"
+
+        batch_runs = ti.xcom_pull(task_ids=task_id, key=xcom_key)
+
+        if batch_runs is None:
+            break
+
+        logger.info(f"Found {len(batch_runs)} workflow runs from batch {batch_index}")
+        all_runs.extend(batch_runs)
+        batch_index += 1
+
+    if all_runs:
+        logger.info(f"Collected total {len(all_runs)} workflow runs from {batch_index} batches")
+
+    return all_runs
+
+
+def _fetch_workflow_runs_impl(
+    repositories: list[dict[str, str]],
+    github_client: GitHubClientProtocol,
+    db: DatabaseClientProtocol,
+    ti: TaskInstance,
+    xcom_suffix: str = ""
+) -> None:
+    """ワークフロー実行データ取得の実装（共通処理）
+
+    Args:
+        repositories: 処理対象のリポジトリリスト
+        github_client: GitHubClientインスタンス
+        db: DatabaseClientインスタンス
+        ti: TaskInstanceインスタンス
+        xcom_suffix: XComキーに付加するサフィックス（バッチ処理用）
+    """
+
+    if not repositories:
+        logger.warning("No repositories to process")
+        return
+
     def process_repository(repo: dict[str, str]) -> list[dict[str, Any]]:
         """リポジトリからワークフロー実行データを取得
 
@@ -211,13 +318,13 @@ def fetch_workflow_runs(
     logger.info(f"Total workflow runs fetched: {len(all_workflow_runs)}")
 
     # エラー統計をXComに保存（モニタリング用）
-    ti.xcom_push(key=f"{XComKeys.WORKFLOW_RUNS}_error_stats", value=error_stats)
+    ti.xcom_push(key=f"{XComKeys.WORKFLOW_RUNS}_error_stats{xcom_suffix}", value=error_stats)
 
     # XComサイズチェック
-    check_xcom_size(all_workflow_runs, XComKeys.WORKFLOW_RUNS)
+    check_xcom_size(all_workflow_runs, f"{XComKeys.WORKFLOW_RUNS}{xcom_suffix}")
 
     # XComで次のタスクに渡す
-    ti.xcom_push(key=XComKeys.WORKFLOW_RUNS, value=all_workflow_runs)
+    ti.xcom_push(key=f"{XComKeys.WORKFLOW_RUNS}{xcom_suffix}", value=all_workflow_runs)
 
     # 全てのリポジトリで失敗した場合はエラーを投げる
     if error_stats["successful"] == 0 and error_stats["total_items"] > 0:
@@ -238,10 +345,8 @@ def fetch_workflow_run_jobs(
     """
     ti: TaskInstance = context["ti"]
 
-    # 前のタスクからワークフロー実行リストを取得
-    workflow_runs: list[dict[str, Any]] = ti.xcom_pull(
-        task_ids=TaskIds.FETCH_WORKFLOW_RUNS, key=XComKeys.WORKFLOW_RUNS
-    )
+    # 前のタスクからワークフロー実行リストを取得（バッチ対応）
+    workflow_runs = _collect_workflow_runs_from_xcom(ti)
 
     if not workflow_runs:
         logger.warning("No workflow runs found to fetch jobs")
@@ -304,4 +409,115 @@ def fetch_workflow_run_jobs(
         logger.error(
             f"All {error_stats['total_items']} workflow runs failed to fetch jobs. "
             f"However, continuing with empty jobs list."
+        )
+
+
+def fetch_bitrise_builds(
+    bitrise_client: BitriseClientProtocol, db: DatabaseClientProtocol, **context: Any
+) -> None:
+    """各アプリのビルドデータを取得する
+
+    初回実行時は全件取得、2回目以降は最新タイムスタンプからの差分取得を行う。
+
+    Args:
+        bitrise_client: BitriseClientインスタンス（必須、外部から注入される）
+        db: DatabaseClientインスタンス（必須、外部から注入される）
+        **context: Airflowのコンテキスト
+    """
+    ti: TaskInstance = context["ti"]
+
+    # 前のタスクからリポジトリリストを取得
+    repositories = ti.xcom_pull(
+        task_ids=TaskIds.FETCH_REPOSITORIES, key=XComKeys.REPOSITORIES
+    )
+
+    if not repositories:
+        logger.warning("No repositories found")
+        return
+
+    # Bitriseのアプリのみフィルタ
+    bitrise_apps = [repo for repo in repositories if repo.get("source") == "bitrise"]
+    logger.info(f"Found {len(bitrise_apps)} Bitrise apps to monitor")
+
+    if not bitrise_apps:
+        logger.warning("No Bitrise apps found")
+        return
+
+    all_builds = []
+    error_stats = {
+        "total_items": len(bitrise_apps),
+        "successful": 0,
+        "failed": 0,
+        "errors": [],
+    }
+
+    for app in bitrise_apps:
+        app_slug = app["repository_name"]  # Bitriseのapp-slug
+        try:
+            logger.info(f"Fetching builds for Bitrise app: {app_slug}")
+
+            # 最新のタイムスタンプを取得（差分取得用）
+            latest_timestamp = db.get_latest_pipeline_timestamp(
+                repository_id=app["id"], source="bitrise"
+            )
+
+            # ビルドを取得
+            if latest_timestamp:
+                # 差分取得
+                logger.info(f"Fetching builds after {latest_timestamp} for {app_slug}")
+                # Bitriseは日時フィルタをサポートしているか確認が必要
+                builds = bitrise_client.get_builds(app_slug, limit=50)
+                # 最新タイムスタンプ以降のビルドのみフィルタ
+                builds = [
+                    b for b in builds
+                    if datetime.fromisoformat(b["triggered_at"].replace("Z", "+00:00")) > latest_timestamp
+                ]
+            else:
+                # 初回取得
+                logger.info(f"Fetching initial builds for {app_slug}")
+                builds = bitrise_client.get_builds(app_slug, limit=50)
+
+            logger.info(f"Fetched {len(builds)} builds from {app_slug}")
+
+            # リポジトリIDを追加
+            for build in builds:
+                build["repository_id"] = app["id"]
+                build["app_slug"] = app_slug
+
+            all_builds.extend(builds)
+            error_stats["successful"] += 1
+
+        except Exception as e:
+            error_msg = f"Error fetching builds for {app_slug}: {type(e).__name__}: {e}"
+            logger.error(error_msg, exc_info=True)
+            error_stats["failed"] += 1
+            error_stats["errors"].append({
+                "item": app_slug,
+                "error_type": type(e).__name__,
+                "message": str(e),
+            })
+            continue
+
+    # サマリーログ
+    success_rate = (error_stats["successful"] / error_stats["total_items"] * 100) if error_stats["total_items"] > 0 else 0
+    logger.info(
+        f"Bitrise builds fetch summary: {error_stats['successful']}/{error_stats['total_items']} successful "
+        f"({success_rate:.1f}%), {error_stats['failed']} failed"
+    )
+
+    logger.info(f"Total builds fetched: {len(all_builds)}")
+
+    # エラー統計をXComに保存
+    ti.xcom_push(key="bitrise_builds_error_stats", value=error_stats)
+
+    # XComサイズチェック
+    check_xcom_size(all_builds, "bitrise_builds")
+
+    # XComで次のタスクに渡す
+    ti.xcom_push(key="bitrise_builds", value=all_builds)
+
+    if error_stats["successful"] == 0 and error_stats["total_items"] > 0:
+        logger.error(
+            f"All {error_stats['total_items']} Bitrise apps failed to fetch builds. "
+            f"However, continuing with empty builds list."
         )
