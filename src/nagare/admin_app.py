@@ -19,6 +19,7 @@ from sqlalchemy import create_engine, text
 
 from nagare.utils.connections import ConnectionRegistry
 from nagare.utils.github_client import GitHubClient
+from nagare.utils.bitrise_client import BitriseClient
 
 # Connection設定ファイルの読み込み
 connections_file = os.getenv("NAGARE_CONNECTIONS_FILE")
@@ -151,6 +152,37 @@ def get_github_client_from_connection(conn_id: str = None):
 def get_github_client():
     """GitHubクライアントを取得する（後方互換性のため残す）"""
     return get_github_client_from_connection()
+
+
+def get_bitrise_client():
+    """Bitriseクライアントを取得する"""
+    try:
+        bitrise_conn = ConnectionRegistry.get_bitrise()
+        return BitriseClient(connection=bitrise_conn)
+    except ValueError as e:
+        st.error(f"Bitrise認証エラー: {e}")
+        st.info(
+            "Bitrise API機能を使用するには、connections.ymlでBitrise Connectionを設定してください"
+        )
+        return None
+
+
+def fetch_bitrise_apps():
+    """Bitriseからアプリ一覧を取得する
+
+    Returns:
+        アプリのリスト、またはエラー時はNone
+    """
+    bitrise_client = get_bitrise_client()
+    if not bitrise_client:
+        return None
+
+    try:
+        apps = bitrise_client.get_apps(limit=50)
+        return apps
+    except Exception as e:
+        st.error(f"Bitrise APIエラー: {e}")
+        return None
 
 
 def fetch_github_repositories(
@@ -526,6 +558,99 @@ def delete_connection(connection_id: int):
         return True, f"Connection (ID: {connection_id}) を削除しました"
 
 
+def test_connection(connection_id: int, conn_type: str, host: str = None, port: int = None,
+                    login: str = None, password: str = None, schema: str = None, extra: str = None):
+    """Connectionの接続テストを実行する
+
+    Args:
+        connection_id: Connection ID
+        conn_type: Connection Type
+        host: ホスト
+        port: ポート
+        login: ログイン名
+        password: パスワード
+        schema: スキーマ/データベース名
+        extra: 追加設定
+
+    Returns:
+        (成功フラグ, メッセージ, 詳細情報)
+    """
+    try:
+        if conn_type == "postgres":
+            # PostgreSQL接続テスト
+            from sqlalchemy import create_engine as create_test_engine
+            if not all([host, login, password, schema]):
+                return False, "PostgreSQL接続に必要な情報が不足しています", None
+
+            test_url = f"postgresql://{login}:{password}@{host}:{port or 5432}/{schema}"
+            test_engine = create_test_engine(test_url, pool_pre_ping=True)
+
+            with test_engine.connect() as conn:
+                result = conn.execute(text("SELECT version()"))
+                version = result.fetchone()[0]
+                return True, "✅ 接続成功！", {"version": version[:100]}
+
+        elif conn_type == "mysql":
+            # MySQL接続テスト
+            from sqlalchemy import create_engine as create_test_engine
+            if not all([host, login, password, schema]):
+                return False, "MySQL接続に必要な情報が不足しています", None
+
+            test_url = f"mysql+pymysql://{login}:{password}@{host}:{port or 3306}/{schema}"
+            test_engine = create_test_engine(test_url, pool_pre_ping=True)
+
+            with test_engine.connect() as conn:
+                result = conn.execute(text("SELECT version()"))
+                version = result.fetchone()[0]
+                return True, "✅ 接続成功！", {"version": version}
+
+        elif conn_type == "http":
+            # HTTP接続テスト（GitHub/Bitrise等）
+            if not password:  # passwordにトークンが格納されている想定
+                return False, "トークン/パスワードが設定されていません", None
+
+            # 簡易的なHTTPリクエストテスト
+            import requests
+            test_url = host or "https://api.github.com/user"
+            headers = {"Authorization": f"Bearer {password}"}
+
+            response = requests.get(test_url, headers=headers, timeout=10)
+
+            if response.status_code == 200:
+                return True, "✅ 接続成功！", {"status_code": response.status_code}
+            elif response.status_code == 401:
+                return False, "❌ 認証失敗（トークンが無効）", {"status_code": response.status_code}
+            else:
+                return False, f"❌ 接続失敗（ステータス: {response.status_code}）", {"status_code": response.status_code}
+
+        elif conn_type == "sqlite":
+            # SQLite接続テスト
+            import sqlite3
+            if not host:  # hostにファイルパスが格納されている想定
+                return False, "SQLiteファイルパスが指定されていません", None
+
+            conn = sqlite3.connect(host)
+            cursor = conn.cursor()
+            cursor.execute("SELECT sqlite_version()")
+            version = cursor.fetchone()[0]
+            conn.close()
+            return True, "✅ 接続成功！", {"version": version}
+
+        else:
+            # その他のタイプは基本的な情報確認のみ
+            info = {
+                "conn_type": conn_type,
+                "host": host,
+                "port": port,
+                "login": login,
+                "has_password": bool(password),
+            }
+            return True, f"ℹ️ Connection Type '{conn_type}' の自動テストは未実装です", info
+
+    except Exception as e:
+        return False, f"❌ 接続失敗: {str(e)}", None
+
+
 def export_connections_to_yaml(include_passwords: bool = False) -> str:
     """Connectionsを YAML形式でエクスポートする
 
@@ -768,33 +893,41 @@ elif page == "📦 リポジトリ管理":
     st.header("📦 リポジトリ管理")
 
     # リポジトリ追加フォーム（手動入力）
-    with st.expander("➕ リポジトリを手動で追加", expanded=False):
+    with st.expander("➕ リポジトリ/アプリを手動で追加", expanded=False):
         with st.form("add_repository_form"):
             col1, col2 = st.columns([3, 1])
             with col1:
                 new_repo = st.text_input(
-                    "リポジトリ名",
-                    placeholder="owner/repo",
-                    help="GitHub リポジトリを 'owner/repo' 形式で入力",
+                    "リポジトリ/アプリ名",
+                    placeholder="owner/repo（GitHub）またはapp-slug（Bitrise）",
+                    help="GitHub: 'owner/repo' 形式、Bitrise: app-slug",
                 )
             with col2:
-                source = st.selectbox("ソース", ["github_actions"], disabled=True)
+                source = st.selectbox(
+                    "プラットフォーム",
+                    ["github_actions", "bitrise"],
+                    format_func=lambda x: "GitHub Actions" if x == "github_actions" else "Bitrise"
+                )
 
             submitted = st.form_submit_button("追加", type="primary")
 
             if submitted:
-                if new_repo and "/" in new_repo:
-                    try:
-                        success, message = add_repository(new_repo, source)
-                        if success:
-                            st.success(message)
-                            st.rerun()
-                        else:
-                            st.warning(message)
-                    except Exception as e:
-                        st.error(f"追加エラー: {e}")
+                if new_repo:
+                    # GitHub Actionsの場合は '/' が必要
+                    if source == "github_actions" and "/" not in new_repo:
+                        st.error("GitHubリポジトリ名を 'owner/repo' 形式で入力してください")
+                    else:
+                        try:
+                            success, message = add_repository(new_repo, source)
+                            if success:
+                                st.success(message)
+                                st.rerun()
+                            else:
+                                st.warning(message)
+                        except Exception as e:
+                            st.error(f"追加エラー: {e}")
                 else:
-                    st.error("リポジトリ名を 'owner/repo' 形式で入力してください")
+                    st.error("リポジトリ/アプリ名を入力してください")
 
     # GitHubから検索して追加
     with st.expander("🔍 GitHubから検索して追加", expanded=False):
@@ -1010,6 +1143,100 @@ elif page == "📦 リポジトリ管理":
         elif result is not None:
             st.info("リポジトリが見つかりませんでした")
 
+    # Bitriseからアプリを検索して追加
+    with st.expander("🔍 Bitriseからアプリを検索", expanded=False):
+        st.markdown("**Bitrise APIからアプリを取得**")
+
+        # Bitrise接続確認
+        bitrise_client = get_bitrise_client()
+        if not bitrise_client:
+            st.warning("⚠️ Bitrise Connectionが設定されていません")
+            st.info("connections.ymlでBitrise APIトークンを設定してください")
+        else:
+            if st.button("アプリ一覧を取得", type="primary", key="fetch_bitrise_apps"):
+                with st.spinner("Bitriseから取得中..."):
+                    apps = fetch_bitrise_apps()
+                    if apps:
+                        st.session_state.bitrise_apps = apps
+
+            # アプリ一覧表示
+            if "bitrise_apps" in st.session_state and st.session_state.bitrise_apps:
+                apps = st.session_state.bitrise_apps
+                st.success(f"{len(apps)}件のアプリが見つかりました")
+
+                # アプリ選択用のセッションステート
+                if "selected_bitrise_apps" not in st.session_state:
+                    st.session_state.selected_bitrise_apps = set()
+
+                # アプリ一覧表示
+                for app in apps:
+                    col1, col2, col3 = st.columns([1, 6, 2])
+
+                    with col1:
+                        is_selected = st.checkbox(
+                            "選択",
+                            key=f"select_bitrise_{app['slug']}",
+                            label_visibility="collapsed"
+                        )
+                        if is_selected:
+                            st.session_state.selected_bitrise_apps.add(app['slug'])
+                        elif app['slug'] in st.session_state.selected_bitrise_apps:
+                            st.session_state.selected_bitrise_apps.remove(app['slug'])
+
+                    with col2:
+                        # アプリ名とslug表示
+                        app_title = app.get('title', app['slug'])
+                        st.markdown(f"**📱 {app_title}**")
+                        st.caption(f"App Slug: {app['slug']}")
+
+                        # メタ情報
+                        meta_info = []
+                        if app.get('project_type'):
+                            meta_info.append(f"📦 {app['project_type']}")
+                        if app.get('repo_url'):
+                            meta_info.append(f"🔗 {app['repo_url']}")
+                        if meta_info:
+                            st.caption(" • ".join(meta_info))
+
+                    with col3:
+                        if st.button("追加", key=f"add_bitrise_{app['slug']}"):
+                            try:
+                                success, message = add_repository(app['slug'], "bitrise")
+                                if success:
+                                    st.success(message)
+                                    st.rerun()
+                                else:
+                                    st.warning(message)
+                            except Exception as e:
+                                st.error(f"追加エラー: {e}")
+
+                    st.divider()
+
+                # 一括追加ボタン
+                if st.session_state.selected_bitrise_apps:
+                    st.divider()
+                    st.markdown(f"**選択中: {len(st.session_state.selected_bitrise_apps)}件**")
+                    if st.button("選択したアプリを一括追加", type="primary", key="batch_add_bitrise"):
+                        success_count = 0
+                        error_count = 0
+                        for app_slug in st.session_state.selected_bitrise_apps:
+                            try:
+                                success, _ = add_repository(app_slug, "bitrise")
+                                if success:
+                                    success_count += 1
+                                else:
+                                    error_count += 1
+                            except Exception:
+                                error_count += 1
+
+                        if success_count > 0:
+                            st.success(f"{success_count}件のアプリを追加しました")
+                        if error_count > 0:
+                            st.warning(f"{error_count}件のアプリは追加できませんでした（既存またはエラー）")
+
+                        st.session_state.selected_bitrise_apps.clear()
+                        st.rerun()
+
     st.divider()
 
     # リポジトリ一覧
@@ -1090,11 +1317,38 @@ elif page == "🔌 Connections管理":
                     placeholder="my_connection",
                     help="一意の識別子"
                 )
-                new_conn_type = st.text_input(
+
+                # Connection Type選択
+                conn_type_options = [
+                    "http",
+                    "postgres",
+                    "mysql",
+                    "sqlite",
+                    "aws",
+                    "gcp",
+                    "azure",
+                    "ssh",
+                    "ftp",
+                    "smtp",
+                    "slack",
+                    "その他（カスタム）"
+                ]
+                selected_conn_type = st.selectbox(
                     "Connection Type *",
-                    placeholder="http, postgres, mysql, etc.",
-                    help="接続タイプ"
+                    options=conn_type_options,
+                    help="接続タイプを選択"
                 )
+
+                # カスタムタイプの入力
+                if selected_conn_type == "その他（カスタム）":
+                    new_conn_type = st.text_input(
+                        "カスタムConnection Type *",
+                        placeholder="custom_type",
+                        help="カスタム接続タイプを入力"
+                    )
+                else:
+                    new_conn_type = selected_conn_type
+
                 new_host = st.text_input("Host", placeholder="localhost")
                 new_schema = st.text_input("Schema/Database", placeholder="database_name")
 
@@ -1113,7 +1367,14 @@ elif page == "🔌 Connections管理":
             submitted = st.form_submit_button("追加", type="primary")
 
             if submitted:
-                if new_conn_id and new_conn_type:
+                # バリデーション
+                if not new_conn_id:
+                    st.error("Connection IDは必須です")
+                elif selected_conn_type == "その他（カスタム）" and not new_conn_type:
+                    st.error("カスタムConnection Typeを入力してください")
+                elif not new_conn_type:
+                    st.error("Connection Typeを選択してください")
+                else:
                     try:
                         port_value = new_port if new_port > 0 else None
                         success, message = add_connection(
@@ -1128,8 +1389,6 @@ elif page == "🔌 Connections管理":
                             st.warning(message)
                     except Exception as e:
                         st.error(f"追加エラー: {e}")
-                else:
-                    st.error("Connection IDとConnection Typeは必須です")
 
     st.divider()
 
@@ -1180,6 +1439,41 @@ elif page == "🔌 Connections管理":
                             except Exception as e:
                                 st.error(f"削除エラー: {e}")
 
+                    # 接続テストセクション
+                    with st.expander("🔍 接続テスト", expanded=False):
+                        if st.button("接続テストを実行", key=f"test_{row['ID']}", type="primary"):
+                            with st.spinner("接続テスト中..."):
+                                # データベースから最新のConnection情報を取得（パスワード含む）
+                                engine = get_database_engine()
+                                with engine.connect() as conn:
+                                    result = conn.execute(
+                                        text("SELECT host, port, login, password, schema, extra FROM connection WHERE id = :id"),
+                                        {"id": row['ID']}
+                                    )
+                                    conn_data = result.fetchone()
+
+                                if conn_data:
+                                    success, message, details = test_connection(
+                                        connection_id=row['ID'],
+                                        conn_type=row['Type'],
+                                        host=conn_data[0],
+                                        port=conn_data[1],
+                                        login=conn_data[2],
+                                        password=conn_data[3],
+                                        schema=conn_data[4],
+                                        extra=conn_data[5]
+                                    )
+
+                                    if success:
+                                        st.success(message)
+                                    else:
+                                        st.error(message)
+
+                                    if details:
+                                        st.json(details)
+                                else:
+                                    st.error("Connection情報の取得に失敗しました")
+
                     # 編集フォーム
                     if st.session_state.get(f"editing_{row['ID']}", False):
                         with st.form(f"edit_form_{row['ID']}"):
@@ -1187,7 +1481,52 @@ elif page == "🔌 Connections管理":
 
                             col1, col2 = st.columns(2)
                             with col1:
-                                edit_conn_type = st.text_input("Connection Type *", value=row['Type'])
+                                # Connection Type選択（編集）
+                                edit_conn_type_options = [
+                                    "http",
+                                    "postgres",
+                                    "mysql",
+                                    "sqlite",
+                                    "aws",
+                                    "gcp",
+                                    "azure",
+                                    "ssh",
+                                    "ftp",
+                                    "smtp",
+                                    "slack",
+                                    "その他（カスタム）"
+                                ]
+
+                                # 現在の値が定義リストにあるか確認
+                                current_type = row['Type']
+                                if current_type in edit_conn_type_options[:-1]:  # "その他（カスタム）"以外
+                                    default_index = edit_conn_type_options.index(current_type)
+                                    edit_selected_conn_type = st.selectbox(
+                                        "Connection Type *",
+                                        options=edit_conn_type_options,
+                                        index=default_index,
+                                        help="接続タイプを選択"
+                                    )
+                                else:
+                                    # カスタムタイプの場合
+                                    edit_selected_conn_type = st.selectbox(
+                                        "Connection Type *",
+                                        options=edit_conn_type_options,
+                                        index=len(edit_conn_type_options) - 1,  # "その他（カスタム）"を選択
+                                        help="接続タイプを選択"
+                                    )
+
+                                # カスタムタイプの入力
+                                if edit_selected_conn_type == "その他（カスタム）":
+                                    edit_conn_type = st.text_input(
+                                        "カスタムConnection Type *",
+                                        value=current_type if current_type not in edit_conn_type_options[:-1] else "",
+                                        placeholder="custom_type",
+                                        help="カスタム接続タイプを入力"
+                                    )
+                                else:
+                                    edit_conn_type = edit_selected_conn_type
+
                                 edit_host = st.text_input("Host", value=row['Host'] or "")
                                 edit_schema = st.text_input("Schema", value=row['Schema'] or "")
 
@@ -1206,18 +1545,24 @@ elif page == "🔌 Connections管理":
                                 cancel_button = st.form_submit_button("キャンセル")
 
                             if save_button:
-                                try:
-                                    port_value = edit_port if edit_port > 0 else None
-                                    success, message = update_connection(
-                                        row['ID'], edit_conn_type, edit_description,
-                                        edit_host, edit_schema, edit_login, edit_password,
-                                        port_value, edit_extra
-                                    )
-                                    st.success(message)
-                                    del st.session_state[f"editing_{row['ID']}"]
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"更新エラー: {e}")
+                                # バリデーション
+                                if edit_selected_conn_type == "その他（カスタム）" and not edit_conn_type:
+                                    st.error("カスタムConnection Typeを入力してください")
+                                elif not edit_conn_type:
+                                    st.error("Connection Typeを選択してください")
+                                else:
+                                    try:
+                                        port_value = edit_port if edit_port > 0 else None
+                                        success, message = update_connection(
+                                            row['ID'], edit_conn_type, edit_description,
+                                            edit_host, edit_schema, edit_login, edit_password,
+                                            port_value, edit_extra
+                                        )
+                                        st.success(message)
+                                        del st.session_state[f"editing_{row['ID']}"]
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"更新エラー: {e}")
 
                             if cancel_button:
                                 del st.session_state[f"editing_{row['ID']}"]

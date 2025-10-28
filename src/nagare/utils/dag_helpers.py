@@ -166,3 +166,52 @@ def with_github_and_database_clients(
     wrapper.__doc__ = task_func.__doc__
 
     return wrapper
+
+
+def with_bitrise_and_database_clients(
+    task_func: Callable[..., T],
+    factory: ClientFactory | None = None,
+) -> Callable[..., T]:
+    """BitriseClientとDatabaseClientの両方を注入してタスク関数を実行するラッパーを生成する
+
+    Args:
+        task_func: BitriseClientとDatabaseClientを引数として受け取るタスク関数
+        factory: ClientFactoryインスタンス（省略時はget_factory()を使用）
+
+    Returns:
+        ラップされた関数（Airflowのコンテキストを受け取る）
+
+    Example:
+        ```python
+        def my_task(
+            bitrise_client: BitriseClientProtocol,
+            db: DatabaseClientProtocol,
+            **context: Any
+        ) -> None:
+            latest_timestamp = db.get_latest_run_timestamp(repo_id, "bitrise")
+            builds = bitrise_client.get_builds(app_slug, ...)
+            ...
+
+        task = PythonOperator(
+            task_id="my_task",
+            python_callable=with_bitrise_and_database_clients(my_task),
+        )
+        ```
+    """
+
+    def wrapper(**context: Any) -> T:
+        """Airflowから呼ばれるラッパー関数"""
+        if factory is None:
+            current_factory = get_factory()
+        else:
+            current_factory = factory
+
+        with current_factory.create_bitrise_client() as bitrise_client:
+            with current_factory.create_database_client() as db:
+                return task_func(bitrise_client=bitrise_client, db=db, **context)
+
+    # 元の関数名とdocstringを保持
+    wrapper.__name__ = task_func.__name__
+    wrapper.__doc__ = task_func.__doc__
+
+    return wrapper
