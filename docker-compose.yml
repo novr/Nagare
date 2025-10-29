@@ -203,6 +203,15 @@ services:
     environment:
       # Connection設定ファイルのパス
       NAGARE_CONNECTIONS_FILE: /app/connections.yml
+
+      # データベース接続情報（connections.ymlで使用）
+      DATABASE_USER: ${DATABASE_USER}
+      DATABASE_NAME: ${DATABASE_NAME}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+
+      # CI/CDプラットフォームのトークン（オプション）
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      BITRISE_TOKEN: ${BITRISE_TOKEN}
     depends_on:
       postgres:
         condition: service_healthy
