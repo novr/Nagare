@@ -8,6 +8,9 @@
 |-----|---------|-----------|--------|
 | [001](./001-dependency-injection-strategy.md) | 依存性注入（DI）戦略の選択 | Accepted | 2025-10-22 |
 | [002](./002-connection-management-architecture.md) | Connection管理アーキテクチャ | Accepted | 2025-10-26 |
+| [003](./003-bitrise-client-implementation-strategy.md) | Bitrise クライアント実装戦略 | Accepted | 2025-10-27 |
+| [004](./004-docker-dev-dependencies-strategy.md) | Docker 開発環境依存関係戦略 | Accepted | 2025-10-27 |
+| [005](./005-env-var-expansion-in-connections.md) | 環境変数展開機能の実装 | Accepted | 2025-10-28 |
 
 ---
 
@@ -218,5 +221,5 @@ ADRに関する質問やフィードバック:
 ---
 
 **作成日**: 2025年10月22日
-**最終更新**: 2025年10月22日
+**最終更新**: 2025年10月28日
 **メンテナー**: プロジェクトオーナー

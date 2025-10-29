@@ -6,75 +6,89 @@
 #   2. 必要な項目を編集
 #   3. Pythonコードで読み込み: ConnectionRegistry.from_file("connections.yml")
 #
+# 🔐 セキュリティベストプラクティス（重要）:
+#   ❌ 悪い例: トークンを直接記載
+#      token: ghp_xxxxxxxxxxxx
+#
+#   ✅ 良い例: 環境変数から読み込み
+#      token: ${GITHUB_TOKEN}
+#
+#   💡 推奨アプローチ:
+#      - 機密情報（トークン、パスワード）は必ず環境変数から読み込む
+#      - 環境変数は .env ファイルで管理
+#      - このファイルには構造的な設定のみを記載
+#      - デフォルト値が必要な場合: ${VAR_NAME:-default_value}
+#
 # ⚠️ セキュリティ警告:
-#   - このファイルには機密情報が含まれます
-#   - .gitignoreに追加されていることを確認してください
-#   - 本番環境では環境変数の使用を推奨します
+#   - このファイルには機密情報を直接記載しない
+#   - .gitignoreに追加されていることを確認
+#   - 本番環境では環境変数の使用を推奨
 
 # ==============================================================================
 # GitHub接続設定
 # ==============================================================================
-github:
-  # Personal Access Token認証（推奨）
-  # GitHub Settings → Developer settings → Personal access tokens → Generate new token
-  # 必要な権限: repo, read:org, workflow
-  token: YOUR_GITHUB_TOKEN_HERE
 
-  # GitHub Apps認証（エンタープライズ向け）
-  # 以下をコメント解除して使用
-  # app_id: 123456
-  # installation_id: 789012
-  # private_key_path: /path/to/private-key.pem
-  # または、private_keyに直接記載（非推奨）
-  # private_key: |
-  #   -----BEGIN RSA PRIVATE KEY-----
-  #   ...
-  #   -----END RSA PRIVATE KEY-----
+# デフォルトのGitHub接続（推奨：環境変数から読み込み）
+github_default:
+  # Personal Access Token認証
+  # ✅ 推奨: 環境変数から読み込み（.env ファイルで管理）
+  token: ${GITHUB_TOKEN}
 
-  # GitHub Enterprise用のベースURL
-  # デフォルト: https://api.github.com
-  # base_url: https://github.example.com/api/v3
+  # GitHub Enterprise用のベースURL（オプション）
+  # base_url: ${GITHUB_API_URL:-https://api.github.com}
+
+# 複数のGitHub接続を定義する例
+# github_enterprise:
+#   token: ${GITHUB_ENTERPRISE_TOKEN}
+#   base_url: ${GITHUB_ENTERPRISE_URL}
+#
+# github_readonly:
+#   # 読み取り専用トークン（より安全）
+#   token: ${GITHUB_READONLY_TOKEN}
+
+# GitHub Apps認証の例（エンタープライズ向け）
+# github_app:
+#   app_id: ${GITHUB_APP_ID}
+#   installation_id: ${GITHUB_APP_INSTALLATION_ID}
+#   private_key_path: ${GITHUB_APP_PRIVATE_KEY_PATH}
+#   # または、private_keyに直接記載（非推奨）
+#   # private_key: ${GITHUB_APP_PRIVATE_KEY}
 
 
 # ==============================================================================
 # GitLab接続設定（将来の拡張用）
 # ==============================================================================
-gitlab:
-  # Personal Access Token
-  # GitLab Settings → Access Tokens → Create personal access token
-  # 必要なスコープ: api, read_api, read_repository
-  token: YOUR_GITLAB_TOKEN_HERE
-
-  # GitLab Enterprise用のベースURL
-  # デフォルト: https://gitlab.com
-  # base_url: https://gitlab.example.com
+# gitlab_default:
+#   # Personal Access Token
+#   # ✅ 推奨: 環境変数から読み込み
+#   token: ${GITLAB_TOKEN}
+#
+#   # GitLab Enterprise用のベースURL
+#   # base_url: ${GITLAB_URL:-https://gitlab.com}
 
 
 # ==============================================================================
 # CircleCI接続設定（将来の拡張用）
 # ==============================================================================
-circleci:
-  # API Token
-  # CircleCI → User Settings → Personal API Tokens → Create New Token
-  api_token: YOUR_CIRCLECI_TOKEN_HERE
-
-  # CircleCI Enterprise用のベースURL
-  # デフォルト: https://circleci.com/api
-  # base_url: https://circleci.example.com/api
+# circleci_default:
+#   # API Token
+#   # ✅ 推奨: 環境変数から読み込み
+#   api_token: ${CIRCLECI_TOKEN}
+#
+#   # CircleCI Enterprise用のベースURL
+#   # base_url: ${CIRCLECI_API_URL:-https://circleci.com/api}
 
 
 # ==============================================================================
 # Bitrise接続設定
 # ==============================================================================
-bitrise:
+bitrise_default:
   # Personal Access Token
-  # Bitrise → Account Settings → Security → Personal Access Token → Generate new
-  # 必要な権限: ビルド情報の読み取り
-  api_token: YOUR_BITRISE_TOKEN_HERE
+  # ✅ 推奨: 環境変数から読み込み（.env ファイルで管理）
+  api_token: ${BITRISE_TOKEN}
 
   # Bitrise API ベースURL
-  # デフォルト: https://api.bitrise.io/v0.1
-  # base_url: https://api.bitrise.io/v0.1
+  # base_url: ${BITRISE_API_URL:-https://api.bitrise.io/v0.1}
 
 
 # ==============================================================================
@@ -82,14 +96,25 @@ bitrise:
 # ==============================================================================
 database:
   # PostgreSQL接続情報
-  host: localhost
-  port: 5432
-  database: nagare
-  user: nagare_user
-  password: YOUR_SECURE_DATABASE_PASSWORD_HERE
+
+  # Docker環境（推奨）:
+  #   - host/portは docker-compose.yml で管理（固定値）
+  #   - パスワードのみ環境変数から読み込み
+  host: postgres  # Docker Composeのサービス名（固定）
+  port: 5432      # コンテナ内ポート（固定）
+  database: ${DATABASE_NAME:-nagare}
+  user: ${DATABASE_USER:-nagare_user}
+  password: ${DATABASE_PASSWORD}
+
+  # ローカル開発環境（docker-compose.yml不使用）:
+  #   すべてを環境変数から読み込む場合はコメント解除
+  # host: ${DATABASE_HOST:-localhost}
+  # port: ${DATABASE_PORT:-5432}
+  # database: ${DATABASE_NAME:-nagare}
+  # user: ${DATABASE_USER:-nagare_user}
+  # password: ${DATABASE_PASSWORD}
 
   # Connection pooling設定（オプション）
-  # デフォルト値は以下の通り
   # pool_size: 5
   # max_overflow: 10
   # pool_pre_ping: true
@@ -98,17 +123,108 @@ database:
 # ==============================================================================
 # 使用例
 # ==============================================================================
-# Python:
-#   from nagare.utils.connections import ConnectionRegistry
 #
-#   # 設定ファイルから読み込み
-#   ConnectionRegistry.from_file("connections.yml")
+# 【Docker環境（推奨）】
 #
-#   # または、環境変数から読み込み（デフォルト）
-#   github_conn = ConnectionRegistry.get_github()  # 自動的にGITHUB_TOKENを読み取り
+# 1. .env ファイルで機密情報のみを設定:
+#    GITHUB_TOKEN=ghp_xxxxxxxxxxxxx
+#    DATABASE_PASSWORD=secure_password
+#    # DATABASE_HOSTとPORTは不要（docker-compose.ymlで管理）
 #
-# Docker Compose:
-#   環境変数での設定を推奨（docker-compose.yml参照）
+# 2. connections.yml で構造を定義（このファイル）:
+#    github_default:
+#      token: ${GITHUB_TOKEN}
+#    database:
+#      host: postgres  # 固定値（Docker Composeのサービス名）
+#      port: 5432      # 固定値
+#      password: ${DATABASE_PASSWORD}
 #
-# ローカル開発:
-#   このファイルを使用すると、.envファイルより優先されます
+# 3. Pythonコードで読み込み:
+#    from nagare.utils.connections import ConnectionRegistry
+#
+#    # 設定ファイルから読み込み（環境変数が自動展開される）
+#    ConnectionRegistry.from_file("connections.yml")
+#
+#    # 接続を取得
+#    github_conn = ConnectionRegistry.get_github()
+#    db_conn = ConnectionRegistry.get_database()
+#
+# 【ローカル開発環境（docker-compose.yml不使用）】
+#
+# 1. .env ファイルですべての設定:
+#    GITHUB_TOKEN=ghp_xxxxxxxxxxxxx
+#    DATABASE_HOST=localhost  # ローカル環境では必要
+#    DATABASE_PORT=5432
+#    DATABASE_PASSWORD=secure_password
+#
+# 2. connections.yml ですべて環境変数から読み込み:
+#    database:
+#      host: ${DATABASE_HOST:-localhost}
+#      port: ${DATABASE_PORT:-5432}
+#      password: ${DATABASE_PASSWORD}
+#
+# ==============================================================================
+# 複数の接続を使い分ける例
+# ==============================================================================
+#
+# connections.yml:
+#   github_prod:
+#     token: ${GITHUB_PROD_TOKEN}
+#
+#   github_dev:
+#     token: ${GITHUB_DEV_TOKEN}
+#
+#   github_ci:
+#     token: ${GITHUB_CI_TOKEN}
+#
+# .env:
+#   GITHUB_PROD_TOKEN=ghp_prod_xxxxx
+#   GITHUB_DEV_TOKEN=ghp_dev_xxxxx
+#   GITHUB_CI_TOKEN=ghp_ci_xxxxx
+#
+# 使用方法:
+#   - Airflow Connectionとして登録して使い分ける
+#   - または、コード内で明示的に切り替える
+#
+# ==============================================================================
+# 環境変数展開の構文
+# ==============================================================================
+#
+# 基本形式:
+#   ${VAR_NAME}              # 環境変数 VAR_NAME の値
+#   ${VAR_NAME:-default}     # VAR_NAMEが未設定の場合はdefaultを使用
+#
+# 例:
+#   host: ${DB_HOST}                    # DB_HOSTの値をそのまま使用
+#   port: ${DB_PORT:-5432}              # DB_PORTが未設定なら5432
+#   url: https://${API_HOST}/api/v1     # 文字列の一部として展開
+#
+# ==============================================================================
+# セキュリティのベストプラクティス
+# ==============================================================================
+#
+# ✅ DO:
+#   - 機密情報は必ず環境変数から読み込む
+#   - .env ファイルを .gitignore に追加
+#   - 本番環境では Secrets Manager を使用
+#   - トークンは定期的にローテーション
+#
+# ❌ DON'T:
+#   - トークンを直接 connections.yml に記載
+#   - connections.yml を Git にコミット（機密情報がある場合）
+#   - 同じトークンを複数環境で使い回す
+#
+# ==============================================================================
+# トラブルシューティング
+# ==============================================================================
+#
+# Q: 環境変数が展開されない
+# A: ${VAR_NAME} の構文を確認してください。スペースは不要です。
+#
+# Q: デフォルト値が使われない
+# A: ${VAR_NAME:-default} の構文を確認してください（コロンとハイフン）。
+#
+# Q: 複数の接続を定義したが使えない
+# A: 現在の実装では、github/gitlab/circleci/bitrise/database の
+#    キー名で1つずつしか読み込めません。複数定義する場合は
+#    Airflow Connection として登録してください。
