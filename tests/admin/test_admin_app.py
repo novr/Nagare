@@ -14,32 +14,27 @@ class TestAdminAppFunctions:
     """admin_appの主要関数のテスト"""
 
     @patch("nagare.admin_app.create_engine")
-    def test_get_database_engine(self, mock_create_engine: MagicMock) -> None:
+    @patch("nagare.admin_app.ConnectionRegistry.get_database")
+    def test_get_database_engine(
+        self, mock_get_database: MagicMock, mock_create_engine: MagicMock
+    ) -> None:
         """データベースエンジンの作成"""
         from nagare.admin_app import get_database_engine
 
         # Streamlitのキャッシュをクリア
         get_database_engine.clear()
 
-        # 環境変数をモック
-        with patch.dict(
-            "os.environ",
-            {
-                "DATABASE_HOST": "testhost",
-                "DATABASE_PORT": "5432",
-                "DATABASE_NAME": "testdb",
-                "DATABASE_USER": "testuser",
-                "DATABASE_PASSWORD": "testpass",
-            },
-        ):
-            engine = get_database_engine()
+        # DatabaseConnectionをモック
+        mock_db_conn = MagicMock()
+        mock_db_conn.url = "postgresql://testuser:testpass@testhost:5432/testdb"
+        mock_get_database.return_value = mock_db_conn
 
-            # create_engineが正しいURLで呼ばれたか確認
-            mock_create_engine.assert_called_once()
-            call_args = mock_create_engine.call_args
-            assert "postgresql://testuser:testpass@testhost:5432/testdb" in str(
-                call_args
-            )
+        engine = get_database_engine()
+
+        # create_engineが正しいURLで呼ばれたか確認
+        mock_create_engine.assert_called_once_with(
+            "postgresql://testuser:testpass@testhost:5432/testdb", pool_pre_ping=True
+        )
 
     @patch("nagare.admin_app.GitHubClient")
     def test_get_github_client_success(self, mock_github_client: MagicMock) -> None:

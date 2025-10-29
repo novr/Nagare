@@ -25,18 +25,22 @@ class TestDAGIntegration:
         assert "github" in dag.tags
         assert "data-collection" in dag.tags
 
-        # タスク数の確認
-        assert len(dag.tasks) == 5
+        # タスク数の確認（バッチ並列処理により増加: 1 + 10 + 1 + 1 + 1 = 14）
+        assert len(dag.tasks) == 14
 
         # タスクIDの確認
         task_ids = {task.task_id for task in dag.tasks}
+
+        # バッチタスクのIDを生成
+        batch_task_ids = {f"fetch_workflow_runs_batch_{i}" for i in range(10)}
+
         expected_task_ids = {
             "fetch_repositories",
-            "fetch_workflow_runs",
             "fetch_workflow_run_jobs",
             "transform_data",
             "load_to_database",
-        }
+        } | batch_task_ids  # バッチタスクを結合
+
         assert task_ids == expected_task_ids
 
     def test_dag_task_dependencies(self) -> None:
@@ -47,16 +51,29 @@ class TestDAGIntegration:
 
         # タスクを取得
         fetch_repos = dag.get_task("fetch_repositories")
-        fetch_runs = dag.get_task("fetch_workflow_runs")
         fetch_jobs = dag.get_task("fetch_workflow_run_jobs")
         transform = dag.get_task("transform_data")
         load = dag.get_task("load_to_database")
 
+        # バッチタスクを取得
+        batch_task_ids = {f"fetch_workflow_runs_batch_{i}" for i in range(10)}
+        batch_tasks = [dag.get_task(task_id) for task_id in batch_task_ids]
+
         # 依存関係の確認
-        assert fetch_repos.downstream_task_ids == {"fetch_workflow_runs"}
-        assert fetch_runs.downstream_task_ids == {"fetch_workflow_run_jobs"}
+        # fetch_repositories → 10個のバッチタスク
+        assert fetch_repos.downstream_task_ids == batch_task_ids
+
+        # 各バッチタスク → fetch_workflow_run_jobs
+        for batch_task in batch_tasks:
+            assert batch_task.downstream_task_ids == {"fetch_workflow_run_jobs"}
+
+        # fetch_workflow_run_jobs → transform_data
         assert fetch_jobs.downstream_task_ids == {"transform_data"}
+
+        # transform_data → load_to_database
         assert transform.downstream_task_ids == {"load_to_database"}
+
+        # load_to_database → (終端)
         assert len(load.downstream_task_ids) == 0
 
     def test_dag_default_args(self) -> None:
