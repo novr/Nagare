@@ -27,6 +27,7 @@ CI/CDプラットフォームおよびデータベースへの接続情報を一
 
 import logging
 import os
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -1118,11 +1119,54 @@ class ConnectionRegistry:
         }
 
     @classmethod
+    def _expand_env_vars(cls, value: Any) -> Any:
+        """環境変数を展開する
+
+        文字列中の ${VAR_NAME} または ${VAR_NAME:-default} を環境変数で置換する。
+        辞書やリストの場合は再帰的に処理する。
+
+        Args:
+            value: 展開対象の値（文字列、辞書、リスト、その他）
+
+        Returns:
+            環境変数展開後の値
+
+        Example:
+            >>> os.environ["DB_HOST"] = "localhost"
+            >>> _expand_env_vars("host: ${DB_HOST}")
+            "host: localhost"
+            >>> _expand_env_vars("port: ${DB_PORT:-5432}")
+            "port: 5432"
+        """
+        if isinstance(value, str):
+            # ${VAR_NAME:-default} または ${VAR_NAME} のパターンを検索
+            pattern = r"\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?\}"
+
+            def replacer(match: re.Match[str]) -> str:
+                var_name = match.group(1)
+                default_value = match.group(3) if match.group(3) is not None else ""
+                return os.getenv(var_name, default_value)
+
+            return re.sub(pattern, replacer, value)
+
+        elif isinstance(value, dict):
+            # 辞書の場合は再帰的に処理
+            return {k: cls._expand_env_vars(v) for k, v in value.items()}
+
+        elif isinstance(value, list):
+            # リストの場合は再帰的に処理
+            return [cls._expand_env_vars(item) for item in value]
+
+        else:
+            # その他の型（int, bool, None等）はそのまま返す
+            return value
+
+    @classmethod
     def from_file(cls, path: str | Path) -> None:
         """設定ファイルから全てのConnectionを読み込み
 
         YAML形式の設定ファイルから接続情報を読み込む。
-        環境変数の展開には対応していない（単純なYAMLパース）。
+        環境変数の展開をサポート: ${VAR_NAME} または ${VAR_NAME:-default}
 
         Args:
             path: YAML設定ファイルのパス
@@ -1132,6 +1176,12 @@ class ConnectionRegistry:
             ImportError: PyYAMLがインストールされていない場合
 
         Example:
+            # connections.yml:
+            #   github_default:
+            #     token: ${GITHUB_TOKEN}
+            #   database:
+            #     password: ${DATABASE_PASSWORD}
+
             ConnectionRegistry.from_file("connections.yml")
         """
         try:
@@ -1153,6 +1203,9 @@ class ConnectionRegistry:
         if not config:
             logger.warning(f"Empty configuration file: {path}")
             return
+
+        # 環境変数を展開
+        config = cls._expand_env_vars(config)
 
         # GitHubの設定
         if "github" in config:

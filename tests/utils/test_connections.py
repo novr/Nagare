@@ -387,3 +387,147 @@ database:
 
         # エラーにならない
         ConnectionRegistry.from_file(config_file)
+
+    def test_from_file_with_env_vars(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """設定ファイルで環境変数展開"""
+        ConnectionRegistry.reset_all()
+
+        # 環境変数を設定
+        monkeypatch.setenv("GITHUB_TOKEN", "env_token_value")
+        monkeypatch.setenv("DB_HOST", "env.example.com")
+        monkeypatch.setenv("DB_PORT", "5434")
+        monkeypatch.setenv("DB_PASSWORD", "env_password")
+
+        # YAMLファイルを作成（環境変数を使用）
+        config_file = tmp_path / "connections.yml"
+        config_file.write_text(
+            """
+github:
+  token: ${GITHUB_TOKEN}
+
+database:
+  host: ${DB_HOST}
+  port: ${DB_PORT}
+  database: testdb
+  user: testuser
+  password: ${DB_PASSWORD}
+"""
+        )
+
+        # ファイルから読み込み
+        ConnectionRegistry.from_file(config_file)
+
+        # GitHubの検証（環境変数から展開）
+        github_conn = ConnectionRegistry.get_github()
+        assert github_conn.token == "env_token_value"
+
+        # Databaseの検証（環境変数から展開）
+        db_conn = ConnectionRegistry.get_database()
+        assert db_conn.host == "env.example.com"
+        assert db_conn.port == "5434"
+        assert db_conn.password == "env_password"
+
+    def test_from_file_with_env_vars_default(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """設定ファイルで環境変数展開（デフォルト値）"""
+        ConnectionRegistry.reset_all()
+
+        # 一部の環境変数のみ設定（DB_HOSTは設定しない）
+        monkeypatch.setenv("GITHUB_TOKEN", "token123")
+        # DB_HOSTは設定しない → デフォルト値を使用
+
+        # YAMLファイルを作成（デフォルト値付き環境変数）
+        config_file = tmp_path / "connections.yml"
+        config_file.write_text(
+            """
+github:
+  token: ${GITHUB_TOKEN}
+
+database:
+  host: ${DB_HOST:-localhost}
+  port: ${DB_PORT:-5432}
+  database: testdb
+  user: testuser
+  password: ${DB_PASSWORD:-default_pass}
+"""
+        )
+
+        # ファイルから読み込み
+        ConnectionRegistry.from_file(config_file)
+
+        # Databaseの検証（デフォルト値が使用される）
+        db_conn = ConnectionRegistry.get_database()
+        assert db_conn.host == "localhost"
+        assert db_conn.port == "5432"
+        assert db_conn.password == "default_pass"
+
+    def test_expand_env_vars_string(self, monkeypatch: pytest.MonkeyPatch):
+        """環境変数展開：文字列"""
+        monkeypatch.setenv("TEST_VAR", "test_value")
+
+        # 単純な展開
+        result = ConnectionRegistry._expand_env_vars("prefix_${TEST_VAR}_suffix")
+        assert result == "prefix_test_value_suffix"
+
+        # デフォルト値付き（環境変数が存在する場合）
+        result = ConnectionRegistry._expand_env_vars("${TEST_VAR:-default}")
+        assert result == "test_value"
+
+        # デフォルト値付き（環境変数が存在しない場合）
+        result = ConnectionRegistry._expand_env_vars("${MISSING_VAR:-default}")
+        assert result == "default"
+
+        # 環境変数なし、デフォルトなし → 空文字
+        result = ConnectionRegistry._expand_env_vars("${MISSING_VAR}")
+        assert result == ""
+
+    def test_expand_env_vars_dict(self, monkeypatch: pytest.MonkeyPatch):
+        """環境変数展開：辞書"""
+        monkeypatch.setenv("KEY1", "value1")
+        monkeypatch.setenv("KEY2", "value2")
+
+        data = {
+            "field1": "${KEY1}",
+            "field2": "${KEY2}",
+            "field3": "static_value",
+            "nested": {"inner": "${KEY1}_nested"},
+        }
+
+        result = ConnectionRegistry._expand_env_vars(data)
+
+        assert result["field1"] == "value1"
+        assert result["field2"] == "value2"
+        assert result["field3"] == "static_value"
+        assert result["nested"]["inner"] == "value1_nested"
+
+    def test_expand_env_vars_list(self, monkeypatch: pytest.MonkeyPatch):
+        """環境変数展開：リスト"""
+        monkeypatch.setenv("ITEM", "expanded")
+
+        data = ["${ITEM}", "static", {"key": "${ITEM}"}]
+
+        result = ConnectionRegistry._expand_env_vars(data)
+
+        assert result[0] == "expanded"
+        assert result[1] == "static"
+        assert result[2]["key"] == "expanded"
+
+    def test_expand_env_vars_mixed_types(self):
+        """環境変数展開：混在型（int, bool, None）"""
+        data = {
+            "port": 5432,
+            "enabled": True,
+            "optional": None,
+            "mixed": ["text", 123, False, None],
+        }
+
+        result = ConnectionRegistry._expand_env_vars(data)
+
+        # 数値、真偽値、Noneはそのまま
+        assert result["port"] == 5432
+        assert result["enabled"] is True
+        assert result["optional"] is None
+        assert result["mixed"] == ["text", 123, False, None]
