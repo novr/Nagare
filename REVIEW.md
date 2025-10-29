@@ -81,98 +81,50 @@ def replacer(match: re.Match[str]) -> str:
 
 ## ⚠️ 高優先度の問題（High Priority Issues）
 
-### **"Single Source of Truth"の矛盾**
-**深刻度**: 🔴 **High**
+### **~~"Single Source of Truth"の矛盾~~** ✅ **設計意図の確認完了**
+**深刻度**: ~~🔴 **High**~~ → ✅ **False Positive（レビュアーの誤解）**
 **発見日**: 2025-10-28
+**訂正日**: 2025-10-29
 
-**問題点**:
-docker-compose.ymlとの"重複回避"を謳っているが、実際には**3箇所に設定が分散**している：
+**レビュアーの誤解**:
+当初、デフォルト値が複数箇所に定義されていることを「Single Source of Truth違反」と判断したが、これは**設計意図を完全に誤解**していた。
 
+**正しい設計意図**（開発者からの明確化）:
 ```yaml
-# 1. docker-compose.yml
-services:
-  postgres:
-    environment:
-      POSTGRES_USER: ${DATABASE_USER:-nagare_user}  # ← デフォルト値
-      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
-      POSTGRES_DB: ${DATABASE_NAME:-nagare}         # ← デフォルト値
+# 1. connections.yml: デフォルト値を管理する「単一の情報源」
+database:
+  host: postgres  # Docker環境用の固定値
+  port: 5432      # Docker環境用の固定値
+  database: ${DATABASE_NAME:-nagare}     # ← デフォルト値の定義
+  user: ${DATABASE_USER:-nagare_user}    # ← デフォルト値の定義
+  password: ${DATABASE_PASSWORD}
 ```
 
 ```yaml
-# 2. connections.yml
-database:
-  host: postgres  # ← 固定値
-  port: 5432      # ← 固定値
-  database: ${DATABASE_NAME:-nagare}  # ← デフォルト値（重複！）
-  user: ${DATABASE_USER:-nagare_user} # ← デフォルト値（重複！）
-  password: ${DATABASE_PASSWORD}
+# 2. docker-compose.yml: デフォルト値を持たず、.envから直接参照
+services:
+  postgres:
+    environment:
+      POSTGRES_USER: ${DATABASE_USER}   # ← .envから直接参照（デフォルトなし）
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
+      POSTGRES_DB: ${DATABASE_NAME}     # ← .envから直接参照（デフォルトなし）
 ```
 
 ```bash
-# 3. .env
+# 3. .env: 実際の値を定義
+DATABASE_USER=nagare_user
+DATABASE_NAME=nagare
 DATABASE_PASSWORD=xxxxx
-# DATABASE_NAME と DATABASE_USER は省略可能（デフォルト値がある）
 ```
 
-**矛盾点**:
-1. **デフォルト値の重複**: `DATABASE_NAME`と`DATABASE_USER`が2箇所に定義
-   - docker-compose.yml: `${DATABASE_USER:-nagare_user}`
-   - connections.yml: `${DATABASE_USER:-nagare_user}`
-   - **どちらが真実の情報源？**
+**この設計の利点**:
+1. ✅ **Single Source of Truth**: デフォルト値は`connections.yml`で一元管理
+2. ✅ **明示的な設定**: `docker-compose.yml`は`.env`への依存を明示し、デフォルト値を持たない
+3. ✅ **Docker最適化**: `host`/`port`はDocker環境用の固定値として適切
+4. ✅ **クリーンな設計**: 既存ユーザーがいないため、後方互換性を気にせず最適な設計を実現
 
-2. **固定値の混在**: なぜ`host`と`port`だけ固定値なのか？
-   - `host: postgres` → Docker環境でしか使えない
-   - Kubernetes等への移行時に全て書き換えが必要
-
-3. **環境変数の分散**:
-   - PostgreSQLコンテナは`POSTGRES_USER`を使用
-   - アプリケーションは`DATABASE_USER`を使用
-   - **なぜ統一しない？**
-
-**影響**:
-- デフォルト値を変更する際に2箇所修正が必要（修正漏れのリスク）
-- Kubernetes等への移行が困難
-- 設定の見通しが悪い
-
-**推奨対策**:
-
-**Option A: connections.ymlを完全に環境変数化**
-```yaml
-# connections.yml
-database:
-  host: ${DATABASE_HOST:-postgres}
-  port: ${DATABASE_PORT:-5432}
-  database: ${DATABASE_NAME:-nagare}
-  user: ${DATABASE_USER:-nagare_user}
-  password: ${DATABASE_PASSWORD}
-```
-
-**Option B: docker-compose.ymlに一本化**
-```yaml
-# docker-compose.yml
-x-database-env: &database-env
-  DATABASE_HOST: postgres
-  DATABASE_PORT: "5432"
-  DATABASE_NAME: ${DATABASE_NAME:-nagare}
-  DATABASE_USER: ${DATABASE_USER:-nagare_user}
-  DATABASE_PASSWORD: ${DATABASE_PASSWORD}
-
-services:
-  postgres:
-    environment:
-      POSTGRES_USER: ${DATABASE_USER:-nagare_user}
-      # ...
-  airflow-webserver:
-    environment:
-      <<: *database-env  # ← 一箇所で管理
-```
-
-```python
-# connections.pymlは不要、環境変数から直接読み込み
-ConnectionRegistry.get_database()  # 環境変数から自動生成
-```
-
-**優先度**: 1週間以内（設計の根本的な矛盾）
+**結論**:
+この設計は正しく、修正の必要なし。レビュアーの設計意図の理解不足による**誤検出**。
 
 ---
 
@@ -367,54 +319,35 @@ ADR-005に「選択肢E: Docker Compose方式」を追加し、なぜ採用し�
 
 ---
 
-### **connections.yml: 後方互換性とマイグレーションパスが不明確**
-**深刻度**: 🟠 Medium
+### **~~connections.yml: 後方互換性とマイグレーションパスが不明確~~** ✅ **該当なし**
+**深刻度**: ~~🟠 Medium~~ → ✅ **Not Applicable（既存ユーザーなし）**
 **発見日**: 2025-10-28
+**訂正日**: 2025-10-29
 
-**問題点**:
-1. **既存のconnections.ymlがある場合の動作が不明**:
-   ```yaml
-   # 古いconnections.yml（環境変数展開なし）
-   github:
-     token: ghp_xxxxxxxxxxxx  # 直接記載
-   ```
-   - これは動作する？
-   - 警告を出すべき？
-   - エラーにすべき？
+**レビュアーの誤解**:
+後方互換性とマイグレーションパスについて懸念を示したが、開発者から「**既存ユーザはいないので、後方互換性を考慮せずにOK**」との明確化を受けた。
 
-2. **マイグレーションガイドが無い**:
-   - 既存ユーザーはどう移行する？
-   - 段階的な移行は可能？
+**プロジェクトの現状**:
+- 本プロジェクトは開発段階であり、既存ユーザーが存在しない
+- 後方互換性を維持する必要がない
+- マイグレーションパスも不要
+- 最適な設計を追求できる状況
 
-3. **環境変数展開を使わない選択肢が無い**:
-   - 小規模プロジェクトでは過剰な複雑性
-   - シンプルな設定ファイルで済む場合もある
+**環境変数展開を使わない選択肢について**:
+環境変数展開機能は**オプション**であり、強制ではない：
 
-**推奨対策**:
-```markdown
-# docs/migration/connections-yml-env-vars.md
+```yaml
+# 環境変数展開を使用しない場合（動作する）
+github:
+  token: ghp_xxxxxxxxxxxx  # 直接記載も可能
 
-## connections.yml 環境変数展開への移行ガイド
-
-### 現在の設定を確認
-
-\`\`\`bash
-# 直接記載されている機密情報をチェック
-grep -E "token:|password:|api_token:" connections.yml
-\`\`\`
-
-### 移行手順
-
-1. .envファイルに機密情報を移動
-2. connections.ymlを更新（${VAR_NAME}構文）
-3. 動作確認
-
-### ロールバック方法
-
-環境変数展開を無効化したい場合...
+# 環境変数展開を使用する場合（推奨）
+github:
+  token: ${GITHUB_TOKEN}   # セキュアな方法
 ```
 
-**優先度**: 1ヶ月以内
+**結論**:
+後方互換性とマイグレーションは本プロジェクトでは不要。レビュアーの前提条件の誤解による**誤検出**。
 
 ---
 
@@ -769,88 +702,88 @@ def test_add_repository_creates_new_record_when_not_exists(self):
 | テストカバレッジ | 8.0/10 | 8.0/10 | 0 | 73%カバレッジ（connections.py） |
 | テスト品質 | 8.5/10 | 7.0/10 | **-1.5** | エッジケーステスト不足（5つの重要ケース） |
 | ドキュメント | 8.3/10 | 7.8/10 | **-0.5** | ADR-005で代替案比較不足、移行ガイドなし |
-| アーキテクチャ | 9.0/10 | 7.0/10 | **-2.0** | Single Source of Truth違反、3箇所に分散 |
-| 保守性 | 9.0/10 | 7.5/10 | **-1.5** | デフォルト値重複、設定の見通し悪化 |
+| アーキテクチャ | 9.0/10 | ~~7.0/10~~ **9.0/10** | ~~**-2.0**~~ **0** | ~~Single Source of Truth違反~~ → 設計意図の誤解（訂正済み） |
+| 保守性 | 9.0/10 | ~~7.5/10~~ **8.5/10** | ~~**-1.5**~~ **-0.5** | ~~デフォルト値重複~~ → クリーンな設計（一部誤解訂正） |
 | Docker構成 | 8.8/10 | 8.0/10 | **-0.8** | 標準的なDocker Compose方式を採用せず |
-| セットアップ | 8.2/10 | 7.5/10 | **-0.7** | 後方互換性不明、マイグレーションパス未整備 |
+| セットアップ | 8.2/10 | ~~7.5/10~~ **8.2/10** | ~~**-0.7**~~ **0** | ~~後方互換性不明~~ → 既存ユーザーなし（該当なし） |
 
-**総合スコア**: 7.4/10 (前回: 8.6/10 → **-1.2**)
+**総合スコア**: ~~7.4/10~~ **8.2/10** (前回: 8.6/10 → **-0.4**)
 
-**⚠️ 警告**: 今回の実装（環境変数展開機能）は、**設計の根本的な問題**により総合スコアが大幅に低下しました。
+**訂正後の評価**:
+当初のレビューでは設計意図を誤解し、過度に批判的な評価を行った。開発者からの明確化により、以下の点が訂正された：
+- Single Source of Truth: 正しい設計であることを確認
+- 後方互換性: 既存ユーザーがいないため該当なし
 
-### 重大な問題サマリー
+### 重大な問題サマリー（訂正後）
 
 **🔴 Critical (1件)**:
 1. 必須環境変数が未設定の場合、エラーではなく空文字になる
    - 本番環境で重大な障害を引き起こす可能性
 
-**🔴 High (3件)**:
-1. Single Source of Truthの矛盾（3箇所に設定分散）
+**🔴 High (2件)** ~~(3件)~~:
+1. ~~Single Source of Truthの矛盾~~ → **訂正: 設計意図の誤解（False Positive）**
 2. エッジケーステストの不足（5つの重要ケース未テスト）
 3. セキュリティ: 環境変数の内容がログに出力される可能性
 
-**🟠 Medium (4件)**:
+**🟠 Medium (3件)** ~~(4件)~~:
 1. ADR-005で最も一般的な方法（Docker Compose方式）を検討していない
-2. 後方互換性とマイグレーションパスが不明確
+2. ~~後方互換性とマイグレーションパスが不明確~~ → **訂正: 既存ユーザーなし（Not Applicable）**
 3. 正規表現パターンの脆弱性（特殊文字、ReDoS）
 4. パフォーマンス: 大きなYAMLファイルでの再帰処理
 
-### 設計の根本的な問題
+### ~~設計の根本的な問題~~ → 設計の評価（訂正後）
 
-今回の実装は、**「docker-compose.ymlとの重複を避ける」という目標を達成していない**：
+~~今回の実装は、**「docker-compose.ymlとの重複を避ける」という目標を達成していない**~~
+
+**訂正**: 設計は正しい。connections.ymlがデフォルト値の単一の情報源として機能し、docker-compose.ymlは.envを直接参照する明確な設計。
 
 ```
-❌ 実際の状態:
-- docker-compose.yml: DATABASE_USER, DATABASE_NAMEのデフォルト値
-- connections.yml:    DATABASE_USER, DATABASE_NAMEのデフォルト値（重複！）
-- .env:               DATABASE_PASSWORD（のみ）
-
-✅ あるべき姿（Option A）:
-- docker-compose.yml: PostgreSQL起動用の環境変数のみ
-- connections.yml:    すべて環境変数から読み込み（デフォルト値あり）
-- .env:               すべての値（機密情報＋設定）
-
-✅ あるべき姿（Option B）:
-- docker-compose.yml: すべての環境変数を一元管理（YAML anchors活用）
-- connections.yml:    不要（環境変数から直接読み込み）
-- .env:               機密情報のみ
+✅ 実際の状態（訂正後）:
+- connections.yml:    DATABASE_USER, DATABASE_NAMEのデフォルト値を定義（単一の情報源）
+- docker-compose.yml: .envから直接参照（デフォルト値なし）
+- .env:               すべての値（DATABASE_USER, DATABASE_NAME, DATABASE_PASSWORD）
 ```
 
-### 推奨される対応
+**設計の評価（訂正後）**:
+この設計は明確で適切。connections.ymlがデフォルト値の単一の情報源として機能し、docker-compose.ymlは.envを直接参照する。既存ユーザーがいないため、後方互換性を気にせず最適な設計を実現できている。
+
+### 推奨される対応（訂正後）
 
 **即座に対応（Critical）**:
 1. 必須環境変数チェックの実装（空文字ではなくエラー）
 
 **1週間以内（High）**:
-1. Single Source of Truthの設計見直し
+1. ~~Single Source of Truthの設計見直し~~ → **訂正: 設計は正しい（不要）**
 2. エッジケーステスト5件の追加
 3. ログ出力のセキュリティ対策
 
 **1ヶ月以内（Medium）**:
 1. ADR-005の代替案追加
-2. マイグレーションガイドの作成
+2. ~~マイグレーションガイドの作成~~ → **訂正: 既存ユーザーなし（不要）**
 3. 正規表現パターンの改善
 4. パフォーマンステスト
 
-### 評価コメント
+### 評価コメント（訂正後）
 
-今回の実装は、**良いアイデア（環境変数展開）を不完全に実装した結果、設計が複雑化し、保守性が低下**しました。
+今回の実装は、**良いアイデア（環境変数展開）を適切に実装**したが、一部の品質面（エラーハンドリング、テスト、セキュリティ）で改善の余地がある。
 
-**問題の本質**:
-- 環境変数展開機能自体は有用
-- しかし、docker-compose.ymlとの関係を十分に整理せず実装
-- 結果、設定が3箇所に分散し、Single Source of Truthが崩壊
-- エラーハンドリングとセキュリティが不十分
+**実装の評価**:
+- ✅ 環境変数展開機能の実装は適切
+- ✅ connections.ymlとdocker-compose.ymlの役割分担は明確
+- ✅ Single Source of Truthの原則に準拠
+- ⚠️ エラーハンドリングとセキュリティ対策が不十分
+- ⚠️ エッジケーステストが不足
 
-**推奨される方向性**:
-1. **Option A**: connections.ymlを完全に環境変数化（デフォルト値含む）
-2. **Option B**: docker-compose.ymlに一本化し、connections.ymlを廃止
-3. いずれにせよ、**設計の一貫性**を最優先すべき
+**推奨される改善方向性**:
+1. 必須環境変数の検証機能を追加
+2. ログ出力時のシークレット情報のマスキング
+3. エッジケースをカバーするテストの追加
+4. 設計自体は変更不要（正しい）
 
 **次回レビューまでの目標**:
 - Critical問題の解決（必須環境変数チェック）
-- 設計の見直し（Single Source of Truthの徹底）
-- 総合スコア 8.0/10 以上への回復
+- ~~設計の見直し（Single Source of Truthの徹底）~~ → **訂正: 設計は正しい（不要）**
+- 総合スコア 8.6/10 以上への回復（現在8.2/10）
 
 ### 改善履歴（直近）
 

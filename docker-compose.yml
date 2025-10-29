@@ -23,7 +23,7 @@ x-airflow-env: &airflow-env # Airflow Core設定
   AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/src/nagare/dags
 
   # データベース接続（Airflow用）
-  AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${DATABASE_USER:-nagare_user}:${DATABASE_PASSWORD}@postgres:5432/${DATABASE_NAME:-nagare}
+  AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${DATABASE_USER}:${DATABASE_PASSWORD}@postgres:5432/${DATABASE_NAME}
 
   # Connection設定ファイルのパス
   NAGARE_CONNECTIONS_FILE: /opt/airflow/connections.yml
@@ -37,15 +37,15 @@ services:
     image: postgres:15-alpine
     container_name: nagare-postgres
     environment:
-      POSTGRES_USER: ${DATABASE_USER:-nagare_user}
+      POSTGRES_USER: ${DATABASE_USER}
       POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
-      POSTGRES_DB: ${DATABASE_NAME:-nagare}
+      POSTGRES_DB: ${DATABASE_NAME}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "${DATABASE_PORT:-5432}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-nagare_user}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -121,7 +121,7 @@ services:
       - |
         # アプリケーションスキーマの初期化
         echo "Initializing application database schema..."
-        PGPASSWORD=${DATABASE_PASSWORD} psql -h postgres -U ${DATABASE_USER:-nagare_user} -d ${DATABASE_NAME:-nagare} -f /opt/airflow/scripts/init_db.sql
+        PGPASSWORD=${DATABASE_PASSWORD} psql -h postgres -U ${DATABASE_USER} -d ${DATABASE_NAME} -f /opt/airflow/scripts/init_db.sql
 
         # Airflowデータベースのマイグレーション
         echo "Running Airflow database migration..."
@@ -137,10 +137,10 @@ services:
           --role Admin \
           --email ${AIRFLOW_ALERT_EMAIL:-admin@example.com} || true
     environment:
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${DATABASE_USER:-nagare_user}:${DATABASE_PASSWORD}@postgres:5432/${DATABASE_NAME:-nagare}
-      DATABASE_USER: ${DATABASE_USER:-nagare_user}
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${DATABASE_USER}:${DATABASE_PASSWORD}@postgres:5432/${DATABASE_NAME}
+      DATABASE_USER: ${DATABASE_USER}
       DATABASE_PASSWORD: ${DATABASE_PASSWORD}
-      DATABASE_NAME: ${DATABASE_NAME:-nagare}
+      DATABASE_NAME: ${DATABASE_NAME}
     volumes:
       - ./scripts:/opt/airflow/scripts:ro
     depends_on:
@@ -157,10 +157,10 @@ services:
     container_name: nagare-superset
     environment:
       SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY}
-      DATABASE_DB: ${DATABASE_NAME:-nagare}
+      DATABASE_DB: ${DATABASE_NAME}
       DATABASE_HOST: postgres
       DATABASE_PASSWORD: ${DATABASE_PASSWORD}
-      DATABASE_USER: ${DATABASE_USER:-nagare_user}
+      DATABASE_USER: ${DATABASE_USER}
       DATABASE_PORT: 5432
       DATABASE_DIALECT: postgresql
       SUPERSET_LOAD_EXAMPLES: "no"
