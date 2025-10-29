@@ -108,6 +108,58 @@ def with_github_client(
     return wrapper
 
 
+def with_bitrise_client(
+    task_func: Callable[..., T],
+    factory: ClientFactory | None = None,
+    conn_id: str | None = None,
+) -> Callable[..., T]:
+    """BitriseClientを注入してタスク関数を実行するラッパーを生成する
+
+    Args:
+        task_func: BitriseClientを第一引数として受け取るタスク関数
+        factory: ClientFactoryインスタンス（省略時はget_factory()を使用）
+        conn_id: Airflow Connection ID（省略時は環境変数から取得）
+
+    Returns:
+        ラップされた関数（Airflowのコンテキストを受け取る）
+
+    Example:
+        ```python
+        def my_task(bitrise_client: BitriseClientProtocol, **context: Any) -> None:
+            builds = bitrise_client.get_builds(...)
+            ...
+
+        # Airflow Connectionを使用（推奨）
+        task = PythonOperator(
+            task_id="my_task",
+            python_callable=with_bitrise_client(my_task, conn_id="bitrise_default"),
+        )
+
+        # 環境変数を使用（後方互換性）
+        task = PythonOperator(
+            task_id="my_task",
+            python_callable=with_bitrise_client(my_task),
+        )
+        ```
+    """
+
+    def wrapper(**context: Any) -> T:
+        """Airflowから呼ばれるラッパー関数"""
+        if factory is None:
+            current_factory = get_factory()
+        else:
+            current_factory = factory
+
+        with current_factory.create_bitrise_client(conn_id=conn_id) as bitrise_client:
+            return task_func(bitrise_client=bitrise_client, **context)
+
+    # 元の関数名とdocstringを保持
+    wrapper.__name__ = task_func.__name__
+    wrapper.__doc__ = task_func.__doc__
+
+    return wrapper
+
+
 def with_github_and_database_clients(
     task_func: Callable[..., T],
     factory: ClientFactory | None = None,
@@ -171,12 +223,14 @@ def with_github_and_database_clients(
 def with_bitrise_and_database_clients(
     task_func: Callable[..., T],
     factory: ClientFactory | None = None,
+    conn_id: str | None = None,
 ) -> Callable[..., T]:
     """BitriseClientとDatabaseClientの両方を注入してタスク関数を実行するラッパーを生成する
 
     Args:
         task_func: BitriseClientとDatabaseClientを引数として受け取るタスク関数
         factory: ClientFactoryインスタンス（省略時はget_factory()を使用）
+        conn_id: Bitrise用のAirflow Connection ID（省略時は環境変数から取得）
 
     Returns:
         ラップされた関数（Airflowのコンテキストを受け取る）
@@ -192,6 +246,15 @@ def with_bitrise_and_database_clients(
             builds = bitrise_client.get_builds(app_slug, ...)
             ...
 
+        # Airflow Connectionを使用（推奨）
+        task = PythonOperator(
+            task_id="my_task",
+            python_callable=with_bitrise_and_database_clients(
+                my_task, conn_id="bitrise_default"
+            ),
+        )
+
+        # 環境変数を使用（後方互換性）
         task = PythonOperator(
             task_id="my_task",
             python_callable=with_bitrise_and_database_clients(my_task),
@@ -206,7 +269,7 @@ def with_bitrise_and_database_clients(
         else:
             current_factory = factory
 
-        with current_factory.create_bitrise_client() as bitrise_client:
+        with current_factory.create_bitrise_client(conn_id=conn_id) as bitrise_client:
             with current_factory.create_database_client() as db:
                 return task_func(bitrise_client=bitrise_client, db=db, **context)
 

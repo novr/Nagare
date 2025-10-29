@@ -4,28 +4,34 @@
 Bitrise APIから取得し、PostgreSQLに保存する。
 
 Bitrise認証設定:
-  connections.ymlでBitrise APIトークンを設定
+  推奨: Airflow Connectionを使用（Streamlit管理画面で設定可能）
+  - Streamlit管理画面の「Connections管理」でConnection IDを作成
+  - デフォルトでは 'bitrise_default' を使用
+  - 環境変数 BITRISE_CONNECTION_ID で変更可能
+
+  後方互換: 環境変数 BITRISE_TOKEN でも動作（非推奨）
 """
 
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from airflow import DAG
-from airflow.operators.python import PythonOperator
-
-from nagare.constants import TaskIds
-from nagare.tasks.fetch import fetch_bitrise_builds, fetch_repositories
+from nagare.dags.cicd_dag_factory import PlatformConfig, create_cicd_collection_dag
+from nagare.tasks.fetch import fetch_bitrise_builds_batch
 from nagare.utils.connections import ConnectionRegistry
 from nagare.utils.dag_helpers import (
     with_bitrise_and_database_clients,
-    with_database_client,
+    with_bitrise_client,
 )
 
 # Connection設定ファイルの読み込み
 connections_file = os.getenv("NAGARE_CONNECTIONS_FILE")
 if connections_file and Path(connections_file).exists():
     ConnectionRegistry.from_file(connections_file)
+
+# Bitrise Connection ID（Streamlit管理画面で設定）
+# 環境変数 BITRISE_CONNECTION_ID で上書き可能
+BITRISE_CONNECTION_ID = os.getenv("BITRISE_CONNECTION_ID", "bitrise_default")
 
 # デフォルト引数
 default_args = {
@@ -39,27 +45,29 @@ default_args = {
     "execution_timeout": timedelta(hours=1),
 }
 
-# DAG定義
-with DAG(
+# Bitrise用のプラットフォーム設定
+bitrise_config = PlatformConfig(
+    name="bitrise",
+    display_name="Bitrise",
+    connection_id=BITRISE_CONNECTION_ID,
+    fetch_runs_batch=fetch_bitrise_builds_batch,
+    fetch_details=None,  # Bitriseはジョブ詳細の取得をサポートしない
+    with_client_wrapper=with_bitrise_client,
+    with_client_and_db_wrapper=with_bitrise_and_database_clients,
+    num_batches=10,  # 並列処理するバッチ数
+    batch_size=17,  # 各バッチで処理するアプリ数
+)
+
+# DAG生成
+dag = create_cicd_collection_dag(
+    platform_config=bitrise_config,
     dag_id="collect_bitrise_data",
-    default_args=default_args,
     description="Bitriseのビルドデータを収集する",
+    tags=["bitrise", "data-collection"],
+    default_args=default_args,
     schedule_interval="0 * * * *",  # 毎時0分に実行
     start_date=datetime(2024, 1, 1),
     catchup=False,  # 過去の実行をスキップ
-    tags=["bitrise", "data-collection"],
-) as dag:
-    # タスク1: 監視対象リポジトリ（アプリ）の取得
-    task_fetch_repositories = PythonOperator(
-        task_id=TaskIds.FETCH_REPOSITORIES,
-        python_callable=with_database_client(fetch_repositories),
-    )
-
-    # タスク2: ビルドデータの取得
-    task_fetch_bitrise_builds = PythonOperator(
-        task_id="fetch_bitrise_builds",
-        python_callable=with_bitrise_and_database_clients(fetch_bitrise_builds),
-    )
-
-    # タスクの依存関係を定義
-    task_fetch_repositories >> task_fetch_bitrise_builds  # type: ignore[expression-value]
+    max_active_tasks=20,  # 並列バッチ処理用に増やす（デフォルト16から20へ）
+    max_active_runs=1,  # 同時実行DAG runは1つのみ
+)

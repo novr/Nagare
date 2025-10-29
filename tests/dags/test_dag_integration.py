@@ -36,7 +36,7 @@ class TestDAGIntegration:
 
         expected_task_ids = {
             "fetch_repositories",
-            "fetch_workflow_run_jobs",
+            "fetch_workflow_runs_details",  # ファクトリーパターンによる変更
             "transform_data",
             "load_to_database",
         } | batch_task_ids  # バッチタスクを結合
@@ -51,7 +51,7 @@ class TestDAGIntegration:
 
         # タスクを取得
         fetch_repos = dag.get_task("fetch_repositories")
-        fetch_jobs = dag.get_task("fetch_workflow_run_jobs")
+        fetch_details = dag.get_task("fetch_workflow_runs_details")  # ファクトリーパターンによる変更
         transform = dag.get_task("transform_data")
         load = dag.get_task("load_to_database")
 
@@ -63,12 +63,12 @@ class TestDAGIntegration:
         # fetch_repositories → 10個のバッチタスク
         assert fetch_repos.downstream_task_ids == batch_task_ids
 
-        # 各バッチタスク → fetch_workflow_run_jobs
+        # 各バッチタスク → fetch_workflow_runs_details
         for batch_task in batch_tasks:
-            assert batch_task.downstream_task_ids == {"fetch_workflow_run_jobs"}
+            assert batch_task.downstream_task_ids == {"fetch_workflow_runs_details"}
 
-        # fetch_workflow_run_jobs → transform_data
-        assert fetch_jobs.downstream_task_ids == {"transform_data"}
+        # fetch_workflow_runs_details → transform_data
+        assert fetch_details.downstream_task_ids == {"transform_data"}
 
         # transform_data → load_to_database
         assert transform.downstream_task_ids == {"load_to_database"}

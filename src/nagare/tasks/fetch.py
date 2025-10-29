@@ -412,37 +412,22 @@ def fetch_workflow_run_jobs(
         )
 
 
-def fetch_bitrise_builds(
-    bitrise_client: BitriseClientProtocol, db: DatabaseClientProtocol, **context: Any
+def _fetch_bitrise_builds_impl(
+    bitrise_apps: list[dict[str, Any]],
+    bitrise_client: BitriseClientProtocol,
+    db: DatabaseClientProtocol,
+    ti: TaskInstance,
+    xcom_suffix: str = "",
 ) -> None:
-    """各アプリのビルドデータを取得する
-
-    初回実行時は全件取得、2回目以降は最新タイムスタンプからの差分取得を行う。
+    """Bitriseビルドデータを取得する内部実装（バッチ処理対応）
 
     Args:
-        bitrise_client: BitriseClientインスタンス（必須、外部から注入される）
-        db: DatabaseClientインスタンス（必須、外部から注入される）
-        **context: Airflowのコンテキスト
+        bitrise_apps: Bitriseアプリのリスト
+        bitrise_client: BitriseClientインスタンス
+        db: DatabaseClientインスタンス
+        ti: TaskInstanceインスタンス
+        xcom_suffix: XComキーのサフィックス（バッチ処理時に使用）
     """
-    ti: TaskInstance = context["ti"]
-
-    # 前のタスクからリポジトリリストを取得
-    repositories = ti.xcom_pull(
-        task_ids=TaskIds.FETCH_REPOSITORIES, key=XComKeys.REPOSITORIES
-    )
-
-    if not repositories:
-        logger.warning("No repositories found")
-        return
-
-    # Bitriseのアプリのみフィルタ
-    bitrise_apps = [repo for repo in repositories if repo.get("source") == "bitrise"]
-    logger.info(f"Found {len(bitrise_apps)} Bitrise apps to monitor")
-
-    if not bitrise_apps:
-        logger.warning("No Bitrise apps found")
-        return
-
     all_builds = []
     error_stats = {
         "total_items": len(bitrise_apps),
@@ -465,7 +450,6 @@ def fetch_bitrise_builds(
             if latest_timestamp:
                 # 差分取得
                 logger.info(f"Fetching builds after {latest_timestamp} for {app_slug}")
-                # Bitriseは日時フィルタをサポートしているか確認が必要
                 builds = bitrise_client.get_builds(app_slug, limit=50)
                 # 最新タイムスタンプ以降のビルドのみフィルタ
                 builds = [
@@ -508,16 +492,85 @@ def fetch_bitrise_builds(
     logger.info(f"Total builds fetched: {len(all_builds)}")
 
     # エラー統計をXComに保存
-    ti.xcom_push(key="bitrise_builds_error_stats", value=error_stats)
+    ti.xcom_push(key=f"bitrise_builds_error_stats{xcom_suffix}", value=error_stats)
 
     # XComサイズチェック
-    check_xcom_size(all_builds, "bitrise_builds")
+    check_xcom_size(all_builds, f"bitrise_builds{xcom_suffix}")
 
     # XComで次のタスクに渡す
-    ti.xcom_push(key="bitrise_builds", value=all_builds)
+    ti.xcom_push(key=f"{XComKeys.WORKFLOW_RUNS}{xcom_suffix}", value=all_builds)
 
     if error_stats["successful"] == 0 and error_stats["total_items"] > 0:
         logger.error(
             f"All {error_stats['total_items']} Bitrise apps failed to fetch builds. "
             f"However, continuing with empty builds list."
         )
+
+
+def fetch_bitrise_builds(
+    bitrise_client: BitriseClientProtocol,
+    db: DatabaseClientProtocol,
+    ti: TaskInstance,
+) -> None:
+    """Bitriseビルドデータを取得する
+
+    Args:
+        bitrise_client: BitriseClientインスタンス
+        db: DatabaseClientインスタンス
+        ti: TaskInstanceインスタンス
+    """
+    bitrise_apps = ti.xcom_pull(
+        task_ids=TaskIds.FETCH_REPOSITORIES, key=XComKeys.REPOSITORIES
+    )
+
+    if not bitrise_apps:
+        logger.warning("No Bitrise apps found in XCom")
+        return
+
+    _fetch_bitrise_builds_impl(bitrise_apps, bitrise_client, db, ti)
+
+
+def fetch_bitrise_builds_batch(
+    bitrise_client: BitriseClientProtocol,
+    db: DatabaseClientProtocol,
+    ti: TaskInstance,
+    batch_index: int,
+    batch_size: int,
+) -> None:
+    """Bitriseビルドデータをバッチ単位で取得する
+
+    Args:
+        bitrise_client: BitriseClientインスタンス
+        db: DatabaseClientインスタンス
+        ti: TaskInstanceインスタンス
+        batch_index: バッチインデックス（0から始まる）
+        batch_size: バッチサイズ（各バッチで処理するアプリ数）
+    """
+    all_apps = ti.xcom_pull(
+        task_ids=TaskIds.FETCH_REPOSITORIES, key=XComKeys.REPOSITORIES
+    )
+
+    if not all_apps:
+        logger.warning(f"Batch {batch_index}: No Bitrise apps found in XCom")
+        return
+
+    # バッチを抽出
+    start_idx = batch_index * batch_size
+    end_idx = start_idx + batch_size
+    batch_apps = all_apps[start_idx:end_idx]
+
+    if not batch_apps:
+        logger.info(
+            f"Batch {batch_index}: No apps to process (total: {len(all_apps)}, "
+            f"range: {start_idx}-{end_idx})"
+        )
+        return
+
+    logger.info(
+        f"Batch {batch_index}: Processing {len(batch_apps)} apps "
+        f"(indices {start_idx}-{end_idx-1} of {len(all_apps)} total)"
+    )
+
+    _fetch_bitrise_builds_impl(
+        batch_apps, bitrise_client, db, ti, xcom_suffix=f"_batch_{batch_index}"
+    )
