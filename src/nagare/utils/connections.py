@@ -803,20 +803,49 @@ class BitriseConnection(BaseConnection):
 
     @classmethod
     def from_airflow_extra(
-        cls, conn_id: str, extra: dict[str, Any]
+        cls,
+        conn_id: str,
+        password: str | None,
+        host: str | None,
+        port: int | None,
+        schema: str | None,
+        login: str | None,
+        extra: dict[str, Any],
+        description: str,
     ) -> "BitriseConnection":
-        """Airflow Connectionから生成
+        """Airflow Connectionの各フィールドからインスタンスを生成
+
+        Airflow Connectionのフィールドマッピング：
+        - password: Personal Access Token
+        - host: Bitrise API base URL（例: api.bitrise.io/v0.1）
+        - extra.api_token: Personal Access Token（passwordの代替）
+        - extra.base_url: ベースURL（hostの代替）
 
         Args:
-            conn_id: Connection ID
-            extra: Airflow ConnectionのExtra JSON
+            conn_id: Connection ID（ロギング用）
+            password: Personal Access Token
+            host: Bitrise APIホスト
+            port: ポート（未使用）
+            schema: スキーマ（未使用）
+            login: ログイン（未使用）
+            extra: 追加設定
+            description: 説明
 
         Returns:
-            BitriseConnection インスタンス
+            BitriseConnection: 生成されたインスタンス
         """
+        base_url = "https://api.bitrise.io/v0.1"
+        if host:
+            base_url = f"https://{host}" if not host.startswith("http") else host
+        elif extra.get("base_url"):
+            base_url = extra["base_url"]
+
+        # api_tokenの優先順位: extra.api_token > password
+        api_token = extra.get("api_token") or password
+
         return cls(
-            api_token=extra.get("api_token"),
-            base_url=extra.get("base_url", "https://api.bitrise.io/v0.1"),
+            api_token=api_token,
+            base_url=base_url,
         )
 
     def validate(self) -> bool:

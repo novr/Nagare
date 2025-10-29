@@ -510,15 +510,17 @@ def _fetch_bitrise_builds_impl(
 def fetch_bitrise_builds(
     bitrise_client: BitriseClientProtocol,
     db: DatabaseClientProtocol,
-    ti: TaskInstance,
+    **context: Any,
 ) -> None:
     """Bitriseビルドデータを取得する
 
     Args:
         bitrise_client: BitriseClientインスタンス
         db: DatabaseClientインスタンス
-        ti: TaskInstanceインスタンス
+        **context: Airflowコンテキスト（tiを含む）
     """
+    ti: TaskInstance = context["ti"]
+
     bitrise_apps = ti.xcom_pull(
         task_ids=TaskIds.FETCH_REPOSITORIES, key=XComKeys.REPOSITORIES
     )
@@ -533,19 +535,21 @@ def fetch_bitrise_builds(
 def fetch_bitrise_builds_batch(
     bitrise_client: BitriseClientProtocol,
     db: DatabaseClientProtocol,
-    ti: TaskInstance,
     batch_index: int,
     batch_size: int,
+    **context: Any,
 ) -> None:
     """Bitriseビルドデータをバッチ単位で取得する
 
     Args:
         bitrise_client: BitriseClientインスタンス
         db: DatabaseClientインスタンス
-        ti: TaskInstanceインスタンス
         batch_index: バッチインデックス（0から始まる）
         batch_size: バッチサイズ（各バッチで処理するアプリ数）
+        **context: Airflowコンテキスト（tiを含む）
     """
+    ti: TaskInstance = context["ti"]
+
     all_apps = ti.xcom_pull(
         task_ids=TaskIds.FETCH_REPOSITORIES, key=XComKeys.REPOSITORIES
     )
