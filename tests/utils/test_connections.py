@@ -480,9 +480,9 @@ database:
         result = ConnectionRegistry._expand_env_vars("${MISSING_VAR:-default}")
         assert result == "default"
 
-        # 環境変数なし、デフォルトなし → 空文字
-        result = ConnectionRegistry._expand_env_vars("${MISSING_VAR}")
-        assert result == ""
+        # 環境変数なし、デフォルトなし → エラー（必須環境変数が未設定）
+        with pytest.raises(ValueError, match="Required environment variable 'MISSING_VAR' is not set"):
+            ConnectionRegistry._expand_env_vars("${MISSING_VAR}")
 
     def test_expand_env_vars_dict(self, monkeypatch: pytest.MonkeyPatch):
         """環境変数展開：辞書"""
@@ -531,3 +531,59 @@ database:
         assert result["enabled"] is True
         assert result["optional"] is None
         assert result["mixed"] == ["text", 123, False, None]
+
+    def test_expand_env_vars_missing_required(self, monkeypatch: pytest.MonkeyPatch):
+        """環境変数展開：必須環境変数が未設定の場合にエラー"""
+        # 環境変数をクリア
+        monkeypatch.delenv("MISSING_VAR", raising=False)
+
+        with pytest.raises(ValueError, match="Required environment variable 'MISSING_VAR' is not set"):
+            ConnectionRegistry._expand_env_vars("${MISSING_VAR}")
+
+    def test_expand_env_vars_empty_string(self, monkeypatch: pytest.MonkeyPatch):
+        """環境変数展開：環境変数に空文字列が設定されている場合"""
+        monkeypatch.setenv("EMPTY_VAR", "")
+
+        # 空文字列は有効な値として扱われる
+        result = ConnectionRegistry._expand_env_vars("value: ${EMPTY_VAR}")
+        assert result == "value: "
+
+        # デフォルト値がある場合でも、空文字列が優先される
+        result = ConnectionRegistry._expand_env_vars("value: ${EMPTY_VAR:-default}")
+        assert result == "value: "
+
+    def test_expand_env_vars_special_characters(self, monkeypatch: pytest.MonkeyPatch):
+        """環境変数展開：デフォルト値に特殊文字が含まれる場合"""
+        monkeypatch.delenv("SPECIAL_VAR", raising=False)
+
+        # URL with port
+        result = ConnectionRegistry._expand_env_vars("${SPECIAL_VAR:-postgresql://user:pass@host:5432/db}")
+        assert result == "postgresql://user:pass@host:5432/db"
+
+        # Path with spaces
+        result = ConnectionRegistry._expand_env_vars("${SPECIAL_VAR:-/path/to/my file.txt}")
+        assert result == "/path/to/my file.txt"
+
+        # Special characters
+        result = ConnectionRegistry._expand_env_vars("${SPECIAL_VAR:-value!@#$%^&*()}")
+        assert result == "value!@#$%^&*()"
+
+    def test_expand_env_vars_nested(self, monkeypatch: pytest.MonkeyPatch):
+        """環境変数展開：ネストした展開（制限事項の確認）"""
+        monkeypatch.setenv("INNER_VAR", "inner_value")
+        monkeypatch.setenv("OUTER_VAR", "${INNER_VAR}")
+
+        # ネストした展開はサポートされない（1回のみ展開）
+        result = ConnectionRegistry._expand_env_vars("${OUTER_VAR}")
+        assert result == "${INNER_VAR}"  # 外側だけ展開される
+
+    def test_expand_env_vars_invalid_syntax(self, monkeypatch: pytest.MonkeyPatch):
+        """環境変数展開：無効な構文は展開されない"""
+        monkeypatch.setenv("VALID_VAR", "test_value")
+
+        # 無効な構文パターンは展開されない
+        assert ConnectionRegistry._expand_env_vars("$VALID_VAR") == "$VALID_VAR"  # $ のみ
+        assert ConnectionRegistry._expand_env_vars("${VALID_VAR") == "${VALID_VAR"  # 閉じ括弧なし
+        assert ConnectionRegistry._expand_env_vars("${}") == "${}"  # 変数名なし
+        assert ConnectionRegistry._expand_env_vars("${123VAR}") == "${123VAR}"  # 数字で開始
+        assert ConnectionRegistry._expand_env_vars("${-VAR}") == "${-VAR}"  # 無効な文字

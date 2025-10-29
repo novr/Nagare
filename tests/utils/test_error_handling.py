@@ -133,6 +133,12 @@ class TestDatabaseErrorHandling:
 class TestConnectionRegistryErrorHandling:
     """ConnectionRegistryのエラーハンドリングテスト"""
 
+    def setup_method(self) -> None:
+        """各テストの前にConnectionRegistryをリセット"""
+        from nagare.utils.connections import ConnectionRegistry
+
+        ConnectionRegistry.reset_all()
+
     def test_get_github_without_env_vars(self) -> None:
         """環境変数無しでGitHub接続を取得
 

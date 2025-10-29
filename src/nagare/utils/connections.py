@@ -1144,8 +1144,21 @@ class ConnectionRegistry:
 
             def replacer(match: re.Match[str]) -> str:
                 var_name = match.group(1)
-                default_value = match.group(3) if match.group(3) is not None else ""
-                return os.getenv(var_name, default_value)
+                has_default = match.group(3) is not None
+                default_value = match.group(3) if has_default else None
+
+                value = os.getenv(var_name)
+
+                if value is None:
+                    if default_value is not None:
+                        return default_value
+                    # 必須の環境変数が未設定
+                    raise ValueError(
+                        f"Required environment variable '{var_name}' is not set. "
+                        f"Please set {var_name} in your .env file or environment."
+                    )
+
+                return value
 
             return re.sub(pattern, replacer, value)
 
