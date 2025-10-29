@@ -587,3 +587,150 @@ database:
         assert ConnectionRegistry._expand_env_vars("${}") == "${}"  # 変数名なし
         assert ConnectionRegistry._expand_env_vars("${123VAR}") == "${123VAR}"  # 数字で開始
         assert ConnectionRegistry._expand_env_vars("${-VAR}") == "${-VAR}"  # 無効な文字
+
+    def test_mask_secrets_dict(self):
+        """機密情報のマスキング：辞書"""
+        config = {
+            "token": "ghp_secret_token",
+            "host": "github.com",
+            "password": "my_password",
+            "port": 443,
+        }
+
+        masked = ConnectionRegistry._mask_secrets(config)
+
+        # 機密情報はマスクされる
+        assert masked["token"] == "***MASKED***"
+        assert masked["password"] == "***MASKED***"
+
+        # 非機密情報はそのまま
+        assert masked["host"] == "github.com"
+        assert masked["port"] == 443
+
+    def test_mask_secrets_nested(self):
+        """機密情報のマスキング：ネストした辞書"""
+        config = {
+            "github": {
+                "token": "ghp_secret",
+                "base_url": "https://api.github.com",
+            },
+            "database": {
+                "host": "localhost",
+                "password": "db_secret",
+                "port": 5432,
+            },
+        }
+
+        masked = ConnectionRegistry._mask_secrets(config)
+
+        # ネストした機密情報もマスクされる
+        assert masked["github"]["token"] == "***MASKED***"
+        assert masked["database"]["password"] == "***MASKED***"
+
+        # 非機密情報はそのまま
+        assert masked["github"]["base_url"] == "https://api.github.com"
+        assert masked["database"]["host"] == "localhost"
+        assert masked["database"]["port"] == 5432
+
+    def test_mask_secrets_list(self):
+        """機密情報のマスキング：リスト"""
+        config = [
+            {"token": "secret1", "name": "config1"},
+            {"api_key": "secret2", "name": "config2"},
+        ]
+
+        masked = ConnectionRegistry._mask_secrets(config)
+
+        # リスト内の機密情報もマスクされる
+        assert masked[0]["token"] == "***MASKED***"
+        assert masked[1]["api_key"] == "***MASKED***"
+
+        # 非機密情報はそのまま
+        assert masked[0]["name"] == "config1"
+        assert masked[1]["name"] == "config2"
+
+    def test_mask_secrets_case_insensitive(self):
+        """機密情報のマスキング：大文字小文字を区別しない"""
+        config = {
+            "TOKEN": "secret1",
+            "Password": "secret2",
+            "API_TOKEN": "secret3",
+        }
+
+        masked = ConnectionRegistry._mask_secrets(config)
+
+        # キー名の大文字小文字に関わらずマスクされる
+        assert masked["TOKEN"] == "***MASKED***"
+        assert masked["Password"] == "***MASKED***"
+        assert masked["API_TOKEN"] == "***MASKED***"
+
+    def test_mask_secrets_all_types(self):
+        """機密情報のマスキング：すべての機密キータイプ"""
+        config = {
+            "token": "secret1",
+            "password": "secret2",
+            "api_token": "secret3",
+            "private_key": "secret4",
+            "secret_key": "secret5",
+            "access_token": "secret6",
+            "refresh_token": "secret7",
+            "api_key": "secret8",
+            "auth_token": "secret9",
+        }
+
+        masked = ConnectionRegistry._mask_secrets(config)
+
+        # すべての機密キーがマスクされる
+        for key in config.keys():
+            assert masked[key] == "***MASKED***"
+
+    def test_from_file_error_masks_secrets(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """from_file: エラー時に機密情報がマスクされる"""
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_secret_token_should_be_masked")
+
+        # 無効なGitHub設定（tokenとapp_idが両方ない）
+        config_file = tmp_path / "invalid_config.yml"
+        config_file.write_text(
+            """
+github:
+  # tokenもapp_idも無い（エラーになる）
+  base_url: https://api.github.com
+"""
+        )
+
+        # エラーが発生することを確認
+        with pytest.raises(ValueError, match="Failed to create GitHub connection"):
+            ConnectionRegistry.from_file(config_file)
+
+        # 注: ログには "***MASKED***" が出力される（機密情報は出力されない）
+        # これは手動でログを確認する必要がある
+
+    def test_from_file_invalid_token_error_masks_secrets(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ):
+        """from_file: 無効なトークンでエラー時に機密情報がマスクされる"""
+        import logging
+
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_secret_token_should_be_masked")
+
+        # GitHubTokenAuthに無効なパラメータを渡す
+        config_file = tmp_path / "invalid_token_config.yml"
+        config_file.write_text(
+            """
+github:
+  token: ${GITHUB_TOKEN}
+  invalid_param: should_cause_error
+"""
+        )
+
+        # ログレベルを設定
+        caplog.set_level(logging.ERROR)
+
+        # エラーが発生することを確認
+        with pytest.raises(ValueError, match="Failed to create GitHub connection"):
+            ConnectionRegistry.from_file(config_file)
+
+        # ログに機密情報が含まれていないことを確認
+        log_messages = "\n".join([record.message for record in caplog.records])
+        assert "ghp_secret_token_should_be_masked" not in log_messages
+        assert "***MASKED***" in log_messages

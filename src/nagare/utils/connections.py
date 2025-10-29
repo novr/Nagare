@@ -1119,6 +1119,56 @@ class ConnectionRegistry:
         }
 
     @classmethod
+    def _mask_secrets(cls, config: Any) -> Any:
+        """機密情報をマスクする
+
+        ログ出力時にトークンやパスワードなどの機密情報が漏洩しないようにマスクする。
+
+        Args:
+            config: マスク対象の設定（文字列、辞書、リスト、その他）
+
+        Returns:
+            機密情報をマスクした設定
+
+        Example:
+            >>> config = {"token": "ghp_secret", "host": "localhost"}
+            >>> _mask_secrets(config)
+            {"token": "***MASKED***", "host": "localhost"}
+        """
+        # 機密情報として扱うキー名
+        secret_keys = {
+            "token",
+            "password",
+            "api_token",
+            "private_key",
+            "secret_key",
+            "access_token",
+            "refresh_token",
+            "api_key",
+            "auth_token",
+        }
+
+        if isinstance(config, dict):
+            # 辞書の場合は再帰的に処理
+            masked = {}
+            for key, value in config.items():
+                if key.lower() in secret_keys:
+                    # 機密情報キーの場合はマスク
+                    masked[key] = "***MASKED***"
+                else:
+                    # それ以外は再帰的にマスク
+                    masked[key] = cls._mask_secrets(value)
+            return masked
+
+        elif isinstance(config, list):
+            # リストの場合は再帰的に処理
+            return [cls._mask_secrets(item) for item in config]
+
+        else:
+            # その他の型（文字列、数値等）はそのまま返す
+            return config
+
+    @classmethod
     def _expand_env_vars(cls, value: Any) -> Any:
         """環境変数を展開する
 
@@ -1223,41 +1273,66 @@ class ConnectionRegistry:
         # GitHubの設定
         if "github" in config:
             gh_config = config["github"]
-            # token と app_id のどちらが設定されているかで適切なクラスを選択
-            # base_url を _base_url にマッピング
-            if "base_url" in gh_config:
-                gh_config["_base_url"] = gh_config.pop("base_url")
+            try:
+                # token と app_id のどちらが設定されているかで適切なクラスを選択
+                # base_url を _base_url にマッピング
+                if "base_url" in gh_config:
+                    gh_config["_base_url"] = gh_config.pop("base_url")
 
-            if "token" in gh_config:
-                cls._github = GitHubTokenAuth(**gh_config)
-            elif "app_id" in gh_config and "installation_id" in gh_config:
-                cls._github = GitHubAppAuth(**gh_config)
-            else:
-                raise ValueError(
-                    "GitHub config must have either 'token' or ('app_id' and 'installation_id')"
-                )
-            logger.info("GitHub connection loaded from file")
+                if "token" in gh_config:
+                    cls._github = GitHubTokenAuth(**gh_config)
+                elif "app_id" in gh_config and "installation_id" in gh_config:
+                    cls._github = GitHubAppAuth(**gh_config)
+                else:
+                    raise ValueError(
+                        "GitHub config must have either 'token' or ('app_id' and 'installation_id')"
+                    )
+                logger.info("GitHub connection loaded from file")
+            except Exception as e:
+                masked_config = cls._mask_secrets(gh_config)
+                logger.error(f"Failed to create GitHub connection: {e}, config={masked_config}")
+                raise ValueError(f"Failed to create GitHub connection: {e}") from e
 
         # GitLabの設定
         if "gitlab" in config:
             gl_config = config["gitlab"]
-            cls._gitlab = GitLabConnection(**gl_config)
-            logger.info("GitLab connection loaded from file")
+            try:
+                cls._gitlab = GitLabConnection(**gl_config)
+                logger.info("GitLab connection loaded from file")
+            except Exception as e:
+                masked_config = cls._mask_secrets(gl_config)
+                logger.error(f"Failed to create GitLab connection: {e}, config={masked_config}")
+                raise ValueError(f"Failed to create GitLab connection: {e}") from e
 
         # CircleCIの設定
         if "circleci" in config:
             ci_config = config["circleci"]
-            cls._circleci = CircleCIConnection(**ci_config)
-            logger.info("CircleCI connection loaded from file")
+            try:
+                cls._circleci = CircleCIConnection(**ci_config)
+                logger.info("CircleCI connection loaded from file")
+            except Exception as e:
+                masked_config = cls._mask_secrets(ci_config)
+                logger.error(f"Failed to create CircleCI connection: {e}, config={masked_config}")
+                raise ValueError(f"Failed to create CircleCI connection: {e}") from e
 
         # Bitriseの設定
         if "bitrise" in config:
             br_config = config["bitrise"]
-            cls._bitrise = BitriseConnection(**br_config)
-            logger.info("Bitrise connection loaded from file")
+            try:
+                cls._bitrise = BitriseConnection(**br_config)
+                logger.info("Bitrise connection loaded from file")
+            except Exception as e:
+                masked_config = cls._mask_secrets(br_config)
+                logger.error(f"Failed to create Bitrise connection: {e}, config={masked_config}")
+                raise ValueError(f"Failed to create Bitrise connection: {e}") from e
 
         # Databaseの設定
         if "database" in config:
             db_config = config["database"]
-            cls._database = DatabaseConnection(**db_config)
-            logger.info("Database connection loaded from file")
+            try:
+                cls._database = DatabaseConnection(**db_config)
+                logger.info("Database connection loaded from file")
+            except Exception as e:
+                masked_config = cls._mask_secrets(db_config)
+                logger.error(f"Failed to create Database connection: {e}, config={masked_config}")
+                raise ValueError(f"Failed to create Database connection: {e}") from e
