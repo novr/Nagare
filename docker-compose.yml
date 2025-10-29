@@ -28,6 +28,15 @@ x-airflow-env: &airflow-env # Airflow Core設定
   # Connection設定ファイルのパス
   NAGARE_CONNECTIONS_FILE: /opt/airflow/connections.yml
 
+  # CI/CDプラットフォームのトークン
+  GITHUB_TOKEN: ${GITHUB_TOKEN}
+  BITRISE_TOKEN: ${BITRISE_TOKEN}
+
+  # データベース接続情報（connections.ymlで使用）
+  DATABASE_USER: ${DATABASE_USER}
+  DATABASE_NAME: ${DATABASE_NAME}
+  DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+
   # アプリケーション設定
   AIRFLOW_ALERT_EMAIL: ${AIRFLOW_ALERT_EMAIL:-admin@example.com}
 
