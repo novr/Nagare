@@ -185,6 +185,131 @@ def fetch_bitrise_apps():
         return None
 
 
+def fetch_repositories_unified(platform: str, search_params: dict, page: int = 1, per_page: int = 30):
+    """統一されたインターフェースでリポジトリ/アプリを取得する（ページング対応）
+
+    Args:
+        platform: "github" または "bitrise"
+        search_params: プラットフォーム固有の検索パラメータ
+            GitHub: {"search_type": str, "search_value": str, "conn_id": str}
+            Bitrise: {} (パラメータなし)
+        page: ページ番号（1から開始）
+        per_page: 1ページあたりの件数
+
+    Returns:
+        統一された形式の検索結果、またはエラー時はNone
+        {
+            "items": [
+                {
+                    "id": str,          # 一意識別子
+                    "name": str,        # 表示名
+                    "repo": str,        # リポジトリ/アプリ識別子
+                    "updated_at": str,  # 更新日時（ISO 8601形式）
+                    "url": str,         # URL
+                    "description": str, # 説明
+                    "platform": str,    # "github" or "bitrise"
+                    "metadata": dict    # その他のメタ情報
+                }
+            ],
+            "page": int,
+            "per_page": int,
+            "has_next": bool,
+            "total_count": int | None
+        }
+    """
+    if platform == "github":
+        search_type = search_params.get("search_type")
+        search_value = search_params.get("search_value")
+        conn_id = search_params.get("conn_id")
+
+        result = fetch_github_repositories(search_type, search_value, page, per_page, conn_id)
+        if not result or "repos" not in result:
+            return None
+
+        # GitHubのデータを統一形式に変換
+        items = []
+        for repo in result["repos"]:
+            items.append({
+                "id": repo["full_name"],
+                "name": repo["name"],
+                "repo": repo["full_name"],
+                "updated_at": repo.get("updated_at", ""),
+                "url": repo.get("html_url", ""),
+                "description": repo.get("description", ""),
+                "platform": "github",
+                "metadata": {
+                    "owner": repo.get("owner", {}).get("login", ""),
+                    "private": repo.get("private", False),
+                    "language": repo.get("language"),
+                    "stars": repo.get("stargazers_count", 0),
+                    "forks": repo.get("forks_count", 0),
+                }
+            })
+
+        return {
+            "items": items,
+            "page": result["page"],
+            "per_page": result["per_page"],
+            "has_next": result["has_next"],
+            "total_count": result.get("total_count")
+        }
+
+    elif platform == "bitrise":
+        bitrise_client = get_bitrise_client()
+        if not bitrise_client:
+            return None
+
+        try:
+            # Bitriseは全件取得してからページングを実装
+            # 実際にはAPIがページングをサポートしているが、ここでは簡易実装
+            limit = per_page * (page + 1)  # 次のページも考慮して多めに取得
+            all_apps = bitrise_client.get_apps(limit=limit)
+
+            # ページングのためのスライス
+            start_idx = (page - 1) * per_page
+            end_idx = start_idx + per_page
+            page_apps = all_apps[start_idx:end_idx]
+
+            # Bitriseのデータを統一形式に変換
+            items = []
+            for app in page_apps:
+                # Bitrise APIから更新日時を取得（project_type_idなどから推測）
+                # 実際のAPIレスポンスに応じて調整が必要
+                updated_at = ""  # Bitrise APIには更新日時がない場合がある
+
+                items.append({
+                    "id": app["slug"],
+                    "name": app.get("title", app["slug"]),
+                    "repo": app["slug"],
+                    "updated_at": updated_at,
+                    "url": f"https://app.bitrise.io/app/{app['slug']}",
+                    "description": f"App Slug: {app['slug']}",
+                    "platform": "bitrise",
+                    "metadata": {
+                        "project_type": app.get("project_type"),
+                        "repo_url": app.get("repo_url"),
+                        "repo_owner": app.get("repo_owner"),
+                        "repo_slug": app.get("repo_slug"),
+                    }
+                })
+
+            return {
+                "items": items,
+                "page": page,
+                "per_page": per_page,
+                "has_next": len(all_apps) > end_idx,
+                "total_count": None  # Bitriseは総数を返さない
+            }
+
+        except Exception as e:
+            st.error(f"Bitrise APIエラー: {e}")
+            return None
+
+    else:
+        st.error(f"未対応のプラットフォーム: {platform}")
+        return None
+
+
 def fetch_github_repositories(
     search_type: str, search_value: str, page: int = 1, per_page: int = 30, conn_id: str = None
 ):
@@ -234,6 +359,158 @@ def fetch_github_repositories(
     except Exception as e:
         st.error(f"予期しないエラー: {e}")
         return None
+
+
+def render_repository_list(result: dict, platform: str, session_key_prefix: str):
+    """統一されたリポジトリ/アプリリストを表示する（ページング対応）
+
+    Args:
+        result: fetch_repositories_unified()の戻り値
+        platform: "github" または "bitrise"
+        session_key_prefix: セッションステートのキープレフィックス
+    """
+    if not result or "items" not in result:
+        st.info("リポジトリ/アプリが見つかりませんでした")
+        return
+
+    items = result["items"]
+    current_page = result["page"]
+    has_next = result["has_next"]
+    total_count = result.get("total_count")
+
+    # ヘッダー情報
+    if total_count is not None:
+        st.success(f"検索結果: 全{total_count}件 （ページ {current_page}）")
+    else:
+        st.success(f"{len(items)}件が見つかりました （ページ {current_page}）")
+
+    if not items:
+        st.info("このページにアイテムがありません")
+        return
+
+    # 選択状態の管理
+    selected_key = f"{session_key_prefix}_selected"
+    if selected_key not in st.session_state:
+        st.session_state[selected_key] = set()
+
+    # リスト表示
+    for item in items:
+        col1, col2, col3 = st.columns([1, 6, 2])
+
+        with col1:
+            is_selected = st.checkbox(
+                "選択",
+                key=f"{session_key_prefix}_select_{item['id']}_{current_page}",
+                label_visibility="collapsed"
+            )
+            if is_selected:
+                st.session_state[selected_key].add(item['id'])
+            elif item['id'] in st.session_state[selected_key]:
+                st.session_state[selected_key].remove(item['id'])
+
+        with col2:
+            # プラットフォーム固有のアイコン
+            icon = "📦" if platform == "github" else "📱"
+            if platform == "github" and item["metadata"].get("private"):
+                icon = "🔒"
+
+            # リポジトリ/アプリ名表示
+            st.markdown(f"**{icon} [{item['name']}]({item['url']})**")
+
+            # repo識別子表示
+            st.caption(f"📂 {item['repo']}")
+
+            # 説明表示
+            if item.get("description"):
+                st.caption(item["description"])
+
+            # メタ情報表示
+            meta_info = []
+
+            # 更新日時
+            if item.get("updated_at"):
+                try:
+                    updated = datetime.fromisoformat(item["updated_at"].replace("Z", "+00:00"))
+                    meta_info.append(f"🕒 {updated.strftime('%Y-%m-%d %H:%M')}")
+                except (ValueError, AttributeError):
+                    if item["updated_at"]:
+                        meta_info.append(f"🕒 {item['updated_at']}")
+
+            # プラットフォーム固有のメタ情報
+            if platform == "github":
+                metadata = item["metadata"]
+                if metadata.get("language"):
+                    meta_info.append(f"🔤 {metadata['language']}")
+                if metadata.get("stars") is not None:
+                    meta_info.append(f"⭐ {metadata['stars']}")
+                if metadata.get("forks") is not None:
+                    meta_info.append(f"🍴 {metadata['forks']}")
+            elif platform == "bitrise":
+                metadata = item["metadata"]
+                if metadata.get("project_type"):
+                    meta_info.append(f"📦 {metadata['project_type']}")
+                if metadata.get("repo_url"):
+                    meta_info.append(f"🔗 {metadata['repo_url']}")
+
+            if meta_info:
+                st.caption(" • ".join(meta_info))
+
+        with col3:
+            source_type = "github_actions" if platform == "github" else "bitrise"
+            if st.button("追加", key=f"{session_key_prefix}_add_{item['id']}_{current_page}"):
+                try:
+                    success, message = add_repository(item["repo"], source_type)
+                    if success:
+                        st.success(message)
+                        st.rerun()
+                    else:
+                        st.warning(message)
+                except Exception as e:
+                    st.error(f"追加エラー: {e}")
+
+        st.divider()
+
+    # ページングボタン
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col1:
+        if current_page > 1:
+            if st.button("⬅️ 前のページ", key=f"{session_key_prefix}_prev"):
+                return "prev"
+    with col2:
+        st.markdown(f"<center>ページ {current_page}</center>", unsafe_allow_html=True)
+    with col3:
+        if has_next:
+            if st.button("次のページ ➡️", key=f"{session_key_prefix}_next"):
+                return "next"
+
+    # 一括追加ボタン
+    if st.session_state[selected_key]:
+        st.divider()
+        st.markdown(f"**選択中: {len(st.session_state[selected_key])}件**")
+        if st.button("選択したアイテムを一括追加", type="primary", key=f"{session_key_prefix}_batch_add"):
+            source_type = "github_actions" if platform == "github" else "bitrise"
+            success_count = 0
+            error_count = 0
+
+            for repo_id in st.session_state[selected_key]:
+                try:
+                    success, _ = add_repository(repo_id, source_type)
+                    if success:
+                        success_count += 1
+                    else:
+                        error_count += 1
+                except Exception:
+                    error_count += 1
+
+            if success_count > 0:
+                st.success(f"{success_count}件を追加しました")
+            if error_count > 0:
+                st.warning(f"{error_count}件は追加できませんでした（既存またはエラー）")
+
+            st.session_state[selected_key].clear()
+            st.rerun()
+
+    return None
 
 
 def get_repositories():
