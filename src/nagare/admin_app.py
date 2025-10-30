@@ -258,10 +258,6 @@ def get_bitrise_client_from_connection(conn_id: str = None):
                     if base_url and not base_url.startswith(("http://", "https://")):
                         base_url = f"https://{base_url}"
 
-                    # デバッグ情報
-                    import logging
-                    logging.info(f"Bitrise connection debug: conn_id={conn_id}, base_url={base_url}, token_len={len(api_token)}")
-
                     bitrise_conn = BitriseConnection(
                         api_token=api_token,
                         base_url=base_url
@@ -368,15 +364,9 @@ def fetch_repositories_unified(platform: str, search_params: dict, page: int = 1
 
     elif platform == "bitrise":
         conn_id = search_params.get("conn_id")
-        import logging
-        logging.info(f"fetch_repositories_unified: platform=bitrise, conn_id={conn_id}")
-
         bitrise_client = get_bitrise_client_from_connection(conn_id) if conn_id else get_bitrise_client()
         if not bitrise_client:
             return None
-
-        # デバッグ: クライアントのbase_urlを確認
-        logging.info(f"BitriseClient base_url: {bitrise_client.base_url}")
 
         try:
             # Bitriseは全件取得してからページングを実装
@@ -1258,9 +1248,6 @@ elif page == "📦 リポジトリ管理":
             # 検索ボタン
             can_search = (platform == "github" and search_params.get("search_value")) or platform == "bitrise"
             if st.button("検索", type="primary", key="unified_search_btn", disabled=not can_search):
-                # デバッグ情報
-                st.caption(f"🔍 Debug: conn_id={conn_id}, platform={platform}, search_params={search_params}")
-
                 st.session_state[search_state_key]["page"] = 1
                 st.session_state[search_state_key]["params"] = {
                     "search_params": search_params,

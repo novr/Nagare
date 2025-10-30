@@ -167,16 +167,22 @@ class BitriseClient:
             BitriseAPIException: API呼び出しエラー
         """
         all_apps: list[dict[str, Any]] = []
-        next_url = "/apps"
+        next_token = None
 
-        while next_url and len(all_apps) < limit:
-            response = self._request("GET", next_url)
+        while len(all_apps) < limit:
+            # ページネーショントークンをクエリパラメータとして渡す
+            params = {"next": next_token} if next_token else None
+            response = self._request("GET", "/apps", params=params)
             apps = response.get("data", [])
             all_apps.extend(apps)
 
             # ページネーション
             paging = response.get("paging", {})
-            next_url = paging.get("next", None)
+            next_token = paging.get("next", None)
+
+            # 次のページがない、またはデータがない場合は終了
+            if not next_token or not apps:
+                break
 
             if len(all_apps) >= limit:
                 all_apps = all_apps[:limit]
