@@ -63,6 +63,68 @@ def get_available_github_connections():
         return [(row[0], row[1] or row[0]) for row in rows]
 
 
+def get_all_cicd_connections():
+    """利用可能な全てのCI/CD Connections（GitHub/Bitrise）を取得する
+
+    Returns:
+        List[(conn_id, description, platform)] - Connection情報とプラットフォームのリスト
+    """
+    engine = get_database_engine()
+    query = text(
+        """
+        SELECT conn_id, description
+        FROM connection
+        WHERE conn_type = 'http' AND password IS NOT NULL AND password != ''
+        ORDER BY conn_id
+        """
+    )
+    connections = []
+    with engine.connect() as conn:
+        result = conn.execute(query)
+        rows = result.fetchall()
+        for row in rows:
+            conn_id = row[0]
+            description = row[1] or conn_id
+
+            # conn_idやdescriptionからプラットフォームを判定
+            platform = detect_platform_from_connection(conn_id, description)
+            if platform:  # GitHub または Bitrise のみ
+                connections.append((conn_id, description, platform))
+
+    return connections
+
+
+def detect_platform_from_connection(conn_id: str, description: str) -> str | None:
+    """ConnectionからプラットフォームGitHub/Bitrise）を判定する
+
+    Args:
+        conn_id: Connection ID
+        description: Connection description
+
+    Returns:
+        "github", "bitrise", または None（判定不可）
+    """
+    conn_id_lower = conn_id.lower()
+    description_lower = description.lower()
+
+    # GitHub判定
+    if "github" in conn_id_lower or "github" in description_lower:
+        return "github"
+
+    # Bitrise判定
+    if "bitrise" in conn_id_lower or "bitrise" in description_lower:
+        return "bitrise"
+
+    # デフォルトConnectionの判定（github_default, bitrise_default）
+    if conn_id in ["github_default", "gh_default"]:
+        return "github"
+    if conn_id in ["bitrise_default", "br_default"]:
+        return "bitrise"
+
+    # 判定不可
+    return None
+
+
 def get_github_client_from_connection(conn_id: str = None):
     """指定されたConnectionからGitHubクライアントを取得する
 
@@ -1206,313 +1268,116 @@ elif page == "📦 リポジトリ管理":
                 else:
                     st.error("リポジトリ/アプリ名を入力してください")
 
-    # GitHubから検索して追加
-    with st.expander("🔍 GitHubから検索して追加", expanded=False):
-        st.markdown("**GitHub APIからリポジトリを検索**")
+    # 統一検索UI（GitHub + Bitrise）
+    with st.expander("🔍 リポジトリ/アプリを検索して追加", expanded=True):
+        st.markdown("**CI/CD Connectionから検索**")
 
         # Connection選択
-        available_connections = get_available_github_connections()
-        if available_connections:
-            col_conn, col_info = st.columns([2, 1])
+        available_connections = get_all_cicd_connections()
+        if not available_connections:
+            st.warning("⚠️ GitHub/Bitrise Connectionが登録されていません")
+            st.info("🔌 Connections管理ページでGitHub/Bitrise Connectionを登録してください")
+        else:
+            col_conn, col_per_page = st.columns([3, 1])
             with col_conn:
-                selected_conn_id = st.selectbox(
+                selected_conn = st.selectbox(
                     "使用するConnection",
-                    options=[conn[0] for conn in available_connections],
-                    format_func=lambda x: next((conn[1] for conn in available_connections if conn[0] == x), x),
-                    help="Connections管理で登録したGitHub Connectionを選択"
+                    options=range(len(available_connections)),
+                    format_func=lambda i: f"{available_connections[i][1]} ({available_connections[i][2].upper()})",
+                    key="unified_connection_select"
                 )
-            with col_info:
-                st.caption(f"接続: {selected_conn_id}")
-        else:
-            st.warning("⚠️ GitHub Connectionが登録されていません")
-            st.info("🔌 Connections管理ページでGitHub Connectionを登録してください")
-            selected_conn_id = None
+                conn_id = available_connections[selected_conn][0]
+                platform = available_connections[selected_conn][2]
 
-        # ページング用のセッションステート初期化
-        if "gh_search_page" not in st.session_state:
-            st.session_state.gh_search_page = 1
-        if "gh_search_result" not in st.session_state:
-            st.session_state.gh_search_result = None
-        if "gh_search_params" not in st.session_state:
-            st.session_state.gh_search_params = {}
+            with col_per_page:
+                per_page = st.selectbox("表示件数", options=[10, 20, 30, 50], index=2, key="unified_per_page")
 
-        # 検索条件
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            search_type = st.radio(
-                "検索方法",
-                ["organization", "user", "search"],
-                format_func=lambda x: {
-                    "organization": "組織名で検索",
-                    "user": "ユーザー名で検索",
-                    "search": "キーワード検索"
-                }[x],
-                horizontal=True,
-                key="search_type_radio"
-            )
-        with col2:
-            per_page = st.selectbox(
-                "表示件数",
-                options=[10, 20, 30, 50],
-                index=2,
-                key="per_page_select"
-            )
+            # プラットフォーム表示
+            platform_icon = "📦" if platform == "github" else "📱"
+            platform_name = "GitHub Actions" if platform == "github" else "Bitrise"
+            st.caption(f"{platform_icon} プラットフォーム: **{platform_name}**")
 
-        if search_type in ["organization", "user"]:
-            search_value = st.text_input(
-                f"{search_type.capitalize()}名を入力",
-                placeholder="organization-name" if search_type == "organization" else "username",
-                key=f"{search_type}_input"
-            )
-        else:
-            search_value = st.text_input(
-                "検索クエリ",
-                placeholder="例: org:myorg language:python",
-                help="GitHub検索構文を使用できます",
-                key="search_input"
-            )
+            # セッションステートの初期化
+            search_state_key = f"unified_{conn_id}_search"
+            if search_state_key not in st.session_state:
+                st.session_state[search_state_key] = {"result": None, "page": 1, "params": {}}
 
-        search_button = st.button("検索", type="primary", key="search_github", disabled=not selected_conn_id)
+            # プラットフォーム固有の検索条件
+            search_params = {}
 
-        # 新規検索の場合
-        if search_button and search_value and selected_conn_id:
-            st.session_state.gh_search_page = 1
-            st.session_state.gh_search_params = {
-                "search_type": search_type,
-                "search_value": search_value,
-                "per_page": per_page,
-                "conn_id": selected_conn_id
-            }
-            with st.spinner("GitHubから取得中..."):
-                result = fetch_github_repositories(
-                    search_type, search_value, page=1, per_page=per_page, conn_id=selected_conn_id
+            if platform == "github":
+                search_params["conn_id"] = conn_id
+
+                # 検索方法選択
+                search_type = st.radio(
+                    "検索方法",
+                    ["organization", "user", "search"],
+                    format_func=lambda x: {"organization": "組織名", "user": "ユーザー名", "search": "キーワード"}[x],
+                    horizontal=True,
+                    key="unified_search_type"
                 )
-                st.session_state.gh_search_result = result
 
-        # 検索結果表示
-        result = st.session_state.gh_search_result
-        if result and "repos" in result:
-            repos = result["repos"]
-            current_page = result["page"]
-            has_next = result["has_next"]
-            total_count = result.get("total_count")
+                # 検索値入力
+                if search_type in ["organization", "user"]:
+                    search_value = st.text_input(
+                        f"{search_type.capitalize()}名",
+                        placeholder="organization-name" if search_type == "organization" else "username",
+                        key="unified_search_value"
+                    )
+                else:
+                    search_value = st.text_input(
+                        "検索クエリ",
+                        placeholder="例: org:myorg language:python",
+                        help="GitHub検索構文を使用できます",
+                        key="unified_search_query"
+                    )
 
-            # ヘッダー情報
-            if total_count is not None:
-                st.success(f"検索結果: 全{total_count}件 （ページ {current_page}）")
-            else:
-                st.success(f"{len(repos)}件のリポジトリが見つかりました （ページ {current_page}）")
+                search_params["search_type"] = search_type
+                search_params["search_value"] = search_value
 
-            if repos:
-                # リポジトリ選択用のセッションステート
-                if "selected_repos" not in st.session_state:
-                    st.session_state.selected_repos = set()
+            else:  # bitrise
+                st.info("📱 Bitriseアプリ一覧を取得します")
 
-                # リポジトリ一覧表示
-                for repo in repos:
-                    col1, col2, col3 = st.columns([1, 6, 2])
+            # 検索ボタン
+            can_search = (platform == "github" and search_params.get("search_value")) or platform == "bitrise"
+            if st.button("検索", type="primary", key="unified_search_btn", disabled=not can_search):
+                st.session_state[search_state_key]["page"] = 1
+                st.session_state[search_state_key]["params"] = {
+                    "search_params": search_params,
+                    "per_page": per_page,
+                    "platform": platform
+                }
 
-                    with col1:
-                        is_selected = st.checkbox(
-                            "選択",
-                            key=f"select_{repo['full_name']}_{current_page}",
-                            label_visibility="collapsed"
+                with st.spinner(f"{platform_name}から取得中..."):
+                    result = fetch_repositories_unified(platform, search_params, page=1, per_page=per_page)
+                    st.session_state[search_state_key]["result"] = result
+
+            # 検索結果表示
+            state = st.session_state[search_state_key]
+            if state["result"]:
+                action = render_repository_list(state["result"], platform, f"unified_{conn_id}")
+
+                # ページング処理
+                if action == "prev" and state["page"] > 1:
+                    state["page"] -= 1
+                    params = state["params"]
+                    with st.spinner("読み込み中..."):
+                        result = fetch_repositories_unified(
+                            params["platform"], params["search_params"], page=state["page"], per_page=params["per_page"]
                         )
-                        if is_selected:
-                            st.session_state.selected_repos.add(repo['full_name'])
-                        elif repo['full_name'] in st.session_state.selected_repos:
-                            st.session_state.selected_repos.remove(repo['full_name'])
+                        state["result"] = result
+                    st.rerun()
 
-                    with col2:
-                        private_badge = "🔒" if repo.get("private") else "🌐"
-                        st.markdown(f"**{private_badge} [{repo['full_name']}]({repo['html_url']})**")
-                        if repo.get("description"):
-                            st.caption(repo["description"])
-
-                        # メタ情報
-                        meta_info = []
-                        if repo.get("language"):
-                            meta_info.append(f"🔤 {repo['language']}")
-                        if repo.get("stargazers_count") is not None:
-                            meta_info.append(f"⭐ {repo['stargazers_count']}")
-                        if repo.get("forks_count") is not None:
-                            meta_info.append(f"🍴 {repo['forks_count']}")
-                        if meta_info:
-                            st.caption(" • ".join(meta_info))
-
-                    with col3:
-                        if st.button("追加", key=f"add_{repo['full_name']}_{current_page}"):
-                            try:
-                                success, message = add_repository(repo['full_name'], "github_actions")
-                                if success:
-                                    st.success(message)
-                                    st.rerun()
-                                else:
-                                    st.warning(message)
-                            except Exception as e:
-                                st.error(f"追加エラー: {e}")
-
-                    st.divider()
-
-                # ページングボタン
-                col1, col2, col3 = st.columns([1, 2, 1])
-                with col1:
-                    if current_page > 1:
-                        if st.button("⬅️ 前のページ", key="prev_page"):
-                            params = st.session_state.gh_search_params
-                            st.session_state.gh_search_page = current_page - 1
-                            with st.spinner("読み込み中..."):
-                                result = fetch_github_repositories(
-                                    params["search_type"],
-                                    params["search_value"],
-                                    page=current_page - 1,
-                                    per_page=params["per_page"],
-                                    conn_id=params.get("conn_id")
-                                )
-                                st.session_state.gh_search_result = result
-                            st.rerun()
-
-                with col2:
-                    st.markdown(f"<center>ページ {current_page}</center>", unsafe_allow_html=True)
-
-                with col3:
-                    if has_next:
-                        if st.button("次のページ ➡️", key="next_page"):
-                            params = st.session_state.gh_search_params
-                            st.session_state.gh_search_page = current_page + 1
-                            with st.spinner("読み込み中..."):
-                                result = fetch_github_repositories(
-                                    params["search_type"],
-                                    params["search_value"],
-                                    page=current_page + 1,
-                                    per_page=params["per_page"],
-                                    conn_id=params.get("conn_id")
-                                )
-                                st.session_state.gh_search_result = result
-                            st.rerun()
-
-                # 一括追加ボタン
-                if st.session_state.selected_repos:
-                    st.divider()
-                    st.markdown(f"**選択中: {len(st.session_state.selected_repos)}件**")
-                    if st.button("選択したリポジトリを一括追加", type="primary", key="batch_add"):
-                        success_count = 0
-                        error_count = 0
-                        for repo_name in st.session_state.selected_repos:
-                            try:
-                                success, _ = add_repository(repo_name, "github_actions")
-                                if success:
-                                    success_count += 1
-                                else:
-                                    error_count += 1
-                            except Exception:
-                                error_count += 1
-
-                        if success_count > 0:
-                            st.success(f"{success_count}件のリポジトリを追加しました")
-                        if error_count > 0:
-                            st.warning(f"{error_count}件のリポジトリは追加できませんでした（既存またはエラー）")
-
-                        st.session_state.selected_repos.clear()
-                        st.rerun()
-            else:
-                st.info("このページにリポジトリがありません")
-        elif result is not None:
-            st.info("リポジトリが見つかりませんでした")
-
-    # Bitriseからアプリを検索して追加
-    with st.expander("🔍 Bitriseからアプリを検索", expanded=False):
-        st.markdown("**Bitrise APIからアプリを取得**")
-
-        # Bitrise接続確認
-        bitrise_client = get_bitrise_client()
-        if not bitrise_client:
-            st.warning("⚠️ Bitrise Connectionが設定されていません")
-            st.info("connections.ymlでBitrise APIトークンを設定してください")
-        else:
-            if st.button("アプリ一覧を取得", type="primary", key="fetch_bitrise_apps"):
-                with st.spinner("Bitriseから取得中..."):
-                    apps = fetch_bitrise_apps()
-                    if apps:
-                        st.session_state.bitrise_apps = apps
-
-            # アプリ一覧表示
-            if "bitrise_apps" in st.session_state and st.session_state.bitrise_apps:
-                apps = st.session_state.bitrise_apps
-                st.success(f"{len(apps)}件のアプリが見つかりました")
-
-                # アプリ選択用のセッションステート
-                if "selected_bitrise_apps" not in st.session_state:
-                    st.session_state.selected_bitrise_apps = set()
-
-                # アプリ一覧表示
-                for app in apps:
-                    col1, col2, col3 = st.columns([1, 6, 2])
-
-                    with col1:
-                        is_selected = st.checkbox(
-                            "選択",
-                            key=f"select_bitrise_{app['slug']}",
-                            label_visibility="collapsed"
+                elif action == "next":
+                    state["page"] += 1
+                    params = state["params"]
+                    with st.spinner("読み込み中..."):
+                        result = fetch_repositories_unified(
+                            params["platform"], params["search_params"], page=state["page"], per_page=params["per_page"]
                         )
-                        if is_selected:
-                            st.session_state.selected_bitrise_apps.add(app['slug'])
-                        elif app['slug'] in st.session_state.selected_bitrise_apps:
-                            st.session_state.selected_bitrise_apps.remove(app['slug'])
+                        state["result"] = result
+                    st.rerun()
 
-                    with col2:
-                        # アプリ名とslug表示
-                        app_title = app.get('title', app['slug'])
-                        st.markdown(f"**📱 {app_title}**")
-                        st.caption(f"App Slug: {app['slug']}")
-
-                        # メタ情報
-                        meta_info = []
-                        if app.get('project_type'):
-                            meta_info.append(f"📦 {app['project_type']}")
-                        if app.get('repo_url'):
-                            meta_info.append(f"🔗 {app['repo_url']}")
-                        if meta_info:
-                            st.caption(" • ".join(meta_info))
-
-                    with col3:
-                        if st.button("追加", key=f"add_bitrise_{app['slug']}"):
-                            try:
-                                success, message = add_repository(app['slug'], "bitrise")
-                                if success:
-                                    st.success(message)
-                                    st.rerun()
-                                else:
-                                    st.warning(message)
-                            except Exception as e:
-                                st.error(f"追加エラー: {e}")
-
-                    st.divider()
-
-                # 一括追加ボタン
-                if st.session_state.selected_bitrise_apps:
-                    st.divider()
-                    st.markdown(f"**選択中: {len(st.session_state.selected_bitrise_apps)}件**")
-                    if st.button("選択したアプリを一括追加", type="primary", key="batch_add_bitrise"):
-                        success_count = 0
-                        error_count = 0
-                        for app_slug in st.session_state.selected_bitrise_apps:
-                            try:
-                                success, _ = add_repository(app_slug, "bitrise")
-                                if success:
-                                    success_count += 1
-                                else:
-                                    error_count += 1
-                            except Exception:
-                                error_count += 1
-
-                        if success_count > 0:
-                            st.success(f"{success_count}件のアプリを追加しました")
-                        if error_count > 0:
-                            st.warning(f"{error_count}件のアプリは追加できませんでした（既存またはエラー）")
-
-                        st.session_state.selected_bitrise_apps.clear()
-                        st.rerun()
 
     st.divider()
 
