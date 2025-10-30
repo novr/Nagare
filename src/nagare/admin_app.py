@@ -229,6 +229,48 @@ def get_bitrise_client():
         return None
 
 
+def get_bitrise_client_from_connection(conn_id: str = None):
+    """指定されたConnectionからBitriseクライアントを取得する
+
+    Args:
+        conn_id: Connection ID。Noneの場合はデフォルト動作
+
+    Returns:
+        BitriseClient or None
+    """
+    from nagare.utils.connections import BitriseConnection
+
+    # Connection IDが指定された場合
+    if conn_id:
+        try:
+            engine = get_database_engine()
+            with engine.connect() as conn:
+                result = conn.execute(
+                    text("SELECT password, host FROM connection WHERE conn_id = :conn_id"),
+                    {"conn_id": conn_id}
+                )
+                row = result.fetchone()
+                if row and row[0]:
+                    api_token = row[0]
+                    base_url = row[1] or "https://api.bitrise.io/v0.1"
+
+                    # スキームがない場合は追加
+                    if base_url and not base_url.startswith(("http://", "https://")):
+                        base_url = f"https://{base_url}"
+
+                    bitrise_conn = BitriseConnection(
+                        api_token=api_token,
+                        base_url=base_url
+                    )
+                    return BitriseClient(connection=bitrise_conn)
+        except Exception as e:
+            st.error(f"Connection '{conn_id}' からの取得エラー: {e}")
+            return None
+
+    # Connection IDが指定されていない場合は、デフォルト
+    return get_bitrise_client()
+
+
 def fetch_bitrise_apps():
     """Bitriseからアプリ一覧を取得する
 
@@ -291,6 +333,10 @@ def fetch_repositories_unified(platform: str, search_params: dict, page: int = 1
         # GitHubのデータを統一形式に変換
         items = []
         for repo in result["repos"]:
+            # ownerの安全な取得
+            owner = repo.get("owner", {})
+            owner_login = owner.get("login", "") if isinstance(owner, dict) else ""
+
             items.append({
                 "id": repo["full_name"],
                 "name": repo["name"],
@@ -300,7 +346,7 @@ def fetch_repositories_unified(platform: str, search_params: dict, page: int = 1
                 "description": repo.get("description", ""),
                 "platform": "github",
                 "metadata": {
-                    "owner": repo.get("owner", {}).get("login", ""),
+                    "owner": owner_login,
                     "private": repo.get("private", False),
                     "language": repo.get("language"),
                     "stars": repo.get("stargazers_count", 0),
@@ -317,7 +363,8 @@ def fetch_repositories_unified(platform: str, search_params: dict, page: int = 1
         }
 
     elif platform == "bitrise":
-        bitrise_client = get_bitrise_client()
+        conn_id = search_params.get("conn_id")
+        bitrise_client = get_bitrise_client_from_connection(conn_id) if conn_id else get_bitrise_client()
         if not bitrise_client:
             return None
 
@@ -950,17 +997,39 @@ def test_connection(connection_id: int, conn_type: str, host: str = None, port: 
 
             # 簡易的なHTTPリクエストテスト
             import requests
-            test_url = host or "https://api.github.com/user"
-            headers = {"Authorization": f"Bearer {password}"}
+
+            # hostからtest_urlを構築（スキームを確認）
+            if host:
+                # スキームがない場合はhttps://を付加
+                if not host.startswith(("http://", "https://")):
+                    test_url = f"https://{host}"
+                else:
+                    test_url = host
+
+                # パスがない場合、プラットフォームに応じたデフォルトエンドポイントを追加
+                if not test_url.endswith(("/user", "/me", "/apps")):
+                    if "github" in host.lower():
+                        test_url = f"{test_url.rstrip('/')}/user"
+                    elif "bitrise" in host.lower():
+                        test_url = f"{test_url.rstrip('/')}/me"
+            else:
+                # hostが未指定の場合はGitHubをデフォルト
+                test_url = "https://api.github.com/user"
+
+            # GitHub APIの場合は"token "プレフィックスを使用、その他は"Bearer "
+            if "github" in test_url.lower():
+                headers = {"Authorization": f"token {password}"}
+            else:
+                headers = {"Authorization": f"Bearer {password}"}
 
             response = requests.get(test_url, headers=headers, timeout=10)
 
             if response.status_code == 200:
-                return True, "✅ 接続成功！", {"status_code": response.status_code}
+                return True, "✅ 接続成功！", {"status_code": response.status_code, "url": test_url}
             elif response.status_code == 401:
-                return False, "❌ 認証失敗（トークンが無効）", {"status_code": response.status_code}
+                return False, "❌ 認証失敗（トークンが無効）", {"status_code": response.status_code, "url": test_url}
             else:
-                return False, f"❌ 接続失敗（ステータス: {response.status_code}）", {"status_code": response.status_code}
+                return False, f"❌ 接続失敗（ステータス: {response.status_code}）", {"status_code": response.status_code, "url": test_url}
 
         elif conn_type == "sqlite":
             # SQLite接続テスト
@@ -988,169 +1057,6 @@ def test_connection(connection_id: int, conn_type: str, host: str = None, port: 
 
     except Exception as e:
         return False, f"❌ 接続失敗: {str(e)}", None
-
-
-def export_connections_to_yaml(include_passwords: bool = False) -> str:
-    """Connectionsを YAML形式でエクスポートする
-
-    Args:
-        include_passwords: パスワードを含めるかどうか
-
-    Returns:
-        YAML形式の文字列
-    """
-    import yaml
-
-    engine = get_database_engine()
-    query = text(
-        """
-        SELECT conn_id, conn_type, description, host, schema, login, password, port, extra
-        FROM connection
-        WHERE conn_type = 'http'
-        ORDER BY conn_id
-        """
-    )
-
-    connections = {}
-    with engine.connect() as conn:
-        result = conn.execute(query)
-        for row in result:
-            conn_data = {
-                "conn_type": row[1],
-                "description": row[2] or "",
-                "host": row[3] or "",
-                "schema": row[4] or "",
-                "login": row[5] or "",
-                "port": int(row[7]) if row[7] else None,
-                "extra": row[8] or "",
-            }
-
-            # パスワードの処理
-            if include_passwords:
-                conn_data["password"] = row[6] or ""
-            else:
-                conn_data["password"] = "*** MASKED ***" if row[6] else ""
-
-            # Noneや空文字列のフィールドを削除
-            conn_data = {k: v for k, v in conn_data.items() if v not in (None, "", 0)}
-
-            connections[row[0]] = conn_data
-
-    # YAML形式に変換
-    yaml_data = {
-        "connections": connections,
-        "exported_at": datetime.now().isoformat(),
-        "exported_by": "Streamlit Admin UI",
-    }
-
-    return yaml.dump(yaml_data, default_flow_style=False, allow_unicode=True, sort_keys=False)
-
-
-def import_connections_from_yaml(yaml_content: str, overwrite: bool = False) -> tuple[int, int, list[str]]:
-    """YAML形式からConnectionsをインポートする
-
-    Args:
-        yaml_content: YAML形式の文字列
-        overwrite: 既存のConnectionを上書きするかどうか
-
-    Returns:
-        (成功数, スキップ数, エラーメッセージリスト)
-    """
-    import yaml
-
-    try:
-        data = yaml.safe_load(yaml_content)
-    except yaml.YAMLError as e:
-        return 0, 0, [f"YAML解析エラー: {e}"]
-
-    if not data or "connections" not in data:
-        return 0, 0, ["無効なYAML形式: 'connections'キーが見つかりません"]
-
-    connections = data["connections"]
-    success_count = 0
-    skip_count = 0
-    errors = []
-
-    engine = get_database_engine()
-
-    for conn_id, conn_data in connections.items():
-        try:
-            # 必須フィールドの確認
-            if "conn_type" not in conn_data:
-                errors.append(f"{conn_id}: conn_typeが指定されていません")
-                continue
-
-            # パスワードがマスクされている場合はスキップ
-            password = conn_data.get("password", "")
-            if password == "*** MASKED ***":
-                errors.append(f"{conn_id}: パスワードがマスクされているためスキップ")
-                skip_count += 1
-                continue
-
-            with engine.begin() as conn:
-                # 既存チェック
-                result = conn.execute(
-                    text("SELECT id FROM connection WHERE conn_id = :conn_id"),
-                    {"conn_id": conn_id}
-                )
-                existing = result.fetchone()
-
-                if existing and not overwrite:
-                    skip_count += 1
-                    continue
-
-                if existing and overwrite:
-                    # 更新
-                    conn.execute(
-                        text(
-                            """
-                            UPDATE connection
-                            SET conn_type = :conn_type, description = :description, host = :host,
-                                schema = :schema, login = :login, password = :password,
-                                port = :port, extra = :extra
-                            WHERE conn_id = :conn_id
-                            """
-                        ),
-                        {
-                            "conn_id": conn_id,
-                            "conn_type": conn_data.get("conn_type", "http"),
-                            "description": conn_data.get("description", ""),
-                            "host": conn_data.get("host", ""),
-                            "schema": conn_data.get("schema", ""),
-                            "login": conn_data.get("login", ""),
-                            "password": password,
-                            "port": conn_data.get("port"),
-                            "extra": conn_data.get("extra", ""),
-                        },
-                    )
-                else:
-                    # 新規追加
-                    conn.execute(
-                        text(
-                            """
-                            INSERT INTO connection (conn_id, conn_type, description, host, schema, login, password, port, extra)
-                            VALUES (:conn_id, :conn_type, :description, :host, :schema, :login, :password, :port, :extra)
-                            """
-                        ),
-                        {
-                            "conn_id": conn_id,
-                            "conn_type": conn_data.get("conn_type", "http"),
-                            "description": conn_data.get("description", ""),
-                            "host": conn_data.get("host", ""),
-                            "schema": conn_data.get("schema", ""),
-                            "login": conn_data.get("login", ""),
-                            "password": password,
-                            "port": conn_data.get("port"),
-                            "extra": conn_data.get("extra", ""),
-                        },
-                    )
-
-                success_count += 1
-
-        except Exception as e:
-            errors.append(f"{conn_id}: {str(e)}")
-
-    return success_count, skip_count, errors
 
 
 # メインUI
@@ -1336,6 +1242,7 @@ elif page == "📦 リポジトリ管理":
                 search_params["search_value"] = search_value
 
             else:  # bitrise
+                search_params["conn_id"] = conn_id
                 st.info("📱 Bitriseアプリ一覧を取得します")
 
             # 検索ボタン
@@ -1717,117 +1624,6 @@ elif page == "🔌 Connections管理":
     except Exception as e:
         st.error(f"Connections取得エラー: {e}")
 
-    # エクスポート/インポート機能
-    st.divider()
-    st.subheader("📦 エクスポート/インポート")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("**📤 エクスポート（バックアップ）**")
-        include_passwords = st.checkbox(
-            "パスワードを含める",
-            value=False,
-            help="⚠️ パスワードを含める場合は、ファイルを安全に保管してください"
-        )
-
-        if st.button("YAMLにエクスポート", type="primary"):
-            try:
-                yaml_content = export_connections_to_yaml(include_passwords=include_passwords)
-                st.download_button(
-                    label="📥 connections.ymlをダウンロード",
-                    data=yaml_content,
-                    file_name="connections.yml",
-                    mime="text/yaml",
-                )
-                st.success("エクスポート成功！上のボタンからダウンロードしてください。")
-            except Exception as e:
-                st.error(f"エクスポートエラー: {e}")
-
-    with col2:
-        st.markdown("**📥 インポート（復元）**")
-        uploaded_file = st.file_uploader(
-            "YAMLファイルを選択",
-            type=["yml", "yaml"],
-            help="connections.ymlファイルをアップロード"
-        )
-
-        if uploaded_file is not None:
-            overwrite = st.checkbox(
-                "既存のConnectionを上書き",
-                value=False,
-                help="同じConnection IDが存在する場合に上書きします"
-            )
-
-            if st.button("インポート実行", type="primary"):
-                try:
-                    yaml_content = uploaded_file.read().decode("utf-8")
-                    success_count, skip_count, errors = import_connections_from_yaml(
-                        yaml_content, overwrite=overwrite
-                    )
-
-                    if success_count > 0:
-                        st.success(f"✅ {success_count}件のConnectionをインポートしました")
-                    if skip_count > 0:
-                        st.warning(f"⚠️ {skip_count}件をスキップしました")
-                    if errors:
-                        st.error(f"❌ エラー: {len(errors)}件")
-                        with st.expander("エラー詳細を表示"):
-                            for error in errors:
-                                st.text(error)
-
-                    if success_count > 0:
-                        st.rerun()
-
-                except Exception as e:
-                    st.error(f"インポートエラー: {e}")
-
-    # 使用例
-    with st.expander("💡 使用方法とベストプラクティス"):
-        st.markdown("""
-        ### エクスポート（バックアップ）
-        1. **パスワードなし**: Git管理用（推奨）
-           - パスワードをマスクしてエクスポート
-           - GitHubなどにコミット可能
-           - チームで設定を共有
-
-        2. **パスワードあり**: フルバックアップ
-           - すべての認証情報を含む
-           - 安全な場所に保管（1Password、Vault等）
-           - 環境の完全な復元が可能
-
-        ### インポート（復元）
-        1. **新規環境セットアップ**
-           - connections.ymlをアップロード
-           - パスワードは手動で入力
-           - 「上書き」は不要
-
-        2. **既存環境の更新**
-           - 「上書き」をチェック
-           - 既存のConnectionが更新される
-
-        ### GitOps ワークフロー例
-        ```bash
-        # 1. 設定をエクスポート（パスワードなし）
-        # Streamlit UI → connections.yml をダウンロード
-
-        # 2. Gitにコミット
-        git add connections.yml
-        git commit -m "Update connections configuration"
-        git push
-
-        # 3. 他の環境でインポート
-        # connections.yml をアップロード
-        # パスワードは環境変数または手動設定
-        ```
-
-        ### セキュリティのベストプラクティス
-        - ⚠️ パスワードを含むYAMLファイルはGitにコミットしない
-        - ✅ パスワードなしのYAMLはGit管理OK
-        - ✅ パスワードは環境変数やSecrets管理ツールで管理
-        - ✅ 定期的にバックアップを取得
-        """)
-
 # 実行履歴
 elif page == "📈 実行履歴":
     st.header("📈 パイプライン実行履歴")
@@ -1900,18 +1696,6 @@ elif page == "⚙️ 設定":
                     else:
                         st.code(f"App ID: {github_conn.app_id}\nInstallation ID: {github_conn.installation_id}", language="text")
 
-                # 接続テスト
-                if st.button("🔍 GitHub接続テスト", key="test_github"):
-                    with st.spinner("GitHub APIに接続中..."):
-                        try:
-                            client = GitHubClient(connection=github_conn)
-                            # 簡単な接続テスト（認証ユーザー情報取得）
-                            user = client.github.get_user()
-                            st.success(f"✅ 接続成功！ ユーザー: {user.login}")
-                            client.close()
-                        except Exception as e:
-                            st.error(f"❌ 接続失敗: {e}")
-
             except Exception as e:
                 st.error(f"GitHub設定の読み込みエラー: {e}")
 
@@ -1931,19 +1715,6 @@ elif page == "⚙️ 設定":
                     st.metric("データベース", db_conn.database)
 
                 st.code(f"User: {db_conn.user}\nPassword: {'*' * len(db_conn.password) if db_conn.password else 'Not set'}", language="text")
-
-                # 接続テスト
-                if st.button("🔍 Database接続テスト", key="test_database"):
-                    with st.spinner("PostgreSQLに接続中..."):
-                        try:
-                            engine = get_database_engine()
-                            with engine.connect() as conn:
-                                result = conn.execute(text("SELECT version()"))
-                                version = result.fetchone()[0]
-                                st.success(f"✅ 接続成功！")
-                                st.info(f"PostgreSQL version: {version[:50]}...")
-                        except Exception as e:
-                            st.error(f"❌ 接続失敗: {e}")
 
             except Exception as e:
                 st.error(f"Database設定の読み込みエラー: {e}")
