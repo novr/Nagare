@@ -9,6 +9,7 @@ DatabaseConnectionから接続情報を受け取る。
 import logging
 from collections.abc import Generator
 from contextlib import contextmanager
+from datetime import timezone
 from typing import Any
 
 from sqlalchemy import create_engine, text
@@ -157,9 +158,11 @@ class DatabaseClient:
             )
             result = session.execute(query, {"repository_name": repository_name})
             row = result.fetchone()
-            if row:
-                logger.debug(f"Latest run timestamp for {repository_name}: {row[0]}")
-                return row[0]
+            if row and row[0]:
+                # PostgreSQL TIMESTAMP列はnaiveなので、UTCとして明示的に設定
+                timestamp = row[0].replace(tzinfo=timezone.utc)
+                logger.debug(f"Latest run timestamp for {repository_name}: {timestamp}")
+                return timestamp
             else:
                 logger.debug(f"No runs found for {repository_name} (initial fetch)")
                 return None
@@ -203,8 +206,10 @@ class DatabaseClient:
 
             row = result.fetchone()
             if row and row[0]:
-                logger.debug(f"Oldest run timestamp for source '{source}': {row[0]}")
-                return row[0]
+                # PostgreSQL TIMESTAMP列はnaiveなので、UTCとして明示的に設定
+                timestamp = row[0].replace(tzinfo=timezone.utc)
+                logger.debug(f"Oldest run timestamp for source '{source}': {timestamp}")
+                return timestamp
             else:
                 logger.debug(f"No runs found for source '{source}' (initial fetch)")
                 return None
