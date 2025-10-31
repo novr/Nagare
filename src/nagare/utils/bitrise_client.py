@@ -115,7 +115,7 @@ class BitriseClient:
         method: str,
         endpoint: str,
         params: dict[str, Any] | None = None,
-        timeout: int = 30,
+        timeout: tuple[int, int] | int = (10, 30),
     ) -> dict[str, Any]:
         """APIリクエストを実行する
 
@@ -123,7 +123,8 @@ class BitriseClient:
             method: HTTPメソッド（GET, POST, etc.）
             endpoint: APIエンドポイント（/apps など）
             params: クエリパラメータ
-            timeout: タイムアウト秒数
+            timeout: タイムアウト（接続, 読み取り）または合計秒数
+                    デフォルト: (10, 30) = 接続10秒、読み取り30秒
 
         Returns:
             APIレスポンス（JSON）

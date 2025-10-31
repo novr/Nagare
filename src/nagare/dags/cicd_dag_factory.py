@@ -144,6 +144,7 @@ def create_cicd_collection_dag(
                 platform_config.fetch_runs_batch,
                 conn_id=platform_config.connection_id,
             ),
+            execution_timeout=timedelta(minutes=10),  # バッチタスク個別タイムアウト
         ).expand(
             op_kwargs=task_fetch_repositories.output
         )
