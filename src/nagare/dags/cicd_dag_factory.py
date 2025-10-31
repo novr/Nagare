@@ -29,6 +29,7 @@ Usage:
 """
 
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any, Callable
 
 from airflow import DAG
