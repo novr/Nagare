@@ -113,9 +113,10 @@ def _process_items_with_error_handling(
 def fetch_repositories(
     db: DatabaseClientProtocol, source: str | None = None, batch_size: int | None = None, **context: Any
 ) -> list[dict[str, Any]]:
-    """監視対象のリポジトリリストを取得し、バッチに分割する
+    """監視対象のリポジトリリストを取得し、期間別バッチに分割する
 
     PostgreSQLから監視対象リポジトリを取得し、Dynamic Task Mapping用にバッチに分割する。
+    前回取得時を起点に7日ごとの期間でも分割することで、データ量を削減する。
 
     Args:
         db: DatabaseClientインスタンス（必須、外部から注入される）
@@ -125,8 +126,8 @@ def fetch_repositories(
 
     Returns:
         op_kwargsの辞書リスト（Dynamic Task Mappingで展開される）
-        GitHubの場合: [{"batch_repos": [repo1, repo2, ...]}, ...]
-        Bitriseの場合: [{"batch_apps": [app1, app2, ...]}, ...]
+        GitHubの場合: [{"batch_repos": [...], "since": "...", "until": "..."}, ...]
+        Bitriseの場合: [{"batch_apps": [...], "since": "...", "until": "..."}, ...]
     """
     # データベースから取得
     repositories = db.get_repositories(source=source)
@@ -138,16 +139,79 @@ def fetch_repositories(
     if batch_size is None:
         batch_size = FetchConfig.BATCH_SIZE
 
+    # 期間を生成（前回取得時を起点に7日ごと）
+    # 全リポジトリの最新タイムスタンプを取得（代表値として最初のリポジトリを使用）
+    now = datetime.utcnow()
+
+    # 最も古い取得時刻を探す（初回実行の場合はNone）
+    oldest_timestamp = None
+    if repositories:
+        for repo in repositories[:min(5, len(repositories))]:  # 最初の5件をサンプリング
+            if source == SourceType.GITHUB_ACTIONS:
+                ts = db.get_latest_run_timestamp(repo["owner"], repo["repo"])
+            else:
+                # Bitriseの場合は全リポジトリで同じ期間を使用
+                continue
+            if ts and (oldest_timestamp is None or ts < oldest_timestamp):
+                oldest_timestamp = ts
+
+    # 期間を設定
+    if oldest_timestamp is None:
+        # 初回実行: 過去30日を7日ごとに分割
+        logger.info("Initial fetch detected. Splitting into 30-day periods (7 days each)")
+        start_date = now - timedelta(days=30)
+        periods = []
+        for i in range(5):  # 30日を6日×5期間に分割（最後の期間が余りを含む）
+            period_start = start_date + timedelta(days=i * 6)
+            period_end = start_date + timedelta(days=(i + 1) * 6) if i < 4 else now
+            periods.append({
+                "since": period_start.isoformat(),
+                "until": period_end.isoformat()
+            })
+    else:
+        # 2回目以降: 前回取得時から現在まで7日ごとに分割
+        days_since_last = (now - oldest_timestamp).days
+        logger.info(f"Incremental fetch detected. Last fetch was {days_since_last} days ago")
+
+        if days_since_last <= 7:
+            # 7日以内なら1期間のみ
+            periods = [{
+                "since": oldest_timestamp.isoformat(),
+                "until": now.isoformat()
+            }]
+        else:
+            # 7日ごとに分割
+            periods = []
+            current_start = oldest_timestamp
+            while current_start < now:
+                current_end = min(current_start + timedelta(days=7), now)
+                periods.append({
+                    "since": current_start.isoformat(),
+                    "until": current_end.isoformat()
+                })
+                current_start = current_end
+
+    logger.info(f"Generated {len(periods)} time periods for data fetching")
+
     # リポジトリをバッチに分割してop_kwargs形式に変換
     # GitHubとBitriseでパラメータ名が異なるため、sourceで判定
     param_name = "batch_repos" if source == SourceType.GITHUB_ACTIONS else "batch_apps"
 
     batch_op_kwargs = []
     for i in range(0, len(repositories), batch_size):
-        batch = repositories[i:i + batch_size]
-        batch_op_kwargs.append({param_name: batch})
+        repo_batch = repositories[i:i + batch_size]
+        # 各リポジトリバッチ × 各期間の組み合わせを生成
+        for period in periods:
+            batch_op_kwargs.append({
+                param_name: repo_batch,
+                "since": period["since"],
+                "until": period["until"]
+            })
 
-    logger.info(f"Split into {len(batch_op_kwargs)} batches (batch_size={batch_size})")
+    logger.info(
+        f"Split into {len(batch_op_kwargs)} batches "
+        f"({len(range(0, len(repositories), batch_size))} repo batches × {len(periods)} periods)"
+    )
 
     # XComで次のタスクに渡す（後方互換性のため元のリストも保持）
     ti: TaskInstance = context["ti"]
@@ -186,16 +250,20 @@ def fetch_workflow_runs_batch(
     github_client: GitHubClientProtocol,
     db: DatabaseClientProtocol,
     batch_repos: list[dict[str, str]],
+    since: str | None = None,
+    until: str | None = None,
     **context: Any
 ) -> None:
     """リポジトリのバッチでワークフロー実行データを取得する（並列処理用）
 
-    Dynamic Task Mappingで使用される。各タスクは1つのバッチ（リポジトリのリスト）を処理する。
+    Dynamic Task Mappingで使用される。各タスクは1つのバッチ（リポジトリのリスト）と期間を処理する。
 
     Args:
         github_client: GitHubClientインスタンス
         db: DatabaseClientインスタンス
         batch_repos: 処理対象のリポジトリリスト
+        since: 取得開始日時（ISO8601形式）
+        until: 取得終了日時（ISO8601形式）
         **context: Airflowのコンテキスト
     """
     ti: TaskInstance = context["ti"]
@@ -206,12 +274,16 @@ def fetch_workflow_runs_batch(
 
     # map_indexを取得してログに使用（Dynamic Task Mappingで自動設定される）
     map_index = context.get("task_instance").map_index
+    period_info = f" (period: {since} to {until})" if since and until else ""
     logger.info(
-        f"Processing batch {map_index}: {len(batch_repos)} repositories"
+        f"Processing batch {map_index}: {len(batch_repos)} repositories{period_info}"
     )
 
     _fetch_workflow_runs_impl(
-        batch_repos, github_client, db, ti, xcom_suffix=f"_batch_{map_index}"
+        batch_repos, github_client, db, ti,
+        xcom_suffix=f"_batch_{map_index}",
+        since=since,
+        until=until
     )
 
 
@@ -261,7 +333,9 @@ def _fetch_workflow_runs_impl(
     github_client: GitHubClientProtocol,
     db: DatabaseClientProtocol,
     ti: TaskInstance,
-    xcom_suffix: str = ""
+    xcom_suffix: str = "",
+    since: str | None = None,
+    until: str | None = None
 ) -> None:
     """ワークフロー実行データ取得の実装（共通処理）
 
@@ -271,6 +345,8 @@ def _fetch_workflow_runs_impl(
         db: DatabaseClientインスタンス
         ti: TaskInstanceインスタンス
         xcom_suffix: XComキーに付加するサフィックス（バッチ処理用）
+        since: 取得開始日時（ISO8601形式、優先使用）
+        until: 取得終了日時（ISO8601形式）
     """
 
     if not repositories:
@@ -293,20 +369,31 @@ def _fetch_workflow_runs_impl(
         owner = repo["owner"]
         repo_name = repo["repo"]
 
-        # リポジトリの最新実行タイムスタンプを取得
-        latest_timestamp = db.get_latest_run_timestamp(owner, repo_name)
-
-        if latest_timestamp is None:
-            # 初回実行: 全件取得
-            logger.info(f"Initial fetch for {owner}/{repo_name} (fetching all runs)")
-            created_after = None
-        else:
-            # 2回目以降: 差分取得
+        # 期間パラメータが指定されている場合はそれを使用、なければ既存のロジック
+        if since is not None:
+            # 期間指定あり: バッチの期間を使用
+            created_after_str = since
+            created_after = datetime.fromisoformat(since.replace('Z', '+00:00'))
             logger.info(
-                f"Incremental fetch for {owner}/{repo_name} "
-                f"(fetching runs after {latest_timestamp.isoformat()})"
+                f"Fetching {owner}/{repo_name} for period {since} to {until}"
             )
-            created_after = latest_timestamp
+        else:
+            # 期間指定なし: 既存の差分取得ロジック
+            latest_timestamp = db.get_latest_run_timestamp(owner, repo_name)
+
+            if latest_timestamp is None:
+                # 初回実行: 全件取得
+                logger.info(f"Initial fetch for {owner}/{repo_name} (fetching all runs)")
+                created_after = None
+                created_after_str = None
+            else:
+                # 2回目以降: 差分取得
+                logger.info(
+                    f"Incremental fetch for {owner}/{repo_name} "
+                    f"(fetching runs after {latest_timestamp.isoformat()})"
+                )
+                created_after = latest_timestamp
+                created_after_str = latest_timestamp.isoformat()
 
         runs = github_client.get_workflow_runs(
             owner=owner, repo=repo_name, created_after=created_after
