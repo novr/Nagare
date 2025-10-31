@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 # 期間バッチング設定
-SAMPLE_SIZE = 5  # タイムスタンプ取得時のサンプリング件数
 INITIAL_FETCH_DAYS = 30  # 初回取得の総日数
 INITIAL_PERIOD_DAYS = 6  # 初回取得時の1期間の日数
 INITIAL_PERIODS = 5  # 初回取得の期間数
@@ -147,32 +146,18 @@ def fetch_repositories(
         batch_size = FetchConfig.BATCH_SIZE
 
     # 期間を生成（前回取得時を起点に7日ごと）
-    # 全リポジトリの最新タイムスタンプを取得（代表値として最初のリポジトリを使用）
+    # データベースから全リポジトリの最も古いタイムスタンプを直接取得
     now = datetime.now(timezone.utc)
 
-    # 最も古い取得時刻を探す（初回実行の場合はNone）
-    oldest_timestamp = None
-    if repositories:
-        sample_count = min(SAMPLE_SIZE, len(repositories))
-        for repo in repositories[:sample_count]:
-            try:
-                if source == SourceType.GITHUB_ACTIONS:
-                    ts = db.get_latest_run_timestamp(repo["owner"], repo["repo"])
-                else:
-                    # Bitriseの場合もrepository_nameから取得
-                    repo_name = repo["repository_name"]
-                    owner, repo_part = repo_name.split("/", 1) if "/" in repo_name else (repo_name, repo_name)
-                    ts = db.get_latest_run_timestamp(owner, repo_part)
-
-                if ts and (oldest_timestamp is None or ts < oldest_timestamp):
-                    oldest_timestamp = ts
-            except Exception as e:
-                # エラーは警告ログのみで処理を継続
-                repo_identifier = f"{repo.get('owner', '')}/{repo.get('repo', '')}" if source == SourceType.GITHUB_ACTIONS else repo.get("repository_name", "unknown")
-                logger.warning(
-                    f"Failed to get timestamp for {repo_identifier}: {e}"
-                )
-                continue
+    # SQLで最小値を直接取得（サンプリング不要、正確で高速）
+    try:
+        oldest_timestamp = db.get_oldest_run_timestamp(source=source)
+    except Exception as e:
+        logger.warning(
+            f"Failed to get oldest run timestamp for source '{source}': {e}. "
+            f"Assuming initial fetch."
+        )
+        oldest_timestamp = None
 
     # 期間を設定
     if oldest_timestamp is None:

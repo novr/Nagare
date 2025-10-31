@@ -166,6 +166,51 @@ class DatabaseClient:
         finally:
             session.close()
 
+    def get_oldest_run_timestamp(self, source: str | None = None) -> Any:
+        """指定ソースの最も古いパイプライン実行タイムスタンプを取得する
+
+        サンプリングではなく、SQLで全リポジトリの最小値を直接取得する。
+        期間バッチング用の基準日時として使用。
+
+        Args:
+            source: ソースタイプでフィルタ（オプション）。例: "github_actions", "bitrise"
+
+        Returns:
+            最も古い started_at タイムスタンプ。データがない場合はNone
+        """
+        session = self.session_factory()
+        try:
+            if source:
+                query = text(
+                    """
+                    SELECT MIN(pr.started_at)
+                    FROM pipeline_runs pr
+                    JOIN repositories r ON pr.repository_id = r.id
+                    WHERE r.active = TRUE AND r.source = :source
+                    """
+                )
+                result = session.execute(query, {"source": source})
+            else:
+                query = text(
+                    """
+                    SELECT MIN(pr.started_at)
+                    FROM pipeline_runs pr
+                    JOIN repositories r ON pr.repository_id = r.id
+                    WHERE r.active = TRUE
+                    """
+                )
+                result = session.execute(query)
+
+            row = result.fetchone()
+            if row and row[0]:
+                logger.debug(f"Oldest run timestamp for source '{source}': {row[0]}")
+                return row[0]
+            else:
+                logger.debug(f"No runs found for source '{source}' (initial fetch)")
+                return None
+        finally:
+            session.close()
+
     def upsert_pipeline_runs(self, runs: list[dict[str, Any]]) -> None:
         """pipeline_runsテーブルにデータをUPSERTする
 
