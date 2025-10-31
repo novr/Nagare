@@ -117,17 +117,24 @@ def transform_data(**context: Any) -> None:
     all_workflow_runs = []
 
     if batch_task_id:
-        # Dynamic Task Mappingの全インスタンスからデータを取得
-        # map_indexes を指定しないと、リストとして全てのマップインスタンスのデータが返される
-        batch_results = ti.xcom_pull(task_ids=batch_task_id, key=XComKeys.WORKFLOW_RUNS)
+        # Dynamic Task Mappingの各インスタンスからデータを取得
+        # サフィックス付きキーパターン: workflow_runs_batch_0, workflow_runs_batch_1, ...
+        batch_count = 0
+        for i in range(100):  # 最大100バッチをサポート
+            batch_key = f"{XComKeys.WORKFLOW_RUNS}_batch_{i}"
+            batch_data = ti.xcom_pull(task_ids=batch_task_id, key=batch_key)
 
-        if batch_results:
-            # batch_resultsは[[run1, run2], [run3, run4], ...] のような構造
-            if isinstance(batch_results, list):
-                for batch_data in batch_results:
-                    if isinstance(batch_data, list):
-                        all_workflow_runs.extend(batch_data)
-                logger.info(f"Retrieved {len(all_workflow_runs)} runs from {batch_task_id} (Dynamic Task Mapping)")
+            if batch_data is None:
+                # このバッチ番号のデータが存在しない = 全バッチを取得完了
+                break
+
+            if isinstance(batch_data, list):
+                all_workflow_runs.extend(batch_data)
+                batch_count += 1
+                logger.info(f"Retrieved {len(batch_data)} runs from {batch_task_id} batch {i}")
+
+        if batch_count > 0:
+            logger.info(f"Total: Retrieved {len(all_workflow_runs)} runs from {batch_count} batches (Dynamic Task Mapping)")
 
     # 後方互換性: 古い固定タスクIDからも取得を試みる
     if not all_workflow_runs:
