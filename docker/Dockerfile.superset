@@ -20,4 +20,11 @@ RUN pip3 install --no-cache-dir psycopg2-binary
 RUN PYTHON_VERSION=$(/app/.venv/bin/python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')") && \
     ln -sf /usr/local/lib/python${PYTHON_VERSION}/site-packages/psycopg2* /app/.venv/lib/python${PYTHON_VERSION}/site-packages/
 
+# 初期化スクリプトをコピー
+COPY docker/superset-init.sh /app/superset-init.sh
+RUN chmod +x /app/superset-init.sh
+
 USER superset
+
+# カスタムentrypointを設定（管理者ユーザーの自動作成）
+ENTRYPOINT ["/app/superset-init.sh"]
