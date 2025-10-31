@@ -2,7 +2,7 @@
 
 import logging
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, TypeVar
 
 from airflow.models import TaskInstance
@@ -15,6 +15,13 @@ from nagare.utils.xcom_utils import check_xcom_size
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+# 期間バッチング設定
+SAMPLE_SIZE = 5  # タイムスタンプ取得時のサンプリング件数
+INITIAL_FETCH_DAYS = 30  # 初回取得の総日数
+INITIAL_PERIOD_DAYS = 6  # 初回取得時の1期間の日数
+INITIAL_PERIODS = 5  # 初回取得の期間数
+INCREMENTAL_PERIOD_DAYS = 7  # 増分取得時の1期間の日数
 
 
 def _process_items_with_error_handling(
@@ -141,50 +148,71 @@ def fetch_repositories(
 
     # 期間を生成（前回取得時を起点に7日ごと）
     # 全リポジトリの最新タイムスタンプを取得（代表値として最初のリポジトリを使用）
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     # 最も古い取得時刻を探す（初回実行の場合はNone）
     oldest_timestamp = None
     if repositories:
-        for repo in repositories[:min(5, len(repositories))]:  # 最初の5件をサンプリング
-            if source == SourceType.GITHUB_ACTIONS:
-                ts = db.get_latest_run_timestamp(repo["owner"], repo["repo"])
-            else:
-                # Bitriseの場合は全リポジトリで同じ期間を使用
+        sample_count = min(SAMPLE_SIZE, len(repositories))
+        for repo in repositories[:sample_count]:
+            try:
+                if source == SourceType.GITHUB_ACTIONS:
+                    ts = db.get_latest_run_timestamp(repo["owner"], repo["repo"])
+                else:
+                    # Bitriseの場合もrepository_nameから取得
+                    repo_name = repo["repository_name"]
+                    owner, repo_part = repo_name.split("/", 1) if "/" in repo_name else (repo_name, repo_name)
+                    ts = db.get_latest_run_timestamp(owner, repo_part)
+
+                if ts and (oldest_timestamp is None or ts < oldest_timestamp):
+                    oldest_timestamp = ts
+            except Exception as e:
+                # エラーは警告ログのみで処理を継続
+                repo_identifier = f"{repo.get('owner', '')}/{repo.get('repo', '')}" if source == SourceType.GITHUB_ACTIONS else repo.get("repository_name", "unknown")
+                logger.warning(
+                    f"Failed to get timestamp for {repo_identifier}: {e}"
+                )
                 continue
-            if ts and (oldest_timestamp is None or ts < oldest_timestamp):
-                oldest_timestamp = ts
 
     # 期間を設定
     if oldest_timestamp is None:
-        # 初回実行: 過去30日を7日ごとに分割
-        logger.info("Initial fetch detected. Splitting into 30-day periods (7 days each)")
-        start_date = now - timedelta(days=30)
+        # 初回実行: 過去30日を6日×5期間に分割
+        logger.info(
+            f"Initial fetch detected. Splitting {INITIAL_FETCH_DAYS} days into "
+            f"{INITIAL_PERIODS} periods ({INITIAL_PERIOD_DAYS} days each)"
+        )
+        start_date = now - timedelta(days=INITIAL_FETCH_DAYS)
         periods = []
-        for i in range(5):  # 30日を6日×5期間に分割（最後の期間が余りを含む）
-            period_start = start_date + timedelta(days=i * 6)
-            period_end = start_date + timedelta(days=(i + 1) * 6) if i < 4 else now
-            periods.append({
-                "since": period_start.isoformat(),
-                "until": period_end.isoformat()
-            })
+        for i in range(INITIAL_PERIODS):
+            period_start = start_date + timedelta(days=i * INITIAL_PERIOD_DAYS)
+            # 最後の期間は残り日数を全て含む
+            if i < INITIAL_PERIODS - 1:
+                period_end = start_date + timedelta(days=(i + 1) * INITIAL_PERIOD_DAYS)
+            else:
+                period_end = now
+            # 空の期間をスキップ
+            if period_start < now:
+                periods.append({
+                    "since": period_start.isoformat(),
+                    "until": period_end.isoformat()
+                })
     else:
         # 2回目以降: 前回取得時から現在まで7日ごとに分割
         days_since_last = (now - oldest_timestamp).days
         logger.info(f"Incremental fetch detected. Last fetch was {days_since_last} days ago")
 
-        if days_since_last <= 7:
-            # 7日以内なら1期間のみ
+        if days_since_last <= INCREMENTAL_PERIOD_DAYS:
+            # 期間内なら1期間のみ
             periods = [{
                 "since": oldest_timestamp.isoformat(),
                 "until": now.isoformat()
             }]
         else:
-            # 7日ごとに分割
+            # 指定日数ごとに分割
             periods = []
             current_start = oldest_timestamp
             while current_start < now:
-                current_end = min(current_start + timedelta(days=7), now)
+                current_end = min(current_start + timedelta(days=INCREMENTAL_PERIOD_DAYS), now)
                 periods.append({
                     "since": current_start.isoformat(),
                     "until": current_end.isoformat()
@@ -373,7 +401,8 @@ def _fetch_workflow_runs_impl(
         if since is not None:
             # 期間指定あり: バッチの期間を使用
             created_after_str = since
-            created_after = datetime.fromisoformat(since.replace('Z', '+00:00'))
+            # ISO8601形式の文字列をパース（タイムゾーン情報を含む）
+            created_after = datetime.fromisoformat(since)
             logger.info(
                 f"Fetching {owner}/{repo_name} for period {since} to {until}"
             )
@@ -516,6 +545,8 @@ def _fetch_bitrise_builds_impl(
     db: DatabaseClientProtocol,
     ti: TaskInstance,
     xcom_suffix: str = "",
+    since: str | None = None,
+    until: str | None = None,
 ) -> None:
     """Bitriseビルドデータを取得する内部実装（バッチ処理対応）
 
@@ -525,6 +556,8 @@ def _fetch_bitrise_builds_impl(
         db: DatabaseClientインスタンス
         ti: TaskInstanceインスタンス
         xcom_suffix: XComキーのサフィックス（バッチ処理時に使用）
+        since: 取得開始日時（ISO8601形式、オプショナル）
+        until: 取得終了日時（ISO8601形式、オプショナル）
     """
     all_builds = []
     error_stats = {
@@ -539,27 +572,42 @@ def _fetch_bitrise_builds_impl(
         app_slug = app["source_repository_id"]
         repository_name = app["repository_name"]  # GitHub repo名（表示用）
         try:
-            logger.info(f"Fetching builds for Bitrise app: {repository_name} (app_slug: {app_slug})")
-
-            # 最新のタイムスタンプを取得（差分取得用）
             # repository_nameを"owner/repo"形式に分割
             owner, repo = repository_name.split("/", 1) if "/" in repository_name else (repository_name, repository_name)
-            latest_timestamp = db.get_latest_run_timestamp(owner, repo)
+
+            # 期間パラメータが指定されている場合はそれを使用、なければ既存のロジック
+            if since is not None:
+                # 期間指定あり: バッチの期間を使用
+                after_date = datetime.fromisoformat(since)
+                logger.info(
+                    f"Fetching builds for {repository_name} for period {since} to {until}"
+                )
+            else:
+                # 期間指定なし: 既存の差分取得ロジック
+                logger.info(f"Fetching builds for Bitrise app: {repository_name} (app_slug: {app_slug})")
+                after_date = None
+                try:
+                    latest_timestamp = db.get_latest_run_timestamp(owner, repo)
+                    if latest_timestamp:
+                        after_date = latest_timestamp
+                        logger.info(f"Fetching builds after {latest_timestamp} for {app_slug}")
+                    else:
+                        logger.info(f"Fetching initial builds for {repository_name}")
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to get timestamp for {owner}/{repo}: {e}. "
+                        f"Fetching all recent builds."
+                    )
 
             # ビルドを取得
-            if latest_timestamp:
-                # 差分取得
-                logger.info(f"Fetching builds after {latest_timestamp} for {app_slug}")
-                builds = bitrise_client.get_builds(app_slug, limit=50)
-                # 最新タイムスタンプ以降のビルドのみフィルタ
+            builds = bitrise_client.get_builds(app_slug, limit=50)
+
+            # after_dateが指定されている場合はフィルタ
+            if after_date:
                 builds = [
                     b for b in builds
-                    if datetime.fromisoformat(b["triggered_at"].replace("Z", "+00:00")) > latest_timestamp
+                    if datetime.fromisoformat(b["triggered_at"].replace("Z", "+00:00")) > after_date
                 ]
-            else:
-                # 初回取得
-                logger.info(f"Fetching initial builds for {repository_name}")
-                builds = bitrise_client.get_builds(app_slug, limit=50)
 
             logger.info(f"Fetched {len(builds)} builds from {repository_name}")
 
@@ -643,16 +691,20 @@ def fetch_bitrise_builds_batch(
     bitrise_client: BitriseClientProtocol,
     db: DatabaseClientProtocol,
     batch_apps: list[dict[str, Any]],
+    since: str | None = None,
+    until: str | None = None,
     **context: Any,
 ) -> None:
     """Bitriseビルドデータをバッチ単位で取得する
 
-    Dynamic Task Mappingで使用される。各タスクは1つのバッチ（アプリのリスト）を処理する。
+    Dynamic Task Mappingで使用される。各タスクは1つのバッチ（アプリのリスト）と期間を処理する。
 
     Args:
         bitrise_client: BitriseClientインスタンス
         db: DatabaseClientインスタンス
         batch_apps: 処理対象のアプリリスト
+        since: 取得開始日時（ISO8601形式、オプショナル）
+        until: 取得終了日時（ISO8601形式、オプショナル）
         **context: Airflowコンテキスト（tiを含む）
     """
     ti: TaskInstance = context["ti"]
@@ -663,10 +715,14 @@ def fetch_bitrise_builds_batch(
 
     # map_indexを取得してログに使用（Dynamic Task Mappingで自動設定される）
     map_index = context.get("task_instance").map_index
+    period_info = f" (period: {since} to {until})" if since and until else ""
     logger.info(
-        f"Processing batch {map_index}: {len(batch_apps)} apps"
+        f"Processing batch {map_index}: {len(batch_apps)} apps{period_info}"
     )
 
     _fetch_bitrise_builds_impl(
-        batch_apps, bitrise_client, db, ti, xcom_suffix=f"_batch_{map_index}"
+        batch_apps, bitrise_client, db, ti,
+        xcom_suffix=f"_batch_{map_index}",
+        since=since,
+        until=until
     )
