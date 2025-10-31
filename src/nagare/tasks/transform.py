@@ -157,6 +157,10 @@ def transform_data(**context: Any) -> None:
             logger.info(f"Retrieved {len(all_workflow_runs)} runs from legacy task ID")
 
     if all_workflow_runs:
+        # デバッグ: 最初のアイテムのキーを表示
+        if len(all_workflow_runs) > 0:
+            logger.info(f"Sample workflow run keys: {list(all_workflow_runs[0].keys())[:10]}")
+
         transformed_runs = _transform_items_with_error_handling(
             items=all_workflow_runs,
             transform_func=_transform_workflow_run,
@@ -213,9 +217,23 @@ def _transform_workflow_run(run: dict[str, Any]) -> dict[str, Any]:
         data_type="workflow run",
     )
 
-    # ステータスをマッピング
+    # ステータスをマッピング（GitHub ActionsまたはBitrise）
     run_status = run.get("status", "unknown")
-    if run_status == GitHubStatus.COMPLETED:
+
+    # Bitriseは整数ステータス: 0=in_progress, 1=success, 2=failed, 3/4=aborted
+    if isinstance(run_status, int):
+        if run_status == 0:
+            status = PipelineStatus.IN_PROGRESS
+        elif run_status == 1:
+            status = PipelineStatus.SUCCESS
+        elif run_status == 2:
+            status = PipelineStatus.FAILURE
+        elif run_status in (3, 4):
+            status = PipelineStatus.CANCELLED
+        else:
+            status = PipelineStatus.UNKNOWN
+    # GitHub Actionsは文字列ステータス
+    elif run_status == GitHubStatus.COMPLETED:
         status = _map_conclusion_to_status(run.get("conclusion"))
     elif run_status == GitHubStatus.IN_PROGRESS:
         status = PipelineStatus.IN_PROGRESS
@@ -225,29 +243,35 @@ def _transform_workflow_run(run: dict[str, Any]) -> dict[str, Any]:
         status = PipelineStatus.UNKNOWN
 
     # 実行時間を計算（ミリ秒）
-    started_at_str = run.get("run_started_at") or run.get("created_at")
-    completed_at_str = run.get("updated_at")
+    # GitHub: run_started_at/created_at, updated_at
+    # Bitrise: triggered_at, started_on_worker_at, finished_at
+    started_at_str = (run.get("run_started_at") or run.get("created_at") or
+                     run.get("triggered_at") or run.get("started_on_worker_at"))
+    completed_at_str = run.get("updated_at") or run.get("finished_at")
 
     started_at = parse_iso_datetime(started_at_str)
     completed_at = parse_iso_datetime(completed_at_str)
     duration_ms = calculate_duration_ms(started_at, completed_at)
 
+    # ソース識別（GitHub ActionsまたはBitrise）
+    source = run.get("_source", "github_actions")
+
     # 汎用データモデルに変換
     # 必須フィールドは既にバリデーション済みなので安全にアクセス可能
     return {
         "source_run_id": str(run["id"]),
-        "source": "github_actions",
-        "pipeline_name": run.get("name", "Unknown"),
+        "source": source,
+        "pipeline_name": run.get("name") or run.get("triggered_workflow", "Unknown"),
         "status": status,
-        "trigger_event": run.get("event", "UNKNOWN"),
+        "trigger_event": run.get("event") or run.get("triggered_by", "UNKNOWN"),
         "repository_owner": run["_repository_owner"],
         "repository_name": run["_repository_name"],
-        "branch_name": run.get("head_branch"),
-        "commit_sha": run.get("head_sha"),
+        "branch_name": run.get("head_branch") or run.get("branch"),
+        "commit_sha": run.get("head_sha") or run.get("commit_hash"),
         "started_at": started_at,
         "completed_at": completed_at,
         "duration_ms": duration_ms,
-        "url": run.get("html_url"),
+        "url": run.get("html_url") or run.get("commit_view_url"),
     }
 
 

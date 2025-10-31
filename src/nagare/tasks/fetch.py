@@ -483,6 +483,7 @@ def _fetch_bitrise_builds_impl(
                 build["app_slug"] = app_slug
                 build["_repository_owner"] = owner
                 build["_repository_name"] = repo
+                build["_source"] = "bitrise"  # ソース識別子
                 # BitriseのビルドIDはslugフィールドにある。idフィールドとして複製
                 if "slug" in build and "id" not in build:
                     build["id"] = build["slug"]
