@@ -165,14 +165,14 @@ services:
       dockerfile: docker/Dockerfile.superset
     container_name: nagare-superset
     environment:
+      # Superset設定
       SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY}
-      DATABASE_DB: ${DATABASE_NAME}
-      DATABASE_HOST: postgres
-      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
-      DATABASE_USER: ${DATABASE_USER}
-      DATABASE_PORT: 5432
-      DATABASE_DIALECT: postgresql
       SUPERSET_LOAD_EXAMPLES: "no"
+
+      # PostgreSQLメタデータベース接続（Superset専用データベース）
+      # 注: Supersetはnagare_supersetデータベースを使用（Airflowとの衝突を回避）
+      SQLALCHEMY_DATABASE_URI: postgresql+psycopg2://${DATABASE_USER}:${DATABASE_PASSWORD}@postgres:5432/nagare_superset
+
       # Superset管理者ユーザー設定（初期化スクリプトで使用）
       SUPERSET_ADMIN_USERNAME: ${SUPERSET_ADMIN_USERNAME:-admin}
       SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:-admin}

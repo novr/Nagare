@@ -13,6 +13,21 @@ ADMIN_LASTNAME=${SUPERSET_ADMIN_LASTNAME:-User}
 
 echo "Starting Superset initialization..."
 
+# Superset設定ファイルを作成（環境変数からデータベース接続を読み取る）
+echo "Creating Superset configuration..."
+cat > /app/pythonpath/superset_config.py <<EOF
+import os
+
+# データベース接続設定（環境変数から取得）
+SQLALCHEMY_DATABASE_URI = os.getenv('SQLALCHEMY_DATABASE_URI')
+
+# セキュリティキー
+SECRET_KEY = os.getenv('SUPERSET_SECRET_KEY')
+
+# サンプルデータのロード無効化
+SUPERSET_LOAD_EXAMPLES = os.getenv('SUPERSET_LOAD_EXAMPLES', 'no').lower() in ('yes', 'true', '1')
+EOF
+
 # データベースのマイグレーション
 echo "Running database migrations..."
 superset db upgrade
