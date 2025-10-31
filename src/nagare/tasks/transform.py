@@ -93,33 +93,62 @@ def _transform_items_with_error_handling(
 
 
 def transform_data(**context: Any) -> None:
-    """GitHub APIから取得したデータを汎用データモデルに変換する
+    """GitHub/Bitrise APIから取得したデータを汎用データモデルに変換する
 
+    Dynamic Task Mappingで生成されたバッチタスクから全データを集約して変換する。
     ワークフロー実行データとジョブデータの両方を変換する。
 
     Args:
         **context: Airflowのコンテキスト
     """
     ti: TaskInstance = context["ti"]
+    dag = context["dag"]
 
-    # ワークフロー実行データの変換
-    workflow_runs: list[dict[str, Any]] = ti.xcom_pull(
-        task_ids=TaskIds.FETCH_WORKFLOW_RUNS, key=XComKeys.WORKFLOW_RUNS
-    )
+    # DAG内のバッチタスクを検索（Dynamic Task Mapping対応）
+    # GitHub: fetch_github_batch, Bitrise: fetch_bitrise_batch
+    batch_task_patterns = ["_batch"]
+    batch_task_id = None
+    for task in dag.tasks:
+        if any(pattern in task.task_id for pattern in batch_task_patterns):
+            batch_task_id = task.task_id
+            break
 
-    if workflow_runs:
+    # XComから全バッチのデータを集約
+    all_workflow_runs = []
+
+    if batch_task_id:
+        # Dynamic Task Mappingの全インスタンスからデータを取得
+        # map_indexes を指定しないと、リストとして全てのマップインスタンスのデータが返される
+        batch_results = ti.xcom_pull(task_ids=batch_task_id, key=XComKeys.WORKFLOW_RUNS)
+
+        if batch_results:
+            # batch_resultsは[[run1, run2], [run3, run4], ...] のような構造
+            if isinstance(batch_results, list):
+                for batch_data in batch_results:
+                    if isinstance(batch_data, list):
+                        all_workflow_runs.extend(batch_data)
+                logger.info(f"Retrieved {len(all_workflow_runs)} runs from {batch_task_id} (Dynamic Task Mapping)")
+
+    # 後方互換性: 古い固定タスクIDからも取得を試みる
+    if not all_workflow_runs:
+        legacy_data = ti.xcom_pull(task_ids=TaskIds.FETCH_WORKFLOW_RUNS, key=XComKeys.WORKFLOW_RUNS)
+        if legacy_data:
+            all_workflow_runs = legacy_data if isinstance(legacy_data, list) else []
+            logger.info(f"Retrieved {len(all_workflow_runs)} runs from legacy task ID")
+
+    if all_workflow_runs:
         transformed_runs = _transform_items_with_error_handling(
-            items=workflow_runs,
+            items=all_workflow_runs,
             transform_func=_transform_workflow_run,
             item_descriptor=lambda r: f"{r.get('id', 'unknown')}",
             item_type="workflow run",
         )
-        logger.info(f"Transformed {len(transformed_runs)} workflow runs")
+        logger.info(f"Transformed {len(transformed_runs)} workflow runs from {len(all_workflow_runs)} total")
     else:
         logger.warning("No workflow runs to transform")
         transformed_runs = []
 
-    # ジョブデータの変換
+    # ジョブデータの変換（既存の詳細取得タスクから）
     workflow_run_jobs: list[dict[str, Any]] = ti.xcom_pull(
         task_ids=TaskIds.FETCH_WORKFLOW_RUN_JOBS, key=XComKeys.WORKFLOW_RUN_JOBS
     )
