@@ -134,10 +134,17 @@ def transform_data(**context: Any) -> None:
                 logger.info(f"No data found for batch {i}, stopping")
                 break
 
-            if isinstance(batch_data, list):
-                all_workflow_runs.extend(batch_data)
+            # Dynamic Task Mappingの場合、LazyXComSelectSequenceが返される
+            # これを list() すると、各map_indexの結果を含むリストになる: [[runs_from_map_0]]
+            # 通常は1つのmap_indexのデータしか含まれないので、最初の要素を取得
+            if hasattr(batch_data, '__iter__') and not isinstance(batch_data, (str, bytes)):
+                batch_list = list(batch_data) if not isinstance(batch_data, list) else batch_data
+                # LazyXComSelectSequenceの場合、[actual_data]形式なので最初の要素を取得
+                if len(batch_list) > 0 and isinstance(batch_list[0], list):
+                    batch_list = batch_list[0]
+                all_workflow_runs.extend(batch_list)
                 batch_count += 1
-                logger.info(f"Retrieved {len(batch_data)} runs from {batch_task_id} batch {i}")
+                logger.info(f"Retrieved {len(batch_list)} runs from {batch_task_id} batch {i}")
 
         if batch_count > 0:
             logger.info(f"Total: Retrieved {len(all_workflow_runs)} runs from {batch_count} batches (Dynamic Task Mapping)")
