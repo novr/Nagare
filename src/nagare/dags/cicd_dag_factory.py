@@ -34,7 +34,7 @@ from typing import Any, Callable
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
-from nagare.constants import TaskIds
+from nagare.constants import Platform, SourceType, TaskIds
 from nagare.tasks.fetch import fetch_repositories
 from nagare.tasks.load import load_to_database
 from nagare.tasks.transform import transform_data
@@ -51,8 +51,6 @@ class PlatformConfig:
         connection_id: Airflow Connection ID（例: "github_default", "bitrise_default"）
         fetch_runs_batch: バッチ単位でワークフロー実行/ビルドを取得する関数
         fetch_details: 詳細データ（ジョブ等）を取得する関数（オプショナル、Noneの場合はスキップ）
-        num_batches: 並列処理するバッチ数（デフォルト: 10）
-        batch_size: 各バッチで処理するリポジトリ数（デフォルト: 17）
         with_client_wrapper: クライアント注入用のwrapper関数
         with_client_and_db_wrapper: クライアント＋DB注入用のwrapper関数
 
@@ -75,8 +73,6 @@ class PlatformConfig:
     fetch_details: Callable[..., Any] | None
     with_client_wrapper: Callable[..., Any]
     with_client_and_db_wrapper: Callable[..., Any]
-    num_batches: int = 10
-    batch_size: int = 17
 
 
 def create_cicd_collection_dag(
@@ -126,27 +122,31 @@ def create_cicd_collection_dag(
         tags=tags,
         **dag_kwargs,
     ) as dag:
-        # タスク1: 監視対象リポジトリ/アプリの取得（全プラットフォーム共通）
+        # タスク1: 監視対象リポジトリ/アプリの取得（プラットフォームでフィルタ）
+        # ソースタイプを決定（github -> github_actions, bitrise -> bitrise）
+        source_type = (
+            SourceType.GITHUB_ACTIONS
+            if platform_config.name == Platform.GITHUB
+            else SourceType.BITRISE
+        )
         task_fetch_repositories = PythonOperator(
             task_id=TaskIds.FETCH_REPOSITORIES,
             python_callable=with_database_client(fetch_repositories),
+            op_kwargs={"source": source_type},
         )
 
-        # タスク2: ワークフロー実行/ビルドデータの取得（バッチ並列処理）
-        batch_tasks = []
-        for batch_index in range(platform_config.num_batches):
-            task = PythonOperator(
-                task_id=f"fetch_{platform_config.name}_batch_{batch_index}",
-                python_callable=platform_config.with_client_and_db_wrapper(
-                    platform_config.fetch_runs_batch,
-                    conn_id=platform_config.connection_id,
-                ),
-                op_kwargs={
-                    "batch_index": batch_index,
-                    "batch_size": platform_config.batch_size,
-                },
-            )
-            batch_tasks.append(task)
+        # タスク2: ワークフロー実行/ビルドデータの取得（Dynamic Task Mapping）
+        # fetch_repositoriesが返すop_kwargsのリストを使用して動的にタスクを生成
+        # expand(op_kwargs=...)は自動的にリストの各要素（辞書）に対してタスクを作成する
+        batch_tasks = PythonOperator.partial(
+            task_id=f"fetch_{platform_config.name}_batch",
+            python_callable=platform_config.with_client_and_db_wrapper(
+                platform_config.fetch_runs_batch,
+                conn_id=platform_config.connection_id,
+            ),
+        ).expand(
+            op_kwargs=task_fetch_repositories.output
+        )
 
         # タスク3: 詳細データの取得（オプショナル、fetch_detailsがNoneの場合はスキップ）
         previous_tasks = batch_tasks

@@ -16,6 +16,7 @@ import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from nagare.constants import Platform
 from nagare.dags.cicd_dag_factory import PlatformConfig, create_cicd_collection_dag
 from nagare.tasks.fetch import fetch_bitrise_builds_batch
 from nagare.utils.connections import ConnectionRegistry
@@ -46,16 +47,16 @@ default_args = {
 }
 
 # Bitrise用のプラットフォーム設定
+# バッチサイズはFetchConfig.BATCH_SIZE（デフォルト: 10）を使用
+# Dynamic Task Mappingによりアプリ数に応じてバッチ数が自動決定される
 bitrise_config = PlatformConfig(
-    name="bitrise",
+    name=Platform.BITRISE,
     display_name="Bitrise",
     connection_id=BITRISE_CONNECTION_ID,
     fetch_runs_batch=fetch_bitrise_builds_batch,
     fetch_details=None,  # Bitriseはジョブ詳細の取得をサポートしない
     with_client_wrapper=with_bitrise_client,
     with_client_and_db_wrapper=with_bitrise_and_database_clients,
-    num_batches=10,  # 並列処理するバッチ数
-    batch_size=17,  # 各バッチで処理するアプリ数
 )
 
 # DAG生成

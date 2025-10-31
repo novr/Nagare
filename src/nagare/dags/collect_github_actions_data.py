@@ -16,6 +16,7 @@ import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from nagare.constants import Platform
 from nagare.dags.cicd_dag_factory import PlatformConfig, create_cicd_collection_dag
 from nagare.tasks.fetch import (
     fetch_workflow_run_jobs,
@@ -49,16 +50,16 @@ default_args = {
 }
 
 # GitHub用のプラットフォーム設定
+# バッチサイズはFetchConfig.BATCH_SIZE（デフォルト: 10）を使用
+# Dynamic Task Mappingによりリポジトリ数に応じてバッチ数が自動決定される
 github_config = PlatformConfig(
-    name="workflow_runs",
+    name=Platform.GITHUB,
     display_name="GitHub Actions",
     connection_id=GITHUB_CONNECTION_ID,
     fetch_runs_batch=fetch_workflow_runs_batch,
     fetch_details=fetch_workflow_run_jobs,
     with_client_wrapper=with_github_client,
     with_client_and_db_wrapper=with_github_and_database_clients,
-    num_batches=10,  # 並列処理するバッチ数
-    batch_size=17,  # 各バッチで処理するリポジトリ数（161 / 10 ≈ 16-17）
 )
 
 # DAG生成

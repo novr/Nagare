@@ -15,6 +15,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from nagare.constants import SourceType
 from nagare.utils.connections import DatabaseConnection
 
 logger = logging.getLogger(__name__)
@@ -60,36 +61,73 @@ class DatabaseClient:
             f"/{connection.database}"
         )
 
-    def get_repositories(self) -> list[dict[str, str]]:
+    def get_repositories(self, source: str | None = None) -> list[dict[str, str]]:
         """監視対象リポジトリのリストを取得する
 
         PostgreSQLから監視対象リポジトリを取得する。
 
+        Args:
+            source: ソースタイプでフィルタ（オプション）。例: "github_actions", "bitrise"
+
         Returns:
-            リポジトリ情報のリスト（owner, repoを含む辞書）
+            リポジトリ情報のリスト
+            - GitHub/デフォルト: {"owner": str, "repo": str}
+            - Bitrise: {"id": int, "repository_name": str, "source_repository_id": str}
         """
         session = self.session_factory()
         try:
             # repository_name形式は"owner/repo"を想定
-            query = text(
-                """
-                SELECT id, repository_name
-                FROM repositories
-                WHERE active = TRUE
-                """
-            )
-            result = session.execute(query)
+            if source:
+                query = text(
+                    """
+                    SELECT id, repository_name, source, source_repository_id
+                    FROM repositories
+                    WHERE active = TRUE AND source = :source
+                    """
+                )
+                result = session.execute(query, {"source": source})
+            else:
+                query = text(
+                    """
+                    SELECT id, repository_name, source, source_repository_id
+                    FROM repositories
+                    WHERE active = TRUE
+                    """
+                )
+                result = session.execute(query)
+
             repositories = []
             for row in result:
-                # repository_nameを"owner/repo"から分割
-                parts = row.repository_name.split("/", 1)
-                if len(parts) == 2:
-                    repositories.append({"owner": parts[0], "repo": parts[1]})
+                # ソースタイプで判定（GitHub ActionsとBitriseで異なる構造を返す）
+                if row.source == SourceType.GITHUB_ACTIONS:
+                    # GitHub形式: owner/repoに分割
+                    parts = row.repository_name.split("/", 1)
+                    if len(parts) == 2:
+                        repositories.append({"owner": parts[0], "repo": parts[1]})
+                    else:
+                        logger.warning(
+                            f"Invalid repository_name format: {row.repository_name}"
+                        )
+                elif row.source == SourceType.BITRISE:
+                    # Bitrise形式: id/repository_name/source_repository_idを返す
+                    # source_repository_idはBitriseのapp_slug（UUID）
+                    repositories.append({
+                        "id": row.id,
+                        "repository_name": row.repository_name,
+                        "source_repository_id": row.source_repository_id
+                    })
                 else:
-                    logger.warning(
-                        f"Invalid repository_name format: {row.repository_name}"
-                    )
-            logger.info(f"Retrieved {len(repositories)} active repositories")
+                    # デフォルト: GitHub形式として扱う
+                    parts = row.repository_name.split("/", 1)
+                    if len(parts) == 2:
+                        repositories.append({"owner": parts[0], "repo": parts[1]})
+                    else:
+                        logger.warning(
+                            f"Unknown source type '{row.source}' for repository: {row.repository_name}"
+                        )
+
+            source_msg = f" for source '{source}'" if source else ""
+            logger.info(f"Retrieved {len(repositories)} active repositories{source_msg}")
             return repositories
         finally:
             session.close()

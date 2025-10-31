@@ -8,7 +8,7 @@ from typing import Any, TypeVar
 from airflow.models import TaskInstance
 from github import GithubException
 
-from nagare.constants import FetchConfig, TaskIds, XComKeys
+from nagare.constants import FetchConfig, SourceType, TaskIds, XComKeys
 from nagare.utils.protocols import BitriseClientProtocol, DatabaseClientProtocol, GitHubClientProtocol
 from nagare.utils.xcom_utils import check_xcom_size
 
@@ -111,29 +111,49 @@ def _process_items_with_error_handling(
 
 
 def fetch_repositories(
-    db: DatabaseClientProtocol, **context: Any
-) -> list[dict[str, str]]:
-    """監視対象のリポジトリリストを取得する
+    db: DatabaseClientProtocol, source: str | None = None, batch_size: int | None = None, **context: Any
+) -> list[dict[str, Any]]:
+    """監視対象のリポジトリリストを取得し、バッチに分割する
 
-    PostgreSQLから監視対象リポジトリを取得する。
+    PostgreSQLから監視対象リポジトリを取得し、Dynamic Task Mapping用にバッチに分割する。
 
     Args:
         db: DatabaseClientインスタンス（必須、外部から注入される）
+        source: ソースタイプでフィルタ（オプション）。例: "github_actions", "bitrise"
+        batch_size: バッチサイズ（省略時はFetchConfig.BATCH_SIZEを使用）
         **context: Airflowのコンテキスト
 
     Returns:
-        リポジトリ情報のリスト（owner, repoを含む辞書）
+        op_kwargsの辞書リスト（Dynamic Task Mappingで展開される）
+        GitHubの場合: [{"batch_repos": [repo1, repo2, ...]}, ...]
+        Bitriseの場合: [{"batch_apps": [app1, app2, ...]}, ...]
     """
     # データベースから取得
-    repositories = db.get_repositories()
+    repositories = db.get_repositories(source=source)
 
-    logger.info(f"Found {len(repositories)} repositories to monitor")
+    source_msg = f" for source '{source}'" if source else ""
+    logger.info(f"Found {len(repositories)} repositories to monitor{source_msg}")
 
-    # XComで次のタスクに渡す
+    # バッチサイズのデフォルト値
+    if batch_size is None:
+        batch_size = FetchConfig.BATCH_SIZE
+
+    # リポジトリをバッチに分割してop_kwargs形式に変換
+    # GitHubとBitriseでパラメータ名が異なるため、sourceで判定
+    param_name = "batch_repos" if source == SourceType.GITHUB_ACTIONS else "batch_apps"
+
+    batch_op_kwargs = []
+    for i in range(0, len(repositories), batch_size):
+        batch = repositories[i:i + batch_size]
+        batch_op_kwargs.append({param_name: batch})
+
+    logger.info(f"Split into {len(batch_op_kwargs)} batches (batch_size={batch_size})")
+
+    # XComで次のタスクに渡す（後方互換性のため元のリストも保持）
     ti: TaskInstance = context["ti"]
     ti.xcom_push(key=XComKeys.REPOSITORIES, value=repositories)
 
-    return repositories
+    return batch_op_kwargs
 
 
 def fetch_workflow_runs(
@@ -165,42 +185,33 @@ def fetch_workflow_runs(
 def fetch_workflow_runs_batch(
     github_client: GitHubClientProtocol,
     db: DatabaseClientProtocol,
-    batch_index: int,
-    batch_size: int,
+    batch_repos: list[dict[str, str]],
     **context: Any
 ) -> None:
     """リポジトリのバッチでワークフロー実行データを取得する（並列処理用）
 
+    Dynamic Task Mappingで使用される。各タスクは1つのバッチ（リポジトリのリスト）を処理する。
+
     Args:
         github_client: GitHubClientインスタンス
         db: DatabaseClientインスタンス
-        batch_index: バッチインデックス（0始まり）
-        batch_size: バッチサイズ
+        batch_repos: 処理対象のリポジトリリスト
         **context: Airflowのコンテキスト
     """
     ti: TaskInstance = context["ti"]
 
-    # 前のタスクからリポジトリリストを取得
-    repositories: list[dict[str, str]] = ti.xcom_pull(
-        task_ids=TaskIds.FETCH_REPOSITORIES, key=XComKeys.REPOSITORIES
-    )
-
-    if not repositories:
-        logger.warning("No repositories found to fetch workflow runs")
+    if not batch_repos:
+        logger.warning("No repositories in this batch")
         return
 
-    # バッチスライス
-    start_idx = batch_index * batch_size
-    end_idx = start_idx + batch_size
-    batch_repos = repositories[start_idx:end_idx]
-
+    # map_indexを取得してログに使用（Dynamic Task Mappingで自動設定される）
+    map_index = context.get("task_instance").map_index
     logger.info(
-        f"Processing batch {batch_index}: repositories {start_idx} to {end_idx-1} "
-        f"({len(batch_repos)} repos)"
+        f"Processing batch {map_index}: {len(batch_repos)} repositories"
     )
 
     _fetch_workflow_runs_impl(
-        batch_repos, github_client, db, ti, xcom_suffix=f"_batch_{batch_index}"
+        batch_repos, github_client, db, ti, xcom_suffix=f"_batch_{map_index}"
     )
 
 
@@ -437,14 +448,16 @@ def _fetch_bitrise_builds_impl(
     }
 
     for app in bitrise_apps:
-        app_slug = app["repository_name"]  # Bitriseのapp-slug
+        # source_repository_idがBitriseのapp_slug（UUID）
+        app_slug = app["source_repository_id"]
+        repository_name = app["repository_name"]  # GitHub repo名（表示用）
         try:
-            logger.info(f"Fetching builds for Bitrise app: {app_slug}")
+            logger.info(f"Fetching builds for Bitrise app: {repository_name} (app_slug: {app_slug})")
 
             # 最新のタイムスタンプを取得（差分取得用）
-            latest_timestamp = db.get_latest_pipeline_timestamp(
-                repository_id=app["id"], source="bitrise"
-            )
+            # repository_nameを"owner/repo"形式に分割
+            owner, repo = repository_name.split("/", 1) if "/" in repository_name else (repository_name, repository_name)
+            latest_timestamp = db.get_latest_run_timestamp(owner, repo)
 
             # ビルドを取得
             if latest_timestamp:
@@ -458,10 +471,10 @@ def _fetch_bitrise_builds_impl(
                 ]
             else:
                 # 初回取得
-                logger.info(f"Fetching initial builds for {app_slug}")
+                logger.info(f"Fetching initial builds for {repository_name}")
                 builds = bitrise_client.get_builds(app_slug, limit=50)
 
-            logger.info(f"Fetched {len(builds)} builds from {app_slug}")
+            logger.info(f"Fetched {len(builds)} builds from {repository_name}")
 
             # リポジトリIDを追加
             for build in builds:
@@ -472,11 +485,11 @@ def _fetch_bitrise_builds_impl(
             error_stats["successful"] += 1
 
         except Exception as e:
-            error_msg = f"Error fetching builds for {app_slug}: {type(e).__name__}: {e}"
+            error_msg = f"Error fetching builds for {repository_name}: {type(e).__name__}: {e}"
             logger.error(error_msg, exc_info=True)
             error_stats["failed"] += 1
             error_stats["errors"].append({
-                "item": app_slug,
+                "item": repository_name,
                 "error_type": type(e).__name__,
                 "message": str(e),
             })
@@ -535,46 +548,31 @@ def fetch_bitrise_builds(
 def fetch_bitrise_builds_batch(
     bitrise_client: BitriseClientProtocol,
     db: DatabaseClientProtocol,
-    batch_index: int,
-    batch_size: int,
+    batch_apps: list[dict[str, Any]],
     **context: Any,
 ) -> None:
     """Bitriseビルドデータをバッチ単位で取得する
 
+    Dynamic Task Mappingで使用される。各タスクは1つのバッチ（アプリのリスト）を処理する。
+
     Args:
         bitrise_client: BitriseClientインスタンス
         db: DatabaseClientインスタンス
-        batch_index: バッチインデックス（0から始まる）
-        batch_size: バッチサイズ（各バッチで処理するアプリ数）
+        batch_apps: 処理対象のアプリリスト
         **context: Airflowコンテキスト（tiを含む）
     """
     ti: TaskInstance = context["ti"]
 
-    all_apps = ti.xcom_pull(
-        task_ids=TaskIds.FETCH_REPOSITORIES, key=XComKeys.REPOSITORIES
-    )
-
-    if not all_apps:
-        logger.warning(f"Batch {batch_index}: No Bitrise apps found in XCom")
-        return
-
-    # バッチを抽出
-    start_idx = batch_index * batch_size
-    end_idx = start_idx + batch_size
-    batch_apps = all_apps[start_idx:end_idx]
-
     if not batch_apps:
-        logger.info(
-            f"Batch {batch_index}: No apps to process (total: {len(all_apps)}, "
-            f"range: {start_idx}-{end_idx})"
-        )
+        logger.warning("No Bitrise apps in this batch")
         return
 
+    # map_indexを取得してログに使用（Dynamic Task Mappingで自動設定される）
+    map_index = context.get("task_instance").map_index
     logger.info(
-        f"Batch {batch_index}: Processing {len(batch_apps)} apps "
-        f"(indices {start_idx}-{end_idx-1} of {len(all_apps)} total)"
+        f"Processing batch {map_index}: {len(batch_apps)} apps"
     )
 
     _fetch_bitrise_builds_impl(
-        batch_apps, bitrise_client, db, ti, xcom_suffix=f"_batch_{batch_index}"
+        batch_apps, bitrise_client, db, ti, xcom_suffix=f"_batch_{map_index}"
     )

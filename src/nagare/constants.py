@@ -6,6 +6,28 @@
 from enum import Enum
 
 
+class SourceType:
+    """CI/CDプラットフォームのソースタイプ
+
+    データベースのsourceカラムに保存される値。
+    """
+
+    GITHUB_ACTIONS = "github_actions"
+    BITRISE = "bitrise"
+
+
+class Platform:
+    """CI/CDプラットフォームの識別子
+
+    UI/API層で使用するプラットフォーム名。
+    """
+
+    GITHUB = "github"
+    BITRISE = "bitrise"
+    GITLAB = "gitlab"
+    CIRCLECI = "circleci"
+
+
 class XComKeys:
     """Airflow XComで使用するキー名
 
@@ -87,6 +109,9 @@ class FetchConfig:
     # GitHub API取得時のデフォルト最大件数
     MAX_WORKFLOW_RUNS = 1000
     MAX_JOBS = 1000
+
+    # バッチ処理設定（Dynamic Task Mapping用）
+    BATCH_SIZE = 10  # 1バッチあたりのリポジトリ数
 
 
 # GitHub API設定
