@@ -31,11 +31,11 @@ CREATE TABLE IF NOT EXISTS pipeline_runs (
     id BIGSERIAL PRIMARY KEY,
     source_run_id VARCHAR(255) NOT NULL,
     source VARCHAR(50) NOT NULL,
-    pipeline_name VARCHAR(255) NOT NULL,
+    pipeline_name VARCHAR(1000) NOT NULL,  -- 長いDependabot名対応: 255 -> 1000
     status VARCHAR(50) NOT NULL,
     trigger_event VARCHAR(50),
     repository_id BIGINT NOT NULL REFERENCES repositories(id),
-    branch_name VARCHAR(255),
+    branch_name VARCHAR(500),  -- 長いブランチ名対応: 255 -> 500
     commit_sha VARCHAR(255),
     started_at TIMESTAMP,
     completed_at TIMESTAMP,
