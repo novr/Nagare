@@ -25,10 +25,13 @@ class MockDatabaseClient:
         """モックDatabaseClientを初期化する"""
         logger.info("MockDatabaseClient initialized (development mode)")
 
-    def get_repositories(self) -> list[dict[str, str]]:
+    def get_repositories(self, source: str | None = None) -> list[dict[str, str]]:
         """監視対象リポジトリのリストを取得する（モック実装）
 
         環境変数REPOSITORIES_JSONから読み込む。
+
+        Args:
+            source: ソースタイプでフィルタ（オプション）。モック実装ではフィルタリングは行わない。
 
         Returns:
             リポジトリ情報のリスト（owner, repoを含む辞書）
@@ -37,8 +40,9 @@ class MockDatabaseClient:
         repositories_json = os.getenv("REPOSITORIES_JSON")
         if repositories_json:
             repositories = json.loads(repositories_json)
+            source_msg = f" for source '{source}'" if source else ""
             logger.info(
-                f"[MOCK] Loaded {len(repositories)} repositories from REPOSITORIES_JSON"
+                f"[MOCK] Loaded {len(repositories)} repositories from REPOSITORIES_JSON{source_msg}"
             )
             return repositories
 

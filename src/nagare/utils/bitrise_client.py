@@ -18,6 +18,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from nagare.constants import Platform
 from nagare.utils.connections import BitriseConnection
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,14 @@ class BitriseClient:
         self.session.mount("http://", adapter)
 
         logger.debug("BitriseClient initialized")
+
+    def get_platform(self) -> str:
+        """プラットフォーム識別子を返す
+
+        Returns:
+            str: Platform.BITRISE
+        """
+        return Platform.BITRISE
 
     def _request(
         self,

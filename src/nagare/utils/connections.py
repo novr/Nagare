@@ -34,6 +34,8 @@ from pathlib import Path
 from typing import Any, ClassVar, Protocol, runtime_checkable
 from urllib.parse import quote_plus
 
+from nagare.constants import Platform
+
 logger = logging.getLogger(__name__)
 
 
@@ -83,6 +85,15 @@ class BaseConnection(ABC):
     CONN_TYPE: ClassVar[str] = "generic"
 
     description: str = ""
+
+    @abstractmethod
+    def get_platform(self) -> str:
+        """プラットフォーム識別子を返す
+
+        Returns:
+            str: Platform定数（Platform.GITHUB, Platform.BITRISEなど）
+        """
+        ...
 
     @classmethod
     @abstractmethod
@@ -225,6 +236,14 @@ class GitHubConnectionBase(BaseConnection, ABC):
 
     # クラス変数
     CONN_TYPE: ClassVar[str] = "http"
+
+    def get_platform(self) -> str:
+        """プラットフォーム識別子を返す
+
+        Returns:
+            str: Platform.GITHUB
+        """
+        return Platform.GITHUB
 
     @property
     @abstractmethod
@@ -580,6 +599,14 @@ class GitLabConnection(BaseConnection):
     token: str | None = None
     base_url: str = "https://gitlab.com"
 
+    def get_platform(self) -> str:
+        """プラットフォーム識別子を返す
+
+        Returns:
+            str: Platform.GITLAB
+        """
+        return Platform.GITLAB
+
     @classmethod
     def from_env(cls) -> "GitLabConnection":
         """環境変数から生成
@@ -688,6 +715,14 @@ class CircleCIConnection(BaseConnection):
     api_token: str | None = None
     base_url: str = "https://circleci.com/api"
 
+    def get_platform(self) -> str:
+        """プラットフォーム識別子を返す
+
+        Returns:
+            str: Platform.CIRCLECI
+        """
+        return Platform.CIRCLECI
+
     @classmethod
     def from_env(cls) -> "CircleCIConnection":
         """環境変数から生成
@@ -784,6 +819,14 @@ class BitriseConnection(BaseConnection):
 
     api_token: str | None = None
     base_url: str = "https://api.bitrise.io/v0.1"
+
+    def get_platform(self) -> str:
+        """プラットフォーム識別子を返す
+
+        Returns:
+            str: Platform.BITRISE
+        """
+        return Platform.BITRISE
 
     @classmethod
     def from_env(cls) -> "BitriseConnection":

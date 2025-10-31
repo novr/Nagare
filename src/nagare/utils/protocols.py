@@ -20,6 +20,8 @@ from contextlib import AbstractContextManager
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
+from nagare.constants import Platform
+
 
 @runtime_checkable
 class DatabaseClientProtocol(Protocol):
@@ -30,8 +32,12 @@ class DatabaseClientProtocol(Protocol):
     - MockDatabaseClient (tests/conftest.py) - テスト用
     """
 
-    def get_repositories(self) -> list[dict[str, str]]:
-        """監視対象リポジトリのリストを取得する"""
+    def get_repositories(self, source: str | None = None) -> list[dict[str, str]]:
+        """監視対象リポジトリのリストを取得する
+
+        Args:
+            source: ソースタイプでフィルタ（オプション）。例: "github_actions", "bitrise"
+        """
         ...
 
     def get_latest_run_timestamp(self, owner: str, repo: str) -> datetime | None:
@@ -92,6 +98,14 @@ class GitHubClientProtocol(Protocol):
     - MockGitHubClient (tests/conftest.py) - テスト用
     """
 
+    def get_platform(self) -> str:
+        """プラットフォーム識別子を返す
+
+        Returns:
+            str: Platform.GITHUB
+        """
+        ...
+
     def get_workflow_runs(
         self,
         owner: str,
@@ -129,6 +143,14 @@ class BitriseClientProtocol(Protocol):
     - BitriseClient (src/nagare/utils/bitrise_client.py)
     - MockBitriseClient (tests/conftest.py) - テスト用（将来追加予定）
     """
+
+    def get_platform(self) -> str:
+        """プラットフォーム識別子を返す
+
+        Returns:
+            str: Platform.BITRISE
+        """
+        ...
 
     def get_apps(self, limit: int = 50) -> list[dict[str, Any]]:
         """アプリ一覧を取得する"""

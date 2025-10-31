@@ -17,6 +17,7 @@ import streamlit as st
 from github import GithubException
 from sqlalchemy import create_engine, text
 
+from nagare.constants import Platform, PipelineStatus, SourceType
 from nagare.utils.connections import ConnectionRegistry
 from nagare.utils.github_client import GitHubClient
 from nagare.utils.bitrise_client import BitriseClient
@@ -321,7 +322,7 @@ def fetch_repositories_unified(platform: str, search_params: dict, page: int = 1
             "total_count": int | None
         }
     """
-    if platform == "github":
+    if platform == Platform.GITHUB:
         search_type = search_params.get("search_type")
         search_value = search_params.get("search_value")
         conn_id = search_params.get("conn_id")
@@ -362,7 +363,7 @@ def fetch_repositories_unified(platform: str, search_params: dict, page: int = 1
             "total_count": result.get("total_count")
         }
 
-    elif platform == "bitrise":
+    elif platform == Platform.BITRISE:
         conn_id = search_params.get("conn_id")
         bitrise_client = get_bitrise_client_from_connection(conn_id) if conn_id else get_bitrise_client()
         if not bitrise_client:
@@ -382,6 +383,31 @@ def fetch_repositories_unified(platform: str, search_params: dict, page: int = 1
             # Bitriseのデータを統一形式に変換
             items = []
             for app in page_apps:
+                # リポジトリ名の構築（owner/repo形式）
+                repo_name = None
+                repo_owner = app.get("repo_owner")
+                repo_slug = app.get("repo_slug")
+
+                # 1. repo_ownerとrepo_slugから構築
+                if repo_owner and repo_slug:
+                    repo_name = f"{repo_owner}/{repo_slug}"
+                # 2. repo_urlから抽出
+                elif app.get("repo_url"):
+                    # https://github.com/owner/repo.git → owner/repo
+                    repo_url = app["repo_url"]
+                    if "github.com/" in repo_url:
+                        parts = repo_url.split("github.com/")[-1].replace(".git", "").strip("/")
+                        if "/" in parts:
+                            repo_name = parts
+                    elif "bitbucket.org/" in repo_url:
+                        parts = repo_url.split("bitbucket.org/")[-1].replace(".git", "").strip("/")
+                        if "/" in parts:
+                            repo_name = parts
+
+                # 3. フォールバック：titleまたはslug
+                if not repo_name:
+                    repo_name = app.get("title", app["slug"])
+
                 # Bitrise APIから更新日時を取得（project_type_idなどから推測）
                 # 実際のAPIレスポンスに応じて調整が必要
                 updated_at = ""  # Bitrise APIには更新日時がない場合がある
@@ -389,16 +415,17 @@ def fetch_repositories_unified(platform: str, search_params: dict, page: int = 1
                 items.append({
                     "id": app["slug"],
                     "name": app.get("title", app["slug"]),
-                    "repo": app["slug"],
+                    "repo": repo_name,
                     "updated_at": updated_at,
                     "url": f"https://app.bitrise.io/app/{app['slug']}",
                     "description": f"App Slug: {app['slug']}",
                     "platform": "bitrise",
                     "metadata": {
+                        "app_slug": app["slug"],  # 内部IDを保持
                         "project_type": app.get("project_type"),
                         "repo_url": app.get("repo_url"),
-                        "repo_owner": app.get("repo_owner"),
-                        "repo_slug": app.get("repo_slug"),
+                        "repo_owner": repo_owner,
+                        "repo_slug": repo_slug,
                     }
                 })
 
@@ -470,6 +497,40 @@ def fetch_github_repositories(
         return None
 
 
+def _add_repositories_batch(repo_items: list[dict[str, Any]], source_type: str) -> tuple[int, int, list[str]]:
+    """リポジトリを一括追加する（内部ヘルパー）
+
+    Args:
+        repo_items: 追加するリポジトリ情報のリスト
+                   各辞書は{"repo": str, "source_repo_id": str (optional)}を含む
+        source_type: ソースタイプ（"github_actions" または "bitrise"）
+
+    Returns:
+        (success_count, error_count, messages) のタプル
+    """
+    success_count = 0
+    error_count = 0
+    messages = []
+
+    for item in repo_items:
+        repo_name = item.get("repo", "")
+        source_repo_id = item.get("source_repo_id")  # Bitriseの場合はapp_slug
+
+        try:
+            success, message = add_repository(repo_name, source_type, source_repo_id)
+            if success:
+                success_count += 1
+                messages.append(f"✅ {repo_name}")
+            else:
+                error_count += 1
+                messages.append(f"⚠️ {repo_name}: {message}")
+        except Exception as e:
+            error_count += 1
+            messages.append(f"❌ {repo_name}: {e}")
+
+    return success_count, error_count, messages
+
+
 def render_repository_list(result: dict, platform: str, session_key_prefix: str):
     """統一されたリポジトリ/アプリリストを表示する（ページング対応）
 
@@ -497,34 +558,53 @@ def render_repository_list(result: dict, platform: str, session_key_prefix: str)
         st.info("このページにアイテムがありません")
         return
 
+    # 登録済みリポジトリの一覧を取得
+    source_type = SourceType.GITHUB_ACTIONS if platform == Platform.GITHUB else SourceType.BITRISE
+    registered_repos = get_registered_repository_names(source_type)
+
     # 選択状態の管理
     selected_key = f"{session_key_prefix}_selected"
+    repo_mapping_key = f"{session_key_prefix}_repo_mapping"
     if selected_key not in st.session_state:
         st.session_state[selected_key] = set()
+    if repo_mapping_key not in st.session_state:
+        st.session_state[repo_mapping_key] = {}
 
     # リスト表示
     for item in items:
+        # 登録済みかどうかをチェック
+        is_registered = item['repo'] in registered_repos
+
         col1, col2, col3 = st.columns([1, 6, 2])
 
         with col1:
+            # 登録済みの場合はチェックボックスを無効化
             is_selected = st.checkbox(
                 "選択",
                 key=f"{session_key_prefix}_select_{item['id']}_{current_page}",
-                label_visibility="collapsed"
+                label_visibility="collapsed",
+                disabled=is_registered
             )
             if is_selected:
                 st.session_state[selected_key].add(item['id'])
+                # item['id'] -> item (全情報) のマッピングを保存
+                st.session_state[repo_mapping_key][item['id']] = item
             elif item['id'] in st.session_state[selected_key]:
                 st.session_state[selected_key].remove(item['id'])
+                # マッピングからも削除
+                st.session_state[repo_mapping_key].pop(item['id'], None)
 
         with col2:
             # プラットフォーム固有のアイコン
-            icon = "📦" if platform == "github" else "📱"
+            icon = "📦" if platform == Platform.GITHUB else "📱"
             if platform == "github" and item["metadata"].get("private"):
                 icon = "🔒"
 
-            # リポジトリ/アプリ名表示
-            st.markdown(f"**{icon} [{item['name']}]({item['url']})**")
+            # リポジトリ/アプリ名表示（登録済みの場合はバッジ追加）
+            if is_registered:
+                st.markdown(f"**{icon} [{item['name']}]({item['url']})** :green[✅ 登録済み]")
+            else:
+                st.markdown(f"**{icon} [{item['name']}]({item['url']})**")
 
             # repo識別子表示
             st.caption(f"📂 {item['repo']}")
@@ -546,7 +626,7 @@ def render_repository_list(result: dict, platform: str, session_key_prefix: str)
                         meta_info.append(f"🕒 {item['updated_at']}")
 
             # プラットフォーム固有のメタ情報
-            if platform == "github":
+            if platform == Platform.GITHUB:
                 metadata = item["metadata"]
                 if metadata.get("language"):
                     meta_info.append(f"🔤 {metadata['language']}")
@@ -554,7 +634,7 @@ def render_repository_list(result: dict, platform: str, session_key_prefix: str)
                     meta_info.append(f"⭐ {metadata['stars']}")
                 if metadata.get("forks") is not None:
                     meta_info.append(f"🍴 {metadata['forks']}")
-            elif platform == "bitrise":
+            elif platform == Platform.BITRISE:
                 metadata = item["metadata"]
                 if metadata.get("project_type"):
                     meta_info.append(f"📦 {metadata['project_type']}")
@@ -565,17 +645,26 @@ def render_repository_list(result: dict, platform: str, session_key_prefix: str)
                 st.caption(" • ".join(meta_info))
 
         with col3:
-            source_type = "github_actions" if platform == "github" else "bitrise"
-            if st.button("追加", key=f"{session_key_prefix}_add_{item['id']}_{current_page}"):
-                try:
-                    success, message = add_repository(item["repo"], source_type)
-                    if success:
-                        st.success(message)
-                        st.rerun()
+            source_type = SourceType.GITHUB_ACTIONS if platform == Platform.GITHUB else SourceType.BITRISE
+            # 登録済みの場合は追加ボタンを無効化
+            if st.button("追加", key=f"{session_key_prefix}_add_{item['id']}_{current_page}", disabled=is_registered):
+                # リポジトリ情報を準備（Bitriseの場合はapp_slugも含める）
+                repo_item = {"repo": item["repo"]}
+                if platform == Platform.BITRISE and "metadata" in item and "app_slug" in item["metadata"]:
+                    repo_item["source_repo_id"] = item["metadata"]["app_slug"]
+
+                # 共通処理を使用
+                success_count, error_count, messages = _add_repositories_batch([repo_item], source_type)
+
+                if success_count > 0:
+                    st.success(f"リポジトリ '{item['repo']}' を追加しました")
+                    st.rerun()
+                elif error_count > 0:
+                    # エラーメッセージを表示
+                    if messages:
+                        st.warning(messages[0].replace("⚠️ ", "").replace("❌ ", ""))
                     else:
-                        st.warning(message)
-                except Exception as e:
-                    st.error(f"追加エラー: {e}")
+                        st.error("追加に失敗しました")
 
         st.divider()
 
@@ -597,29 +686,72 @@ def render_repository_list(result: dict, platform: str, session_key_prefix: str)
         st.divider()
         st.markdown(f"**選択中: {len(st.session_state[selected_key])}件**")
         if st.button("選択したアイテムを一括追加", type="primary", key=f"{session_key_prefix}_batch_add"):
-            source_type = "github_actions" if platform == "github" else "bitrise"
-            success_count = 0
-            error_count = 0
+            source_type = SourceType.GITHUB_ACTIONS if platform == Platform.GITHUB else SourceType.BITRISE
 
-            for repo_id in st.session_state[selected_key]:
-                try:
-                    success, _ = add_repository(repo_id, source_type)
-                    if success:
-                        success_count += 1
-                    else:
-                        error_count += 1
-                except Exception:
-                    error_count += 1
+            # マッピングから item 情報のリストを取得してrepo_items形式に変換
+            repo_items = []
+            for item_id in st.session_state[selected_key]:
+                item = st.session_state[repo_mapping_key].get(item_id)
+                if item:
+                    repo_item = {"repo": item["repo"]}
+                    # Bitriseの場合はapp_slugも含める
+                    if platform == Platform.BITRISE and "metadata" in item and "app_slug" in item["metadata"]:
+                        repo_item["source_repo_id"] = item["metadata"]["app_slug"]
+                    repo_items.append(repo_item)
+
+            # 共通処理を使用
+            success_count, error_count, messages = _add_repositories_batch(repo_items, source_type)
 
             if success_count > 0:
                 st.success(f"{success_count}件を追加しました")
             if error_count > 0:
                 st.warning(f"{error_count}件は追加できませんでした（既存またはエラー）")
+                # 詳細なエラーメッセージを展開可能なセクションに表示
+                with st.expander("詳細を表示"):
+                    for msg in messages:
+                        if "⚠️" in msg or "❌" in msg:
+                            st.caption(msg)
 
             st.session_state[selected_key].clear()
+            st.session_state[repo_mapping_key].clear()
             st.rerun()
 
     return None
+
+
+def get_registered_repository_names(source: str = None) -> set[str]:
+    """登録済みリポジトリ名のセットを取得する
+
+    Args:
+        source: ソースタイプでフィルタ（オプション）
+
+    Returns:
+        登録済みリポジトリ名のセット
+    """
+    engine = get_database_engine()
+    if source:
+        query = text(
+            """
+            SELECT repository_name
+            FROM repositories
+            WHERE source = :source AND active = true
+            """
+        )
+        params = {"source": source}
+    else:
+        query = text(
+            """
+            SELECT repository_name
+            FROM repositories
+            WHERE active = true
+            """
+        )
+        params = {}
+
+    with engine.connect() as conn:
+        result = conn.execute(query, params)
+        rows = result.fetchall()
+        return {row[0] for row in rows}
 
 
 def get_repositories():
@@ -645,10 +777,19 @@ def get_repositories():
         )
 
 
-def add_repository(repo_name: str, source: str = "github_actions"):
-    """リポジトリを追加する"""
+def add_repository(repo_name: str, source: str = "github_actions", source_repo_id: str | None = None):
+    """リポジトリを追加する
+
+    Args:
+        repo_name: リポジトリ名（表示用、例: "yumemi/sheep-poc-sdk"）
+        source: ソースタイプ（"github_actions", "bitrise"など）
+        source_repo_id: プラットフォーム固有ID（BitriseのUUID app_slug等）
+                       指定しない場合はrepo_nameから生成
+    """
     engine = get_database_engine()
-    source_repo_id = repo_name.replace("/", "_")
+    # source_repo_idが指定されない場合はrepo_nameから生成（GitHub用）
+    if source_repo_id is None:
+        source_repo_id = repo_name.replace("/", "_")
 
     with engine.begin() as conn:
         # 既存チェック
@@ -1115,9 +1256,10 @@ if page == "📊 ダッシュボード":
         if not recent_runs.empty:
             # ステータスに色を付ける
             def highlight_status(row):
-                if row["ステータス"] == "success":
+                status = row["ステータス"].upper() if isinstance(row["ステータス"], str) else ""
+                if status == PipelineStatus.SUCCESS:
                     return ["background-color: #d4edda"] * len(row)
-                elif row["ステータス"] == "failure":
+                elif status == PipelineStatus.FAILURE:
                     return ["background-color: #f8d7da"] * len(row)
                 else:
                     return [""] * len(row)
@@ -1151,7 +1293,7 @@ elif page == "📦 リポジトリ管理":
                 source = st.selectbox(
                     "プラットフォーム",
                     ["github_actions", "bitrise"],
-                    format_func=lambda x: "GitHub Actions" if x == "github_actions" else "Bitrise"
+                    format_func=lambda x: "GitHub Actions" if x == SourceType.GITHUB_ACTIONS else "Bitrise"
                 )
 
             submitted = st.form_submit_button("追加", type="primary")
@@ -1159,7 +1301,7 @@ elif page == "📦 リポジトリ管理":
             if submitted:
                 if new_repo:
                     # GitHub Actionsの場合は '/' が必要
-                    if source == "github_actions" and "/" not in new_repo:
+                    if source == SourceType.GITHUB_ACTIONS and "/" not in new_repo:
                         st.error("GitHubリポジトリ名を 'owner/repo' 形式で入力してください")
                     else:
                         try:
@@ -1199,8 +1341,8 @@ elif page == "📦 リポジトリ管理":
                 per_page = st.selectbox("表示件数", options=[10, 20, 30, 50], index=2, key="unified_per_page")
 
             # プラットフォーム表示
-            platform_icon = "📦" if platform == "github" else "📱"
-            platform_name = "GitHub Actions" if platform == "github" else "Bitrise"
+            platform_icon = "📦" if platform == Platform.GITHUB else "📱"
+            platform_name = "GitHub Actions" if platform == Platform.GITHUB else "Bitrise"
             st.caption(f"{platform_icon} プラットフォーム: **{platform_name}**")
 
             # セッションステートの初期化
@@ -1211,7 +1353,7 @@ elif page == "📦 リポジトリ管理":
             # プラットフォーム固有の検索条件
             search_params = {}
 
-            if platform == "github":
+            if platform == Platform.GITHUB:
                 search_params["conn_id"] = conn_id
 
                 # 検索方法選択
@@ -1246,7 +1388,7 @@ elif page == "📦 リポジトリ管理":
                 st.info("📱 Bitriseアプリ一覧を取得します")
 
             # 検索ボタン
-            can_search = (platform == "github" and search_params.get("search_value")) or platform == "bitrise"
+            can_search = (platform == Platform.GITHUB and search_params.get("search_value")) or platform == Platform.BITRISE
             if st.button("検索", type="primary", key="unified_search_btn", disabled=not can_search):
                 st.session_state[search_state_key]["page"] = 1
                 st.session_state[search_state_key]["params"] = {
@@ -1356,94 +1498,6 @@ elif page == "📦 リポジトリ管理":
 elif page == "🔌 Connections管理":
     st.header("🔌 Airflow Connections管理")
 
-    # Connection追加フォーム
-    with st.expander("➕ 新しいConnectionを追加", expanded=False):
-        with st.form("add_connection_form"):
-            col1, col2 = st.columns(2)
-            with col1:
-                new_conn_id = st.text_input(
-                    "Connection ID *",
-                    placeholder="my_connection",
-                    help="一意の識別子"
-                )
-
-                # Connection Type選択
-                conn_type_options = [
-                    "http",
-                    "postgres",
-                    "mysql",
-                    "sqlite",
-                    "aws",
-                    "gcp",
-                    "azure",
-                    "ssh",
-                    "ftp",
-                    "smtp",
-                    "slack",
-                    "その他（カスタム）"
-                ]
-                selected_conn_type = st.selectbox(
-                    "Connection Type *",
-                    options=conn_type_options,
-                    help="接続タイプを選択"
-                )
-
-                # カスタムタイプの入力
-                if selected_conn_type == "その他（カスタム）":
-                    new_conn_type = st.text_input(
-                        "カスタムConnection Type *",
-                        placeholder="custom_type",
-                        help="カスタム接続タイプを入力"
-                    )
-                else:
-                    new_conn_type = selected_conn_type
-
-                new_host = st.text_input("Host", placeholder="localhost")
-                new_schema = st.text_input("Schema/Database", placeholder="database_name")
-
-            with col2:
-                new_login = st.text_input("Login/Username", placeholder="user")
-                new_password = st.text_input("Password", type="password")
-                new_port = st.number_input("Port", min_value=0, max_value=65535, value=0, step=1)
-                new_description = st.text_input("Description", placeholder="接続の説明")
-
-            new_extra = st.text_area(
-                "Extra (JSON形式)",
-                placeholder='{"key": "value"}',
-                help="追加のJSON設定（オプション）"
-            )
-
-            submitted = st.form_submit_button("追加", type="primary")
-
-            if submitted:
-                # バリデーション
-                if not new_conn_id:
-                    st.error("Connection IDは必須です")
-                elif selected_conn_type == "その他（カスタム）" and not new_conn_type:
-                    st.error("カスタムConnection Typeを入力してください")
-                elif not new_conn_type:
-                    st.error("Connection Typeを選択してください")
-                else:
-                    try:
-                        port_value = new_port if new_port > 0 else None
-                        success, message = add_connection(
-                            new_conn_id, new_conn_type, new_description,
-                            new_host, new_schema, new_login, new_password,
-                            port_value, new_extra
-                        )
-                        if success:
-                            st.success(message)
-                            st.rerun()
-                        else:
-                            st.warning(message)
-                    except Exception as e:
-                        st.error(f"追加エラー: {e}")
-
-    st.divider()
-
-    # Connections一覧
-    st.subheader("登録済みConnections")
-
     try:
         conns_df = get_connections()
 
@@ -1453,7 +1507,7 @@ elif page == "🔌 Connections管理":
             # Connections一覧表示と操作
             for idx, row in conns_df.iterrows():
                 with st.container():
-                    col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
+                    col1, col2, col3 = st.columns([3, 2, 2])
 
                     with col1:
                         st.markdown(f"**🔌 {row['Connection ID']}**")
@@ -1472,21 +1526,6 @@ elif page == "🔌 Connections管理":
                             st.caption(f"👤 Login: {row['Login']}")
                         if row['Schema']:
                             st.caption(f"🗄️ Schema: {row['Schema']}")
-
-                    with col4:
-                        # 編集ボタン
-                        if st.button("編集", key=f"edit_{row['ID']}"):
-                            st.session_state[f"editing_{row['ID']}"] = True
-                            st.rerun()
-
-                        # 削除ボタン
-                        if st.button("削除", key=f"delete_{row['ID']}", type="secondary"):
-                            try:
-                                success, message = delete_connection(row['ID'])
-                                st.success(message)
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"削除エラー: {e}")
 
                     # 接続テストセクション
                     with st.expander("🔍 接続テスト", expanded=False):
@@ -1523,103 +1562,9 @@ elif page == "🔌 Connections管理":
                                 else:
                                     st.error("Connection情報の取得に失敗しました")
 
-                    # 編集フォーム
-                    if st.session_state.get(f"editing_{row['ID']}", False):
-                        with st.form(f"edit_form_{row['ID']}"):
-                            st.markdown(f"**Connection '{row['Connection ID']}' を編集**")
-
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                # Connection Type選択（編集）
-                                edit_conn_type_options = [
-                                    "http",
-                                    "postgres",
-                                    "mysql",
-                                    "sqlite",
-                                    "aws",
-                                    "gcp",
-                                    "azure",
-                                    "ssh",
-                                    "ftp",
-                                    "smtp",
-                                    "slack",
-                                    "その他（カスタム）"
-                                ]
-
-                                # 現在の値が定義リストにあるか確認
-                                current_type = row['Type']
-                                if current_type in edit_conn_type_options[:-1]:  # "その他（カスタム）"以外
-                                    default_index = edit_conn_type_options.index(current_type)
-                                    edit_selected_conn_type = st.selectbox(
-                                        "Connection Type *",
-                                        options=edit_conn_type_options,
-                                        index=default_index,
-                                        help="接続タイプを選択"
-                                    )
-                                else:
-                                    # カスタムタイプの場合
-                                    edit_selected_conn_type = st.selectbox(
-                                        "Connection Type *",
-                                        options=edit_conn_type_options,
-                                        index=len(edit_conn_type_options) - 1,  # "その他（カスタム）"を選択
-                                        help="接続タイプを選択"
-                                    )
-
-                                # カスタムタイプの入力
-                                if edit_selected_conn_type == "その他（カスタム）":
-                                    edit_conn_type = st.text_input(
-                                        "カスタムConnection Type *",
-                                        value=current_type if current_type not in edit_conn_type_options[:-1] else "",
-                                        placeholder="custom_type",
-                                        help="カスタム接続タイプを入力"
-                                    )
-                                else:
-                                    edit_conn_type = edit_selected_conn_type
-
-                                edit_host = st.text_input("Host", value=row['Host'] or "")
-                                edit_schema = st.text_input("Schema", value=row['Schema'] or "")
-
-                            with col2:
-                                edit_login = st.text_input("Login", value=row['Login'] or "")
-                                edit_password = st.text_input("Password (変更する場合のみ入力)", type="password")
-                                edit_port = st.number_input("Port", min_value=0, max_value=65535, value=int(row['Port']) if row['Port'] else 0, step=1)
-
-                            edit_description = st.text_input("Description", value=row['Description'] or "")
-                            edit_extra = st.text_area("Extra", value=row['Extra'] or "")
-
-                            col_save, col_cancel = st.columns(2)
-                            with col_save:
-                                save_button = st.form_submit_button("保存", type="primary")
-                            with col_cancel:
-                                cancel_button = st.form_submit_button("キャンセル")
-
-                            if save_button:
-                                # バリデーション
-                                if edit_selected_conn_type == "その他（カスタム）" and not edit_conn_type:
-                                    st.error("カスタムConnection Typeを入力してください")
-                                elif not edit_conn_type:
-                                    st.error("Connection Typeを選択してください")
-                                else:
-                                    try:
-                                        port_value = edit_port if edit_port > 0 else None
-                                        success, message = update_connection(
-                                            row['ID'], edit_conn_type, edit_description,
-                                            edit_host, edit_schema, edit_login, edit_password,
-                                            port_value, edit_extra
-                                        )
-                                        st.success(message)
-                                        del st.session_state[f"editing_{row['ID']}"]
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"更新エラー: {e}")
-
-                            if cancel_button:
-                                del st.session_state[f"editing_{row['ID']}"]
-                                st.rerun()
-
                     st.divider()
         else:
-            st.info("登録されているConnectionがありません。上のフォームから追加してください。")
+            st.info("登録されているConnectionがありません。")
 
     except Exception as e:
         st.error(f"Connections取得エラー: {e}")
@@ -1648,9 +1593,10 @@ elif page == "📈 実行履歴":
 
             # データ表示
             def color_status(val):
-                if val == "success":
+                status = val.upper() if isinstance(val, str) else ""
+                if status == PipelineStatus.SUCCESS:
                     return "background-color: #d4edda"
-                elif val == "failure":
+                elif status == PipelineStatus.FAILURE:
                     return "background-color: #f8d7da"
                 else:
                     return ""

@@ -19,7 +19,7 @@ from github import (
     RateLimitExceededException,
 )
 
-from nagare.constants import GitHubConfig
+from nagare.constants import GitHubConfig, Platform
 from nagare.utils.connections import (
     GitHubAppAuth,
     GitHubConnection,
@@ -203,6 +203,14 @@ class GitHubClient:
         self._repo_cache: dict[str, Any] | None = (
             {} if GitHubConfig.ENABLE_REPO_CACHE else None
         )
+
+    def get_platform(self) -> str:
+        """プラットフォーム識別子を返す
+
+        Returns:
+            str: Platform.GITHUB
+        """
+        return Platform.GITHUB
 
     def _get_repository(self, owner: str, repo: str) -> Any:
         """リポジトリオブジェクトを取得（キャッシュ使用）
