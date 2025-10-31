@@ -476,10 +476,16 @@ def _fetch_bitrise_builds_impl(
 
             logger.info(f"Fetched {len(builds)} builds from {repository_name}")
 
-            # リポジトリIDを追加
+            # リポジトリ情報を追加（transform_dataで必要）
+            owner, repo = repository_name.split("/", 1) if "/" in repository_name else (repository_name, repository_name)
             for build in builds:
                 build["repository_id"] = app["id"]
                 build["app_slug"] = app_slug
+                build["_repository_owner"] = owner
+                build["_repository_name"] = repo
+                # BitriseのビルドIDはslugフィールドにある。idフィールドとして複製
+                if "slug" in build and "id" not in build:
+                    build["id"] = build["slug"]
 
             all_builds.extend(builds)
             error_stats["successful"] += 1
