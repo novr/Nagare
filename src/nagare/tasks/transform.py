@@ -113,6 +113,9 @@ def transform_data(**context: Any) -> None:
             batch_task_id = task.task_id
             break
 
+    logger.info(f"Found batch task ID: {batch_task_id}")
+    logger.info(f"Available tasks in DAG: {[t.task_id for t in dag.tasks]}")
+
     # XComから全バッチのデータを集約
     all_workflow_runs = []
 
@@ -122,10 +125,13 @@ def transform_data(**context: Any) -> None:
         batch_count = 0
         for i in range(100):  # 最大100バッチをサポート
             batch_key = f"{XComKeys.WORKFLOW_RUNS}_batch_{i}"
+            logger.info(f"Trying to pull XCom: task_id={batch_task_id}, key={batch_key}")
             batch_data = ti.xcom_pull(task_ids=batch_task_id, key=batch_key)
+            logger.info(f"XCom pull result: type={type(batch_data)}, is_none={batch_data is None}, length={len(batch_data) if isinstance(batch_data, list) else 'N/A'}")
 
             if batch_data is None:
                 # このバッチ番号のデータが存在しない = 全バッチを取得完了
+                logger.info(f"No data found for batch {i}, stopping")
                 break
 
             if isinstance(batch_data, list):
