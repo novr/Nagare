@@ -82,45 +82,47 @@ github:
 # ==============================================================================
 # Bitrise接続設定
 # ==============================================================================
-bitrise:
-  # Personal Access Token
-  # ✅ 推奨: 環境変数から読み込み（.env ファイルで管理）
-  api_token: ${BITRISE_TOKEN}
-
-  # Bitrise API ベースURL
-  # base_url: ${BITRISE_API_URL:-https://api.bitrise.io/v0.1}
+# ⚠️ Bitriseを使用する場合のみ、以下のコメントを解除してください
+# bitrise:
+#   # Personal Access Token
+#   # ✅ 推奨: 環境変数から読み込み（.env ファイルで管理）
+#   api_token: ${BITRISE_TOKEN}
+#
+#   # Bitrise API ベースURL
+#   # base_url: ${BITRISE_API_URL:-https://api.bitrise.io/v0.1}
 
 
 # ==============================================================================
 # Xcode Cloud接続設定
 # ==============================================================================
-xcode_cloud:
-  # App Store Connect API認証情報
-  # JWT (JSON Web Token)認証を使用
-  #
-  # ✅ 推奨: 環境変数から読み込み（.env ファイルで管理）
-  #
-  # 取得方法:
-  #   1. App Store Connect (https://appstoreconnect.apple.com) にログイン
-  #   2. Users and Access > Keys > App Store Connect API
-  #   3. 新しいキーを作成（権限: App Manager または Admin）
-  #   4. Key ID, Issuer ID, Private Key (.p8ファイル) をダウンロード
-
-  # App Store Connect API Key ID
-  key_id: ${APPSTORE_KEY_ID}
-
-  # App Store Connect API Issuer ID
-  issuer_id: ${APPSTORE_ISSUER_ID}
-
-  # Private Key (P8形式の内容)
-  # オプション1: 環境変数に直接P8ファイルの内容を設定
-  # private_key: ${APPSTORE_PRIVATE_KEY}
-
-  # オプション2: P8ファイルのパスを指定（どちらか一方を使用）
-  private_key_path: ${APPSTORE_PRIVATE_KEY_PATH}
-
-  # App Store Connect API ベースURL
-  # base_url: ${APPSTORE_API_URL:-https://api.appstoreconnect.apple.com/v1}
+# ⚠️ Xcode Cloudを使用する場合のみ、以下のコメントを解除してください
+# xcode_cloud:
+#   # App Store Connect API認証情報
+#   # JWT (JSON Web Token)認証を使用
+#   #
+#   # ✅ 推奨: 環境変数から読み込み（.env ファイルで管理）
+#   #
+#   # 取得方法:
+#   #   1. App Store Connect (https://appstoreconnect.apple.com) にログイン
+#   #   2. Users and Access > Keys > App Store Connect API
+#   #   3. 新しいキーを作成（権限: App Manager または Admin）
+#   #   4. Key ID, Issuer ID, Private Key (.p8ファイル) をダウンロード
+#
+#   # App Store Connect API Key ID
+#   key_id: ${APPSTORE_KEY_ID}
+#
+#   # App Store Connect API Issuer ID
+#   issuer_id: ${APPSTORE_ISSUER_ID}
+#
+#   # Private Key (P8形式の内容)
+#   # オプション1: 環境変数に直接P8ファイルの内容を設定
+#   # private_key: ${APPSTORE_PRIVATE_KEY}
+#
+#   # オプション2: P8ファイルのパスを指定（どちらか一方を使用）
+#   private_key_path: ${APPSTORE_PRIVATE_KEY_PATH}
+#
+#   # App Store Connect API ベースURL
+#   # base_url: ${APPSTORE_API_URL:-https://api.appstoreconnect.apple.com/v1}
 
 # 複数のApple開発者アカウントを使用する例
 # xcode_cloud_team_a:
