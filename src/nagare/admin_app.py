@@ -24,9 +24,16 @@ from nagare.utils.bitrise_client import BitriseClient
 from nagare.utils.xcode_cloud_client import XcodeCloudClient
 
 # Connection設定ファイルの読み込み
+connection_load_error = None
 connections_file = os.getenv("NAGARE_CONNECTIONS_FILE")
 if connections_file and Path(connections_file).exists():
-    ConnectionRegistry.from_file(connections_file)
+    try:
+        ConnectionRegistry.from_file(connections_file)
+    except ValueError as e:
+        # 環境変数が設定されていない場合でもアプリは起動
+        connection_load_error = str(e)
+    except Exception as e:
+        connection_load_error = f"設定ファイル読み込みエラー: {e}"
 
 # ページ設定
 st.set_page_config(
@@ -1339,6 +1346,20 @@ def test_connection(connection_id: int, conn_type: str, host: str = None, port: 
 # メインUI
 st.title("🌊 Nagare 管理画面")
 st.markdown("CI/CD監視システムの管理インターフェース")
+
+# Connection読み込みエラーの表示
+if connection_load_error:
+    st.error(
+        f"⚠️ **Connection設定の読み込みエラー**\n\n{connection_load_error}\n\n"
+        "**対処方法:**\n"
+        "- 未使用のプラットフォーム（Bitrise/Xcode Cloud）の設定を `connections.yml` でコメントアウト\n"
+        "- または、必要な環境変数を `.env` ファイルに設定\n"
+        "- 設定後、ページをリロードしてください"
+    )
+    st.info(
+        "💡 一部の機能（該当プラットフォームのリポジトリ検索など）が利用できませんが、"
+        "アプリは起動しています。"
+    )
 
 # サイドバー
 with st.sidebar:
