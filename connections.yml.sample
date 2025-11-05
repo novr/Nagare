@@ -1,6 +1,6 @@
 # Nagare Connection Configuration
 #
-# この設定ファイルは環境変数の代わりにConnection情報を管理できます。
+# この設定ファイルはConnection情報を管理し、Airflow Connectionとしても使用できます。
 # 使用方法：
 #   1. cp connections.yml.sample connections.yml
 #   2. 必要な項目を編集
@@ -25,144 +25,131 @@
 #   - 本番環境では環境変数の使用を推奨
 
 # ==============================================================================
-# GitHub接続設定
+# 接続設定（リスト形式）
 # ==============================================================================
+# 各接続は conn_id（一意の識別子）と conn_type（接続タイプ）を持ちます。
+# この形式により、同じタイプの複数の接続を定義できます。
+# 例: github_prod, github_dev, xcode_cloud_team_a, xcode_cloud_team_b
 
-# GitHub接続（推奨：環境変数から読み込み）
-github:
-  # Personal Access Token認証
-  # ✅ 推奨: 環境変数から読み込み（.env ファイルで管理）
-  token: ${GITHUB_TOKEN}
+connections:
+  # ==========================================================================
+  # GitHub接続設定
+  # ==========================================================================
 
-  # GitHub Enterprise用のベースURL（オプション）
-  # base_url: ${GITHUB_API_URL:-https://api.github.com}
+  # GitHub接続（推奨：環境変数から読み込み）
+  - conn_id: github
+    conn_type: github
+    # Personal Access Token認証
+    # ✅ 推奨: 環境変数から読み込み（.env ファイルで管理）
+    token: ${GITHUB_TOKEN}
+    # GitHub Enterprise用のベースURL（オプション）
+    # base_url: ${GITHUB_API_URL:-https://api.github.com}
 
-# 複数のGitHub接続を定義する例
-# github_enterprise:
-#   token: ${GITHUB_ENTERPRISE_TOKEN}
-#   base_url: ${GITHUB_ENTERPRISE_URL}
-#
-# github_readonly:
-#   # 読み取り専用トークン（より安全）
-#   token: ${GITHUB_READONLY_TOKEN}
-
-# GitHub Apps認証の例（エンタープライズ向け）
-# github_app:
-#   app_id: ${GITHUB_APP_ID}
-#   installation_id: ${GITHUB_APP_INSTALLATION_ID}
-#   private_key_path: ${GITHUB_APP_PRIVATE_KEY_PATH}
-#   # または、private_keyに直接記載（非推奨）
-#   # private_key: ${GITHUB_APP_PRIVATE_KEY}
-
-
-# ==============================================================================
-# GitLab接続設定（将来の拡張用）
-# ==============================================================================
-# gitlab_default:
-#   # Personal Access Token
-#   # ✅ 推奨: 環境変数から読み込み
-#   token: ${GITLAB_TOKEN}
-#
-#   # GitLab Enterprise用のベースURL
-#   # base_url: ${GITLAB_URL:-https://gitlab.com}
-
-
-# ==============================================================================
-# CircleCI接続設定（将来の拡張用）
-# ==============================================================================
-# circleci_default:
-#   # API Token
-#   # ✅ 推奨: 環境変数から読み込み
-#   api_token: ${CIRCLECI_TOKEN}
-#
-#   # CircleCI Enterprise用のベースURL
-#   # base_url: ${CIRCLECI_API_URL:-https://circleci.com/api}
-
-
-# ==============================================================================
-# Bitrise接続設定
-# ==============================================================================
-# ⚠️ Bitriseを使用する場合は、.envにBITRISE_TOKENを設定してください
-bitrise:
-  # Personal Access Token
-  # ✅ 推奨: 環境変数から読み込み（.env ファイルで管理）
-  api_token: ${BITRISE_TOKEN:-}
-
-  # Bitrise API ベースURL
-  # base_url: ${BITRISE_API_URL:-https://api.bitrise.io/v0.1}
-
-
-# ==============================================================================
-# Xcode Cloud接続設定
-# ==============================================================================
-# ⚠️ Xcode Cloudを使用する場合は、.envにAPPSTORE_*変数を設定してください
-xcode_cloud:
-  # App Store Connect API認証情報
-  # JWT (JSON Web Token)認証を使用
+  # 複数のGitHub接続を定義する例
+  # - conn_id: github_enterprise
+  #   conn_type: github
+  #   token: ${GITHUB_ENTERPRISE_TOKEN}
+  #   base_url: ${GITHUB_ENTERPRISE_URL}
   #
-  # ✅ 推奨: 環境変数から読み込み（.env ファイルで管理）
+  # - conn_id: github_readonly
+  #   conn_type: github
+  #   # 読み取り専用トークン（より安全）
+  #   token: ${GITHUB_READONLY_TOKEN}
+
+  # GitHub Apps認証の例（エンタープライズ向け）
+  # - conn_id: github_app
+  #   conn_type: github
+  #   app_id: ${GITHUB_APP_ID}
+  #   installation_id: ${GITHUB_APP_INSTALLATION_ID}
+  #   # private_keyに直接記載
+  #   # private_key: ${GITHUB_APP_PRIVATE_KEY}
+
+  # ==========================================================================
+  # Bitrise接続設定
+  # ==========================================================================
+  # ⚠️ Bitriseを使用する場合は、.envにBITRISE_TOKENを設定してください
+
+  - conn_id: bitrise
+    conn_type: bitrise
+    # Personal Access Token
+    # ✅ 推奨: 環境変数から読み込み（.env ファイルで管理）
+    api_token: ${BITRISE_TOKEN:-}
+    # Bitrise API ベースURL
+    # base_url: ${BITRISE_API_URL:-https://api.bitrise.io/v0.1}
+
+  # ==========================================================================
+  # Xcode Cloud接続設定
+  # ==========================================================================
+  # ⚠️ Xcode Cloudを使用する場合は、.envにAPPSTORE_*変数を設定してください
+
+  - conn_id: xcode_cloud
+    conn_type: xcode_cloud
+    # App Store Connect API認証情報
+    # JWT (JSON Web Token)認証を使用
+    #
+    # ✅ 推奨: 環境変数から読み込み（.env ファイルで管理）
+    #
+    # 取得方法:
+    #   1. App Store Connect (https://appstoreconnect.apple.com) にログイン
+    #   2. Users and Access > Keys > App Store Connect API
+    #   3. 新しいキーを作成（権限: App Manager または Admin）
+    #   4. Key ID, Issuer ID, Private Key (.p8ファイル) をダウンロード
+
+    # App Store Connect API Key ID
+    key_id: ${APPSTORE_KEY_ID}
+
+    # App Store Connect API Issuer ID
+    issuer_id: ${APPSTORE_ISSUER_ID}
+
+    # Private Key (P8形式の内容)
+    # 環境変数に直接P8ファイルの内容を設定
+    private_key: ${APPSTORE_PRIVATE_KEY}
+
+    # App Store Connect API ベースURL
+    # base_url: ${APPSTORE_API_URL:-https://api.appstoreconnect.apple.com/v1}
+
+  # 複数のApple開発者アカウントを使用する例
+  # - conn_id: xcode_cloud_team_a
+  #   conn_type: xcode_cloud
+  #   key_id: ${APPSTORE_TEAM_A_KEY_ID}
+  #   issuer_id: ${APPSTORE_TEAM_A_ISSUER_ID}
+  #   private_key: ${APPSTORE_TEAM_A_PRIVATE_KEY}
   #
-  # 取得方法:
-  #   1. App Store Connect (https://appstoreconnect.apple.com) にログイン
-  #   2. Users and Access > Keys > App Store Connect API
-  #   3. 新しいキーを作成（権限: App Manager または Admin）
-  #   4. Key ID, Issuer ID, Private Key (.p8ファイル) をダウンロード
+  # - conn_id: xcode_cloud_team_b
+  #   conn_type: xcode_cloud
+  #   key_id: ${APPSTORE_TEAM_B_KEY_ID}
+  #   issuer_id: ${APPSTORE_TEAM_B_ISSUER_ID}
+  #   private_key: ${APPSTORE_TEAM_B_PRIVATE_KEY}
 
-  # App Store Connect API Key ID
-  key_id: ${APPSTORE_KEY_ID:-}
+  # ==========================================================================
+  # データベース接続設定
+  # ==========================================================================
 
-  # App Store Connect API Issuer ID
-  issuer_id: ${APPSTORE_ISSUER_ID:-}
+  - conn_id: database
+    conn_type: database
+    # PostgreSQL接続情報
 
-  # Private Key (P8形式の内容)
-  # オプション1: 環境変数に直接P8ファイルの内容を設定
-  # private_key: ${APPSTORE_PRIVATE_KEY:-}
+    # Docker環境（推奨）:
+    #   - host/portは docker-compose.yml で管理（固定値）
+    #   - パスワードのみ環境変数から読み込み
+    host: postgres  # Docker Composeのサービス名（固定）
+    port: 5432      # コンテナ内ポート（固定）
+    database: ${DATABASE_NAME:-nagare}
+    user: ${DATABASE_USER:-nagare_user}
+    password: ${DATABASE_PASSWORD}
 
-  # オプション2: P8ファイルのパスを指定（どちらか一方を使用）
-  private_key_path: ${APPSTORE_PRIVATE_KEY_PATH:-}
+    # ローカル開発環境（docker-compose.yml不使用）:
+    #   すべてを環境変数から読み込む場合はコメント解除
+    # host: ${DATABASE_HOST:-localhost}
+    # port: ${DATABASE_PORT:-5432}
+    # database: ${DATABASE_NAME:-nagare}
+    # user: ${DATABASE_USER:-nagare_user}
+    # password: ${DATABASE_PASSWORD}
 
-  # App Store Connect API ベースURL
-  # base_url: ${APPSTORE_API_URL:-https://api.appstoreconnect.apple.com/v1}
-
-# 複数のApple開発者アカウントを使用する例
-# xcode_cloud_team_a:
-#   key_id: ${APPSTORE_TEAM_A_KEY_ID}
-#   issuer_id: ${APPSTORE_TEAM_A_ISSUER_ID}
-#   private_key: ${APPSTORE_TEAM_A_PRIVATE_KEY}
-#
-# xcode_cloud_team_b:
-#   key_id: ${APPSTORE_TEAM_B_KEY_ID}
-#   issuer_id: ${APPSTORE_TEAM_B_ISSUER_ID}
-#   private_key: ${APPSTORE_TEAM_B_PRIVATE_KEY}
-
-
-# ==============================================================================
-# データベース接続設定
-# ==============================================================================
-database:
-  # PostgreSQL接続情報
-
-  # Docker環境（推奨）:
-  #   - host/portは docker-compose.yml で管理（固定値）
-  #   - パスワードのみ環境変数から読み込み
-  host: postgres  # Docker Composeのサービス名（固定）
-  port: 5432      # コンテナ内ポート（固定）
-  database: ${DATABASE_NAME:-nagare}
-  user: ${DATABASE_USER:-nagare_user}
-  password: ${DATABASE_PASSWORD}
-
-  # ローカル開発環境（docker-compose.yml不使用）:
-  #   すべてを環境変数から読み込む場合はコメント解除
-  # host: ${DATABASE_HOST:-localhost}
-  # port: ${DATABASE_PORT:-5432}
-  # database: ${DATABASE_NAME:-nagare}
-  # user: ${DATABASE_USER:-nagare_user}
-  # password: ${DATABASE_PASSWORD}
-
-  # Connection pooling設定（オプション）
-  # pool_size: 5
-  # max_overflow: 10
-  # pool_pre_ping: true
+    # Connection pooling設定（オプション）
+    # pool_size: 5
+    # max_overflow: 10
+    # pool_pre_ping: true
 
 
 # ==============================================================================
@@ -183,18 +170,23 @@ database:
 #    # DATABASE_HOSTとPORTは不要（docker-compose.ymlで管理）
 #
 # 2. connections.yml で構造を定義（このファイル）:
-#    github:
-#      token: ${GITHUB_TOKEN}
-#    bitrise:
-#      api_token: ${BITRISE_TOKEN}
-#    xcode_cloud:
-#      key_id: ${APPSTORE_KEY_ID}
-#      issuer_id: ${APPSTORE_ISSUER_ID}
-#      private_key: ${APPSTORE_PRIVATE_KEY}
-#    database:
-#      host: postgres  # 固定値（Docker Composeのサービス名）
-#      port: 5432      # 固定値
-#      password: ${DATABASE_PASSWORD}
+#    connections:
+#      - conn_id: github
+#        conn_type: github
+#        token: ${GITHUB_TOKEN}
+#      - conn_id: bitrise
+#        conn_type: bitrise
+#        api_token: ${BITRISE_TOKEN}
+#      - conn_id: xcode_cloud
+#        conn_type: xcode_cloud
+#        key_id: ${APPSTORE_KEY_ID}
+#        issuer_id: ${APPSTORE_ISSUER_ID}
+#        private_key: ${APPSTORE_PRIVATE_KEY}
+#      - conn_id: database
+#        conn_type: database
+#        host: postgres  # 固定値（Docker Composeのサービス名）
+#        port: 5432      # 固定値
+#        password: ${DATABASE_PASSWORD}
 #
 # 3. Pythonコードで読み込み:
 #    from nagare.utils.connections import ConnectionRegistry
@@ -202,11 +194,15 @@ database:
 #    # 設定ファイルから読み込み（環境変数が自動展開される）
 #    ConnectionRegistry.from_file("connections.yml")
 #
-#    # 接続を取得
+#    # 接続を取得（デフォルト接続を自動選択）
 #    github_conn = ConnectionRegistry.get_github()
 #    bitrise_conn = ConnectionRegistry.get_bitrise()
 #    xcode_cloud_conn = ConnectionRegistry.get_xcode_cloud()
 #    db_conn = ConnectionRegistry.get_database()
+#
+#    # 特定のconn_idを指定して取得
+#    github_ro_conn = ConnectionRegistry.get("github_readonly")
+#    xcode_team_a_conn = ConnectionRegistry.get("xcode_cloud_team_a")
 #
 # 【ローカル開発環境（docker-compose.yml不使用）】
 #
@@ -221,24 +217,30 @@ database:
 #    DATABASE_PASSWORD=secure_password
 #
 # 2. connections.yml ですべて環境変数から読み込み:
-#    database:
-#      host: ${DATABASE_HOST:-localhost}
-#      port: ${DATABASE_PORT:-5432}
-#      password: ${DATABASE_PASSWORD}
+#    connections:
+#      - conn_id: database
+#        conn_type: database
+#        host: ${DATABASE_HOST:-localhost}
+#        port: ${DATABASE_PORT:-5432}
+#        password: ${DATABASE_PASSWORD}
 #
 # ==============================================================================
 # 複数の接続を使い分ける例
 # ==============================================================================
 #
 # connections.yml:
-#   github_prod:
-#     token: ${GITHUB_PROD_TOKEN}
+#   connections:
+#     - conn_id: github_prod
+#       conn_type: github
+#       token: ${GITHUB_PROD_TOKEN}
 #
-#   github_dev:
-#     token: ${GITHUB_DEV_TOKEN}
+#     - conn_id: github_dev
+#       conn_type: github
+#       token: ${GITHUB_DEV_TOKEN}
 #
-#   github_ci:
-#     token: ${GITHUB_CI_TOKEN}
+#     - conn_id: github_ci
+#       conn_type: github
+#       token: ${GITHUB_CI_TOKEN}
 #
 # .env:
 #   GITHUB_PROD_TOKEN=ghp_prod_xxxxx
@@ -246,8 +248,12 @@ database:
 #   GITHUB_CI_TOKEN=ghp_ci_xxxxx
 #
 # 使用方法:
-#   - Airflow Connectionとして登録して使い分ける
-#   - または、コード内で明示的に切り替える
+#   # デフォルト接続（最初に定義された接続）
+#   github_conn = ConnectionRegistry.get_github()
+#
+#   # 特定のconn_idを指定
+#   prod_conn = ConnectionRegistry.get("github_prod")
+#   dev_conn = ConnectionRegistry.get("github_dev")
 #
 # ==============================================================================
 # 環境変数展開の構文
@@ -288,9 +294,8 @@ database:
 # A: ${VAR_NAME:-default} の構文を確認してください（コロンとハイフン）。
 #
 # Q: 複数の接続を定義したが使えない
-# A: 現在の実装では、github/gitlab/circleci/bitrise/xcode_cloud/database の
-#    キー名で1つずつしか読み込めません。複数定義する場合は
-#    Airflow Connection として登録してください。
+# A: ConnectionRegistry.get("conn_id") で特定のconn_idを指定して取得してください。
+#    または、get_github()などのメソッドはデフォルト接続（最初に定義された接続）を返します。
 #
 # Q: Xcode CloudのPrivate Keyが認識されない
 # A: Private Keyは改行を含む複数行の文字列です。.envファイルでは

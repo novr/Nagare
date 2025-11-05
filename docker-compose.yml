@@ -7,6 +7,8 @@ x-airflow-common: &airflow-common
       # ローカル開発環境ではテスト実行のため development を指定
       # 本番環境では BUILD_ENV を指定しない（デフォルト: production）
       BUILD_ENV: development
+  env_file:
+    - .env
   volumes:
     - ./src:/opt/airflow/src:ro
     - ./tests:/opt/airflow/tests:ro
@@ -25,17 +27,8 @@ x-airflow-env: &airflow-env # Airflow Core設定
   # データベース接続（Airflow用）
   AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${DATABASE_USER}:${DATABASE_PASSWORD}@postgres:5432/${DATABASE_NAME}
 
-  # Connection設定ファイルのパス
+  # Connection設定ファイルのパス（コンテナ内固有）
   NAGARE_CONNECTIONS_FILE: /opt/airflow/connections.yml
-
-  # CI/CDプラットフォームのトークン
-  GITHUB_TOKEN: ${GITHUB_TOKEN}
-  BITRISE_TOKEN: ${BITRISE_TOKEN}
-
-  # データベース接続情報（connections.ymlで使用）
-  DATABASE_USER: ${DATABASE_USER}
-  DATABASE_NAME: ${DATABASE_NAME}
-  DATABASE_PASSWORD: ${DATABASE_PASSWORD}
 
   # アプリケーション設定
   AIRFLOW_ALERT_EMAIL: ${AIRFLOW_ALERT_EMAIL:-admin@example.com}
@@ -124,6 +117,8 @@ services:
       context: .
       dockerfile: docker/Dockerfile.airflow
     container_name: nagare-airflow-init
+    env_file:
+      - .env
     entrypoint: /bin/bash
     command:
       - -c
@@ -147,9 +142,6 @@ services:
           --email ${AIRFLOW_ALERT_EMAIL:-admin@example.com} || true
     environment:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${DATABASE_USER}:${DATABASE_PASSWORD}@postgres:5432/${DATABASE_NAME}
-      DATABASE_USER: ${DATABASE_USER}
-      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
-      DATABASE_NAME: ${DATABASE_NAME}
     volumes:
       - ./scripts:/opt/airflow/scripts:ro
     depends_on:
@@ -164,9 +156,10 @@ services:
       context: .
       dockerfile: docker/Dockerfile.superset
     container_name: nagare-superset
+    env_file:
+      - .env
     environment:
       # Superset設定
-      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY}
       SUPERSET_LOAD_EXAMPLES: "no"
 
       # PostgreSQLメタデータベース接続（Superset専用データベース）
@@ -202,22 +195,15 @@ services:
       context: .
       dockerfile: docker/Dockerfile.streamlit
     container_name: nagare-streamlit-admin
+    env_file:
+      - .env
     ports:
       - "${STREAMLIT_PORT:-8501}:8501"
     volumes:
       - ./connections.yml:/app/connections.yml:ro
     environment:
-      # Connection設定ファイルのパス
+      # Connection設定ファイルのパス（コンテナ内固有）
       NAGARE_CONNECTIONS_FILE: /app/connections.yml
-
-      # データベース接続情報（connections.ymlで使用）
-      DATABASE_USER: ${DATABASE_USER}
-      DATABASE_NAME: ${DATABASE_NAME}
-      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
-
-      # CI/CDプラットフォームのトークン（オプション）
-      GITHUB_TOKEN: ${GITHUB_TOKEN}
-      BITRISE_TOKEN: ${BITRISE_TOKEN}
     depends_on:
       postgres:
         condition: service_healthy

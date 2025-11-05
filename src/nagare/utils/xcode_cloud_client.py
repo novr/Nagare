@@ -58,7 +58,6 @@ class XcodeCloudClient:
         key_id: str | None = None,
         issuer_id: str | None = None,
         private_key: str | None = None,
-        private_key_path: str | None = None,
         base_url: str = "https://api.appstoreconnect.apple.com/v1",
     ) -> None:
         """Xcode Cloud Clientを初期化する
@@ -68,7 +67,6 @@ class XcodeCloudClient:
             key_id: App Store Connect API Key ID（非推奨）
             issuer_id: App Store Connect API Issuer ID（非推奨）
             private_key: Private Key文字列（非推奨）
-            private_key_path: Private Key P8ファイルパス（非推奨）
             base_url: App Store Connect API ベースURL（非推奨）
 
         Raises:
@@ -77,12 +75,11 @@ class XcodeCloudClient:
         # Connection優先、なければ既存引数から生成、最後に環境変数
         if connection is None:
             # 既存の引数が指定されている場合（後方互換性）
-            if any([key_id, issuer_id, private_key, private_key_path]):
+            if any([key_id, issuer_id, private_key]):
                 connection = XcodeCloudConnection(
                     key_id=key_id,
                     issuer_id=issuer_id,
                     private_key=private_key,
-                    private_key_path=private_key_path,
                     base_url=base_url,
                 )
             else:
@@ -102,13 +99,9 @@ class XcodeCloudClient:
         self.base_url = connection.base_url
 
         # Private Keyを読み込み
-        if connection.private_key:
-            self.private_key = connection.private_key
-        elif connection.private_key_path:
-            with open(connection.private_key_path, 'r') as f:
-                self.private_key = f.read()
-        else:
-            raise ValueError("Private key or private_key_path is required")
+        if not connection.private_key:
+            raise ValueError("Private key is required")
+        self.private_key = connection.private_key
 
         # JWTトークンキャッシュ
         self.token_cache: str | None = None

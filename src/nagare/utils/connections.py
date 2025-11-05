@@ -928,7 +928,6 @@ class XcodeCloudConnection(BaseConnection):
     key_id: str | None = None
     issuer_id: str | None = None
     private_key: str | None = None  # Private Key文字列
-    private_key_path: str | None = None  # Private Key P8ファイルパス
     base_url: str = "https://api.appstoreconnect.apple.com/v1"
 
     def get_platform(self) -> str:
@@ -947,7 +946,6 @@ class XcodeCloudConnection(BaseConnection):
             APPSTORE_KEY_ID: App Store Connect API Key ID
             APPSTORE_ISSUER_ID: App Store Connect API Issuer ID
             APPSTORE_PRIVATE_KEY: Private Key文字列（P8形式）
-            APPSTORE_PRIVATE_KEY_PATH: Private Key P8ファイルパス
             APPSTORE_API_URL: ベースURL（デフォルト: https://api.appstoreconnect.apple.com/v1）
 
         Returns:
@@ -957,7 +955,6 @@ class XcodeCloudConnection(BaseConnection):
             key_id=os.getenv("APPSTORE_KEY_ID"),
             issuer_id=os.getenv("APPSTORE_ISSUER_ID"),
             private_key=os.getenv("APPSTORE_PRIVATE_KEY"),
-            private_key_path=os.getenv("APPSTORE_PRIVATE_KEY_PATH"),
             base_url=os.getenv("APPSTORE_API_URL", "https://api.appstoreconnect.apple.com/v1"),
         )
 
@@ -982,7 +979,6 @@ class XcodeCloudConnection(BaseConnection):
         - extra.key_id: Key ID（loginの代替）
         - extra.issuer_id: Issuer ID（必須）
         - extra.private_key: Private Key文字列（passwordの代替）
-        - extra.private_key_path: Private Key P8ファイルパス
         - extra.base_url: ベースURL（hostの代替）
 
         Args:
@@ -1014,7 +1010,6 @@ class XcodeCloudConnection(BaseConnection):
             key_id=key_id,
             issuer_id=extra.get("issuer_id"),
             private_key=private_key,
-            private_key_path=extra.get("private_key_path"),
             base_url=base_url,
         )
 
@@ -1172,8 +1167,11 @@ class ConnectionRegistry:
     テスト時はset_*メソッドでモック注入可能。
 
     使用例:
-        # 取得
+        # 取得（デフォルト接続）
         github_conn = ConnectionRegistry.get_github()
+
+        # 特定のconn_idを指定して取得
+        prod_conn = ConnectionRegistry.get("github_prod")
 
         # テスト時のモック注入
         ConnectionRegistry.set_github(GitHubConnection(token="test"))
@@ -1185,12 +1183,27 @@ class ConnectionRegistry:
         ConnectionRegistry.from_file("connections.yml")
     """
 
+    # 単一接続（デフォルト接続、後方互換性のため）
     _github: GitHubConnection | None = None
     _gitlab: GitLabConnection | None = None
     _circleci: CircleCIConnection | None = None
     _bitrise: BitriseConnection | None = None
     _xcode_cloud: XcodeCloudConnection | None = None
     _database: DatabaseConnection | None = None
+
+    # 複数接続管理（conn_id -> connection）
+    _github_connections: dict[str, GitHubConnection] = {}
+    _gitlab_connections: dict[str, GitLabConnection] = {}
+    _circleci_connections: dict[str, CircleCIConnection] = {}
+    _bitrise_connections: dict[str, BitriseConnection] = {}
+    _xcode_cloud_connections: dict[str, XcodeCloudConnection] = {}
+    _database_connections: dict[str, DatabaseConnection] = {}
+
+    # 全接続の管理（conn_id -> connection）
+    _all_connections: dict[str, Any] = {}
+
+    # 読み込みに失敗した接続の記録（conn_id -> error_info）
+    _failed_connections: dict[str, dict[str, Any]] = {}
 
     @classmethod
     def get_github(cls) -> GitHubConnection:
@@ -1319,6 +1332,23 @@ class ConnectionRegistry:
         logger.debug("Database connection updated")
 
     @classmethod
+    def get(cls, conn_id: str) -> Any:
+        """conn_idを指定して接続を取得
+
+        Args:
+            conn_id: 接続ID
+
+        Returns:
+            接続オブジェクト
+
+        Raises:
+            KeyError: 指定されたconn_idが存在しない場合
+        """
+        if conn_id not in cls._all_connections:
+            raise KeyError(f"Connection '{conn_id}' not found. Available connections: {list(cls._all_connections.keys())}")
+        return cls._all_connections[conn_id]
+
+    @classmethod
     def reset_all(cls) -> None:
         """全てのConnectionをリセット（テスト用）"""
         cls._github = None
@@ -1327,6 +1357,17 @@ class ConnectionRegistry:
         cls._bitrise = None
         cls._xcode_cloud = None
         cls._database = None
+
+        # 複数接続もクリア
+        cls._github_connections.clear()
+        cls._gitlab_connections.clear()
+        cls._circleci_connections.clear()
+        cls._bitrise_connections.clear()
+        cls._xcode_cloud_connections.clear()
+        cls._database_connections.clear()
+        cls._all_connections.clear()
+        cls._failed_connections.clear()
+
         logger.debug("All connections reset")
 
     @classmethod
@@ -1342,6 +1383,121 @@ class ConnectionRegistry:
             "circleci": cls.get_circleci().validate(),
             "database": cls.get_database().validate(),
         }
+
+    @classmethod
+    def _load_connections_list(cls, connections: list[dict[str, Any]]) -> None:
+        """リスト形式の接続設定を読み込む
+
+        Args:
+            connections: 接続設定のリスト（各要素にconn_idとconn_typeを含む）
+        """
+        for conn_config in connections:
+            if not isinstance(conn_config, dict):
+                logger.warning(f"Skipping invalid connection config (not a dict): {conn_config}")
+                continue
+
+            conn_id = conn_config.get("conn_id")
+            conn_type = conn_config.get("conn_type")
+
+            if not conn_id or not conn_type:
+                logger.warning(f"Skipping connection config without conn_id or conn_type: {conn_config}")
+                continue
+
+            try:
+                cls._load_single_connection(conn_id, conn_type, conn_config)
+            except Exception as e:
+                masked_config = cls._mask_secrets(conn_config)
+                logger.error(f"Failed to load connection '{conn_id}' (type: {conn_type}): {e}, config={masked_config}")
+
+                # 失敗した接続を記録
+                cls._failed_connections[conn_id] = {
+                    "conn_type": conn_type,
+                    "platform": conn_type,  # conn_typeをplatformとして使用
+                    "error": str(e),
+                    "config": masked_config
+                }
+
+                # 一つの接続が失敗しても他は読み込み続ける
+                continue
+
+    @classmethod
+    def _load_single_connection(cls, conn_id: str, conn_type: str, conn_config: dict[str, Any]) -> None:
+        """単一の接続を読み込む
+
+        Args:
+            conn_id: 接続ID
+            conn_type: 接続タイプ
+            conn_config: 接続設定
+        """
+        # 環境変数を展開（この接続の設定のみ）
+        conn_config = cls._expand_env_vars(conn_config)
+
+        # conn_idとconn_typeを除いた設定を取得
+        config = {k: v for k, v in conn_config.items() if k not in ["conn_id", "conn_type"]}
+
+        if conn_type == "github":
+            # base_url を _base_url にマッピング
+            if "base_url" in config:
+                config["_base_url"] = config.pop("base_url")
+
+            if "token" in config:
+                conn = GitHubTokenAuth(**config)
+            elif "app_id" in config and "installation_id" in config:
+                conn = GitHubAppAuth(**config)
+            else:
+                raise ValueError(
+                    f"GitHub connection '{conn_id}' must have either 'token' or ('app_id' and 'installation_id')"
+                )
+            cls._github_connections[conn_id] = conn
+            cls._all_connections[conn_id] = conn
+
+            # 最初のGitHub接続をデフォルトとして設定
+            if cls._github is None:
+                cls._github = conn
+            logger.info(f"GitHub connection '{conn_id}' loaded from file")
+
+        elif conn_type == "gitlab":
+            conn = GitLabConnection(**config)
+            cls._gitlab_connections[conn_id] = conn
+            cls._all_connections[conn_id] = conn
+            if cls._gitlab is None:
+                cls._gitlab = conn
+            logger.info(f"GitLab connection '{conn_id}' loaded from file")
+
+        elif conn_type == "circleci":
+            conn = CircleCIConnection(**config)
+            cls._circleci_connections[conn_id] = conn
+            cls._all_connections[conn_id] = conn
+            if cls._circleci is None:
+                cls._circleci = conn
+            logger.info(f"CircleCI connection '{conn_id}' loaded from file")
+
+        elif conn_type == "bitrise":
+            conn = BitriseConnection(**config)
+            cls._bitrise_connections[conn_id] = conn
+            cls._all_connections[conn_id] = conn
+            if cls._bitrise is None:
+                cls._bitrise = conn
+            logger.info(f"Bitrise connection '{conn_id}' loaded from file")
+
+        elif conn_type == "xcode_cloud":
+            conn = XcodeCloudConnection(**config)
+            cls._xcode_cloud_connections[conn_id] = conn
+            cls._all_connections[conn_id] = conn
+            if cls._xcode_cloud is None:
+                cls._xcode_cloud = conn
+            logger.info(f"Xcode Cloud connection '{conn_id}' loaded from file")
+
+        elif conn_type == "database":
+            conn = DatabaseConnection(**config)
+            cls._database_connections[conn_id] = conn
+            cls._all_connections[conn_id] = conn
+            if cls._database is None:
+                cls._database = conn
+            logger.info(f"Database connection '{conn_id}' loaded from file")
+
+        else:
+            logger.warning(f"Unknown connection type '{conn_type}' for conn_id '{conn_id}'")
 
     @classmethod
     def _mask_secrets(cls, config: Any) -> Any:
@@ -1492,9 +1648,15 @@ class ConnectionRegistry:
             logger.warning(f"Empty configuration file: {path}")
             return
 
-        # 環境変数を展開
-        config = cls._expand_env_vars(config)
+        # 新しいリスト形式の処理
+        if "connections" in config:
+            # 環境変数展開は各接続の読み込み時に行う（遅延展開）
+            cls._load_connections_list(config["connections"])
+            return
 
+        # 以下は古い形式（後方互換性のため）
+        # 古い形式では全体に対して環境変数展開を行う
+        config = cls._expand_env_vars(config)
         # GitHubの設定
         if "github" in config:
             gh_config = config["github"]

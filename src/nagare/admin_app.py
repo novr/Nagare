@@ -79,6 +79,66 @@ def get_all_cicd_connections():
     Returns:
         List[(conn_id, description, platform)] - Connection情報とプラットフォームのリスト
     """
+    connections = []
+    added_platforms = set()  # 既に追加されたプラットフォームを追跡
+
+    # 1. ConnectionRegistryから接続を取得（connections.yml由来）
+    for conn_id, conn_obj in ConnectionRegistry._all_connections.items():
+        platform = None
+        description = getattr(conn_obj, 'description', conn_id)
+
+        # conn_typeを直接確認
+        if hasattr(conn_obj, 'get_platform'):
+            platform_const = conn_obj.get_platform()
+            # Platform定数から文字列に変換
+            if platform_const == Platform.GITHUB:
+                platform = "github"
+            elif platform_const == Platform.BITRISE:
+                platform = "bitrise"
+            elif platform_const == Platform.XCODE_CLOUD:
+                platform = "xcode_cloud"
+
+        if platform:
+            connections.append((conn_id, description, platform))
+            added_platforms.add(platform)
+
+    # 2. デフォルト接続もチェック（_all_connectionsに含まれていない場合）
+    # GitHub
+    if "github" not in added_platforms and ConnectionRegistry._github is not None:
+        conn_id = "github"
+        description = getattr(ConnectionRegistry._github, 'description', '')
+        connections.append((conn_id, description, "github"))
+        added_platforms.add("github")
+
+    # Bitrise
+    if "bitrise" not in added_platforms and ConnectionRegistry._bitrise is not None:
+        conn_id = "bitrise"
+        description = getattr(ConnectionRegistry._bitrise, 'description', '')
+        connections.append((conn_id, description, "bitrise"))
+        added_platforms.add("bitrise")
+
+    # Xcode Cloud
+    if "xcode_cloud" not in added_platforms and ConnectionRegistry._xcode_cloud is not None:
+        conn_id = "xcode_cloud"
+        description = getattr(ConnectionRegistry._xcode_cloud, 'description', '')
+        connections.append((conn_id, description, "xcode_cloud"))
+        added_platforms.add("xcode_cloud")
+
+    # 2.5. 読み込みに失敗した接続も含める（connections.ymlで定義されているがエラーになったもの）
+    for conn_id, failed_info in ConnectionRegistry._failed_connections.items():
+        platform = failed_info["platform"]
+
+        # database以外のCI/CD関連プラットフォーム
+        if platform != "database":
+            if platform not in added_platforms:
+                description = f"⚠️ エラー: {failed_info['error'][:50]}..."
+                connections.append((conn_id, description, platform))
+                added_platforms.add(platform)
+
+    # 3. Airflow Connectionテーブルからも取得（後方互換性のため）
+    # ConnectionRegistryに既に存在するプラットフォームのリストを作成
+    existing_platforms = {platform for _, _, platform in connections}
+
     engine = get_database_engine()
     query = text(
         """
@@ -88,7 +148,6 @@ def get_all_cicd_connections():
         ORDER BY conn_id
         """
     )
-    connections = []
     with engine.connect() as conn:
         result = conn.execute(query)
         rows = result.fetchall()
@@ -96,9 +155,18 @@ def get_all_cicd_connections():
             conn_id = row[0]
             description = row[1] or conn_id
 
+            # すでにConnectionRegistryから追加されている場合はスキップ
+            if any(c[0] == conn_id for c in connections):
+                continue
+
             # conn_idやdescriptionからプラットフォームを判定
             platform = detect_platform_from_connection(conn_id, description)
-            if platform:  # GitHub, Bitrise, または Xcode Cloud
+            if platform:
+                # ConnectionRegistryに同じプラットフォームの接続が既に存在し、
+                # かつ、このconn_idが*_defaultパターンの場合はスキップ
+                if platform in existing_platforms and conn_id.endswith('_default'):
+                    continue
+
                 connections.append((conn_id, description, platform))
 
     return connections
@@ -1494,7 +1562,7 @@ elif page == "📦 リポジトリ管理":
                 selected_conn = st.selectbox(
                     "使用するConnection",
                     options=range(len(available_connections)),
-                    format_func=lambda i: f"{available_connections[i][1]} ({available_connections[i][2].upper()})",
+                    format_func=lambda i: f"{available_connections[i][0]} (conn_type: {available_connections[i][2]})",
                     key="unified_connection_select"
                 )
                 conn_id = available_connections[selected_conn][0]
@@ -1846,6 +1914,29 @@ elif page == "⚙️ 設定":
 
             st.divider()
 
+            # Xcode Cloud接続設定
+            st.markdown("### Xcode Cloud接続設定")
+            try:
+                xcode_conn = ConnectionRegistry.get_xcode_cloud()
+
+                col1, col2 = st.columns([1, 3])
+                with col1:
+                    st.metric("ベースURL", xcode_conn.base_url)
+                with col2:
+                    if xcode_conn.key_id and xcode_conn.issuer_id:
+                        masked_key = xcode_conn.key_id[:4] + "..." + xcode_conn.key_id[-4:] if len(xcode_conn.key_id) > 8 else "***"
+                        st.code(f"Key ID: {masked_key}\nIssuer ID: {xcode_conn.issuer_id}", language="text")
+                        if xcode_conn.private_key:
+                            st.caption("✅ Private Key loaded")
+                        elif xcode_conn.private_key_path:
+                            st.caption(f"📁 Private Key Path: {xcode_conn.private_key_path}")
+
+            except Exception as e:
+                st.warning(f"⚠️ Xcode Cloud設定が読み込まれていません\n\n詳細: {e}")
+                st.info("💡 Xcode Cloudを使用する場合は、.envにAPPSTORE_*変数を設定してください")
+
+            st.divider()
+
             # Database接続設定
             st.markdown("### Database接続設定")
             try:
@@ -1863,6 +1954,72 @@ elif page == "⚙️ 設定":
 
             except Exception as e:
                 st.error(f"Database設定の読み込みエラー: {e}")
+
+            st.divider()
+
+            # 全接続の一覧
+            st.markdown("### 読み込まれた全接続")
+
+            all_connections = ConnectionRegistry._all_connections
+            failed_connections = ConnectionRegistry._failed_connections
+            total_connections = len(all_connections) + len(failed_connections)
+
+            if total_connections > 0:
+                st.success(f"✅ {len(all_connections)}件が読み込まれました" +
+                          (f" / ⚠️ {len(failed_connections)}件が失敗" if failed_connections else ""))
+
+                # テーブル形式で表示
+                conn_data = []
+
+                # 成功した接続
+                for conn_id, conn_obj in all_connections.items():
+                    conn_type = type(conn_obj).__name__
+                    platform = conn_obj.get_platform() if hasattr(conn_obj, 'get_platform') else 'unknown'
+                    description = getattr(conn_obj, 'description', '-')
+
+                    conn_data.append({
+                        "conn_id": conn_id,
+                        "conn_type": conn_type,
+                        "platform": platform,
+                        "status": "✅ OK",
+                        "description": description if description else '-'
+                    })
+
+                # 失敗した接続
+                for conn_id, failed_info in failed_connections.items():
+                    conn_data.append({
+                        "conn_id": conn_id,
+                        "conn_type": failed_info["conn_type"],
+                        "platform": failed_info["platform"],
+                        "status": "⚠️ エラー",
+                        "description": failed_info["error"][:80] + "..."
+                    })
+
+                import pandas as pd
+                df = pd.DataFrame(conn_data)
+                st.dataframe(df, use_container_width=True, hide_index=True)
+            else:
+                st.warning("⚠️ 読み込まれた接続がありません")
+
+            # CI/CD接続の一覧
+            st.markdown("### CI/CD接続（検索可能）")
+            cicd_connections = get_all_cicd_connections()
+            if cicd_connections:
+                st.success(f"✅ {len(cicd_connections)}件のCI/CD接続が利用可能です")
+
+                cicd_data = []
+                for conn_id, description, platform in cicd_connections:
+                    cicd_data.append({
+                        "conn_id": conn_id,
+                        "platform": platform,
+                        "description": description if description else '-',
+                        "display": f"{conn_id} (conn_type: {platform})"
+                    })
+
+                df_cicd = pd.DataFrame(cicd_data)
+                st.dataframe(df_cicd, use_container_width=True, hide_index=True)
+            else:
+                st.warning("⚠️ 利用可能なCI/CD接続がありません")
 
         else:
             st.warning("⚠️ 設定ファイルが見つかりません")
