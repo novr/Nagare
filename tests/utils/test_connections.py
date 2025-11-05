@@ -18,6 +18,7 @@ from nagare.utils.connections import (
     GitHubConnection,
     GitHubTokenAuth,
     GitLabConnection,
+    XcodeCloudConnection,
 )
 
 
@@ -734,3 +735,189 @@ github:
         log_messages = "\n".join([record.message for record in caplog.records])
         assert "ghp_secret_token_should_be_masked" not in log_messages
         assert "***MASKED***" in log_messages
+
+
+class TestXcodeCloudConnection:
+    """XcodeCloudConnection のテスト"""
+
+    def test_from_env_with_private_key(self, monkeypatch: pytest.MonkeyPatch):
+        """環境変数からprivate_keyを使用した設定を生成"""
+        monkeypatch.setenv("APPSTORE_KEY_ID", "TEST_KEY_ID")
+        monkeypatch.setenv("APPSTORE_ISSUER_ID", "test-issuer-id")
+        monkeypatch.setenv("APPSTORE_PRIVATE_KEY", "-----BEGIN PRIVATE KEY-----\ntest_key_content\n-----END PRIVATE KEY-----")
+
+        conn = XcodeCloudConnection.from_env()
+
+        assert conn.key_id == "TEST_KEY_ID"
+        assert conn.issuer_id == "test-issuer-id"
+        assert conn.private_key == "-----BEGIN PRIVATE KEY-----\ntest_key_content\n-----END PRIVATE KEY-----"
+        assert conn.private_key_path is None
+
+    def test_from_env_with_private_key_path(self, monkeypatch: pytest.MonkeyPatch):
+        """環境変数からprivate_key_pathを使用した設定を生成"""
+        monkeypatch.setenv("APPSTORE_KEY_ID", "TEST_KEY_ID")
+        monkeypatch.setenv("APPSTORE_ISSUER_ID", "test-issuer-id")
+        monkeypatch.setenv("APPSTORE_PRIVATE_KEY_PATH", "/path/to/key.p8")
+        monkeypatch.delenv("APPSTORE_PRIVATE_KEY", raising=False)
+
+        conn = XcodeCloudConnection.from_env()
+
+        assert conn.key_id == "TEST_KEY_ID"
+        assert conn.issuer_id == "test-issuer-id"
+        assert conn.private_key is None
+        assert conn.private_key_path == "/path/to/key.p8"
+
+    def test_from_env_with_custom_base_url(self, monkeypatch: pytest.MonkeyPatch):
+        """環境変数からカスタムベースURLを読み取り"""
+        monkeypatch.setenv("APPSTORE_KEY_ID", "TEST_KEY_ID")
+        monkeypatch.setenv("APPSTORE_ISSUER_ID", "test-issuer-id")
+        monkeypatch.setenv("APPSTORE_PRIVATE_KEY", "test_key")
+        monkeypatch.setenv("APPSTORE_API_URL", "https://custom-api.example.com/v1")
+
+        conn = XcodeCloudConnection.from_env()
+
+        assert conn.base_url == "https://custom-api.example.com/v1"
+
+    def test_validate_with_private_key(self):
+        """private_keyを使用した検証"""
+        conn = XcodeCloudConnection(
+            key_id="TEST_KEY_ID",
+            issuer_id="test-issuer-id",
+            private_key="-----BEGIN PRIVATE KEY-----\ntest_key_content\n-----END PRIVATE KEY-----",
+        )
+        assert conn.validate() is True
+
+    def test_validate_with_private_key_path(self):
+        """private_key_pathを使用した検証"""
+        conn = XcodeCloudConnection(
+            key_id="TEST_KEY_ID",
+            issuer_id="test-issuer-id",
+            private_key_path="/path/to/key.p8",
+        )
+        assert conn.validate() is True
+
+    def test_validate_with_both_keys(self):
+        """private_keyとprivate_key_pathの両方がある場合（private_keyが優先）"""
+        conn = XcodeCloudConnection(
+            key_id="TEST_KEY_ID",
+            issuer_id="test-issuer-id",
+            private_key="-----BEGIN PRIVATE KEY-----\ntest_key_content\n-----END PRIVATE KEY-----",
+            private_key_path="/path/to/key.p8",
+        )
+        assert conn.validate() is True
+
+    def test_validate_without_keys(self):
+        """private_keyもprivate_key_pathもない場合は無効"""
+        conn = XcodeCloudConnection(
+            key_id="TEST_KEY_ID",
+            issuer_id="test-issuer-id",
+        )
+        assert conn.validate() is False
+
+    def test_validate_incomplete(self):
+        """必須フィールドが不足している場合は無効"""
+        # key_idがない
+        conn = XcodeCloudConnection(
+            issuer_id="test-issuer-id",
+            private_key="test_key",
+        )
+        assert conn.validate() is False
+
+        # issuer_idがない
+        conn = XcodeCloudConnection(
+            key_id="TEST_KEY_ID",
+            private_key="test_key",
+        )
+        assert conn.validate() is False
+
+    def test_to_dict(self):
+        """辞書形式への変換（シークレット除外）"""
+        conn = XcodeCloudConnection(
+            key_id="TEST_KEY_ID",
+            issuer_id="test-issuer-id",
+            private_key="secret_private_key_content",
+        )
+        result = conn.to_dict()
+
+        assert result["type"] == "xcode_cloud"
+        assert result["base_url"] == "https://api.appstoreconnect.apple.com/v1"
+        assert result["has_key_id"] is True
+        assert result["has_issuer_id"] is True
+        assert result["has_private_key"] is True
+        assert "key_id" not in result  # 実際の値は除外
+        assert "issuer_id" not in result  # 実際の値は除外
+        assert "private_key" not in result  # シークレットは除外
+        assert "private_key_path" not in result  # シークレットは除外
+
+
+class TestXcodeCloudConnectionFromFile:
+    """XcodeCloudConnection の from_file() テスト"""
+
+    def test_from_file_with_private_key(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """YAMLファイルからprivate_keyを使用して読み込み"""
+        monkeypatch.setenv("APPSTORE_KEY_ID", "TEST_KEY_ID")
+        monkeypatch.setenv("APPSTORE_ISSUER_ID", "test-issuer-id")
+        monkeypatch.setenv("APPSTORE_PRIVATE_KEY", "-----BEGIN PRIVATE KEY-----\ntest_key_content\n-----END PRIVATE KEY-----")
+
+        config_file = tmp_path / "config.yml"
+        config_file.write_text(
+            """
+xcode_cloud:
+  key_id: ${APPSTORE_KEY_ID}
+  issuer_id: ${APPSTORE_ISSUER_ID}
+  private_key: ${APPSTORE_PRIVATE_KEY}
+"""
+        )
+
+        ConnectionRegistry.from_file(config_file)
+        conn = ConnectionRegistry.get_xcode_cloud()
+
+        assert conn.key_id == "TEST_KEY_ID"
+        assert conn.issuer_id == "test-issuer-id"
+        assert conn.private_key == "-----BEGIN PRIVATE KEY-----\ntest_key_content\n-----END PRIVATE KEY-----"
+        assert conn.private_key_path is None
+
+    def test_from_file_with_private_key_path(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """YAMLファイルからprivate_key_pathを使用して読み込み"""
+        monkeypatch.setenv("APPSTORE_KEY_ID", "TEST_KEY_ID")
+        monkeypatch.setenv("APPSTORE_ISSUER_ID", "test-issuer-id")
+        monkeypatch.setenv("APPSTORE_PRIVATE_KEY_PATH", "/path/to/key.p8")
+
+        config_file = tmp_path / "config.yml"
+        config_file.write_text(
+            """
+xcode_cloud:
+  key_id: ${APPSTORE_KEY_ID}
+  issuer_id: ${APPSTORE_ISSUER_ID}
+  private_key_path: ${APPSTORE_PRIVATE_KEY_PATH}
+"""
+        )
+
+        ConnectionRegistry.from_file(config_file)
+        conn = ConnectionRegistry.get_xcode_cloud()
+
+        assert conn.key_id == "TEST_KEY_ID"
+        assert conn.issuer_id == "test-issuer-id"
+        assert conn.private_key is None
+        assert conn.private_key_path == "/path/to/key.p8"
+
+    def test_from_file_with_default_base_url(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """YAMLファイルからデフォルトベースURLで読み込み"""
+        monkeypatch.setenv("APPSTORE_KEY_ID", "TEST_KEY_ID")
+        monkeypatch.setenv("APPSTORE_ISSUER_ID", "test-issuer-id")
+        monkeypatch.setenv("APPSTORE_PRIVATE_KEY", "test_key")
+
+        config_file = tmp_path / "config.yml"
+        config_file.write_text(
+            """
+xcode_cloud:
+  key_id: ${APPSTORE_KEY_ID}
+  issuer_id: ${APPSTORE_ISSUER_ID}
+  private_key: ${APPSTORE_PRIVATE_KEY}
+"""
+        )
+
+        ConnectionRegistry.from_file(config_file)
+        conn = ConnectionRegistry.get_xcode_cloud()
+
+        assert conn.base_url == "https://api.appstoreconnect.apple.com/v1"
