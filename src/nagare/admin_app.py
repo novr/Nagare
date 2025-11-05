@@ -98,7 +98,7 @@ def get_all_cicd_connections():
 
             # conn_idやdescriptionからプラットフォームを判定
             platform = detect_platform_from_connection(conn_id, description)
-            if platform:  # GitHub または Bitrise のみ
+            if platform:  # GitHub, Bitrise, または Xcode Cloud
                 connections.append((conn_id, description, platform))
 
     return connections
@@ -384,10 +384,11 @@ def fetch_repositories_unified(platform: str, search_params: dict, page: int = 1
     """統一されたインターフェースでリポジトリ/アプリを取得する（ページング対応）
 
     Args:
-        platform: "github" または "bitrise"
+        platform: "github", "bitrise", または "xcode_cloud"
         search_params: プラットフォーム固有の検索パラメータ
             GitHub: {"search_type": str, "search_value": str, "conn_id": str}
-            Bitrise: {} (パラメータなし)
+            Bitrise: {"conn_id": str}
+            Xcode Cloud: {"conn_id": str}
         page: ページ番号（1から開始）
         per_page: 1ページあたりの件数
 
@@ -402,7 +403,7 @@ def fetch_repositories_unified(platform: str, search_params: dict, page: int = 1
                     "updated_at": str,  # 更新日時（ISO 8601形式）
                     "url": str,         # URL
                     "description": str, # 説明
-                    "platform": str,    # "github" or "bitrise"
+                    "platform": str,    # "github", "bitrise", or "xcode_cloud"
                     "metadata": dict    # その他のメタ情報
                 }
             ],
@@ -1478,15 +1479,15 @@ elif page == "📦 リポジトリ管理":
                 else:
                     st.error("リポジトリ/アプリ名を入力してください")
 
-    # 統一検索UI（GitHub + Bitrise）
+    # 統一検索UI（GitHub + Bitrise + Xcode Cloud）
     with st.expander("🔍 リポジトリ/アプリを検索して追加", expanded=True):
         st.markdown("**CI/CD Connectionから検索**")
 
         # Connection選択
         available_connections = get_all_cicd_connections()
         if not available_connections:
-            st.warning("⚠️ GitHub/Bitrise Connectionが登録されていません")
-            st.info("🔌 Connections管理ページでGitHub/Bitrise Connectionを登録してください")
+            st.warning("⚠️ GitHub/Bitrise/Xcode Cloud Connectionが登録されていません")
+            st.info("🔌 Connections管理ページでGitHub/Bitrise/Xcode Cloud Connectionを登録してください")
         else:
             col_conn, col_per_page = st.columns([3, 1])
             with col_conn:
@@ -1555,12 +1556,20 @@ elif page == "📦 リポジトリ管理":
                 search_params["search_type"] = search_type
                 search_params["search_value"] = search_value
 
-            else:  # bitrise
+            elif platform == Platform.BITRISE:
                 search_params["conn_id"] = conn_id
                 st.info("📱 Bitriseアプリ一覧を取得します")
 
+            elif platform == Platform.XCODE_CLOUD:
+                search_params["conn_id"] = conn_id
+                st.info("🍎 Xcode Cloudアプリ一覧を取得します")
+
             # 検索ボタン
-            can_search = (platform == Platform.GITHUB and search_params.get("search_value")) or platform == Platform.BITRISE
+            can_search = (
+                (platform == Platform.GITHUB and search_params.get("search_value")) or
+                platform == Platform.BITRISE or
+                platform == Platform.XCODE_CLOUD
+            )
             if st.button("検索", type="primary", key="unified_search_btn", disabled=not can_search):
                 st.session_state[search_state_key]["page"] = 1
                 st.session_state[search_state_key]["params"] = {
