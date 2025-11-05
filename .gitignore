@@ -40,8 +40,8 @@ Thumbs.db
 .env.*.local
 
 # Connection configuration
-# connections.yml - 環境変数参照のみなのでコミット可能
-# 実際の機密情報は.envファイルで管理
+connections.yml
+# connections.yml.sample をコピーして使用: cp connections.yml.sample connections.yml
 
 # Secrets and keys
 secrets/

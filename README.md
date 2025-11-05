@@ -63,7 +63,16 @@ cd Nagare
 cp .env.sample .env
 ```
 
-3. パスワードの生成（推奨）
+3. Connection設定ファイルの作成
+
+```bash
+cp connections.yml.sample connections.yml
+```
+
+このファイルでCI/CDプラットフォーム（GitHub/Bitrise/Xcode Cloud）の接続設定を管理します。
+使用するプラットフォームのセクションのコメントを外してください。
+
+4. パスワードの生成（推奨）
 
 ```bash
 ./scripts/setup-secrets.sh
@@ -76,13 +85,7 @@ cp .env.sample .env
 
 または、手動で強力なパスワードを`.env`に設定することもできます。
 
-4. GitHub認証の設定
-
-```bash
-vi .env  # または任意のエディタ
-```
-
-以下の必須項目を設定してください：
+5. GitHub認証の設定
 
 **GitHub認証設定（必須）**:
 
@@ -96,11 +99,11 @@ Nagareは2つの認証方式をサポートしています。**Personal Access T
    - ✅ `read:org` - 組織情報の読み取り
    - ✅ `workflow` - GitHub Actionsワークフローへのアクセス
 4. トークンを生成し、**コピー**（後で確認できないため注意）
-5. `connections.yml`を編集:
-   ```yaml
-   github:
-     token: "ghp_xxxxxxxxxxxxxxxxxxxx"
+5. `.env`ファイルにトークンを設定:
+   ```bash
+   GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxx
    ```
+6. `connections.yml`のGitHubセクションのコメントを外す（既にデフォルトで有効）
 
 **方法B: GitHub Apps認証** - エンタープライズ・大規模チーム向け
 1. [GitHub Settings → Developer settings → GitHub Apps](https://github.com/settings/apps) で新規App作成
@@ -109,13 +112,13 @@ Nagareは2つの認証方式をサポートしています。**Personal Access T
    - Metadata: Read
    - Workflows: Read
 3. Private keyを生成してダウンロード
-4. `connections.yml`を編集:
-   ```yaml
-   github:
-     app_id: 123456
-     installation_id: 789012
-     private_key_path: "/path/to/private-key.pem"
+4. `.env`ファイルにApp情報を設定:
+   ```bash
+   GITHUB_APP_ID=123456
+   GITHUB_APP_INSTALLATION_ID=789012
+   GITHUB_APP_PRIVATE_KEY_PATH=/path/to/private-key.pem
    ```
+5. `connections.yml`のGitHub Appsセクションのコメントを外す
 
 **どちらを選ぶべき？**
 - 👤 **個人利用・小規模チーム**: Personal Access Token（シンプル、5分で設定完了）
@@ -126,13 +129,14 @@ Nagareは2つの認証方式をサポートしています。**Personal Access T
 - 推奨: 16文字以上の強力なパスワード（`./scripts/setup-secrets.sh`で自動生成可能）
 
 **⚠️ セキュリティ警告**:
-- `connections.yml`は環境変数参照形式（`${VAR_NAME}`）でgitコミット可能
-- 実際の機密情報は`.env`ファイルに保存（`.gitignore`で除外）
+- `connections.yml`は個人設定ファイルです（`.gitignore`で除外済み）
+- 実際の機密情報は`.env`ファイルに保存し、`connections.yml`では環境変数参照（`${VAR_NAME}`）を使用
 - GitHubトークンや秘密鍵を**絶対に**`connections.yml`に直接記載しないでください
+- `connections.yml.sample`はテンプレートとしてgit管理されています
 
 詳細は [ADR-002: Connection管理アーキテクチャ](docs/02_design/adr/002-connection-management-architecture.md) を参照。
 
-5. Docker環境の起動
+6. Docker環境の起動
 
 ```bash
 # バックグラウンドで起動
@@ -152,7 +156,7 @@ docker compose logs -f
 - すべてのサービスが`healthy`になるまで待機してください
 - 2回目以降の起動は約30秒で完了します
 
-6. サービスへのアクセス
+7. サービスへのアクセス
 
 - **Airflow UI**: http://localhost:8080
   - ユーザー名: `admin`
@@ -168,7 +172,7 @@ docker compose logs -f
   - ユーザー名: `nagare_user`
   - パスワード: `.env`の`DATABASE_PASSWORD`
 
-7. 監視対象リポジトリの設定
+8. 監視対象リポジトリの設定
 
 http://localhost:8501 にアクセスして、Streamlit管理画面からリポジトリを追加します：
 

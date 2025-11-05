@@ -83,10 +83,10 @@ github:
 # Bitrise接続設定
 # ==============================================================================
 # ⚠️ Bitriseを使用する場合のみ、以下のコメントを解除してください
-bitrise:
+# bitrise:
 #   # Personal Access Token
 #   # ✅ 推奨: 環境変数から読み込み（.env ファイルで管理）
-  api_token: ${BITRISE_TOKEN}
+#   api_token: ${BITRISE_TOKEN}
 #
 #   # Bitrise API ベースURL
 #   # base_url: ${BITRISE_API_URL:-https://api.bitrise.io/v0.1}
