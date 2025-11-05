@@ -96,7 +96,7 @@ bitrise:
 # Xcode Cloud接続設定
 # ==============================================================================
 # ⚠️ Xcode Cloudを使用する場合のみ、以下のコメントを解除してください
-xcode_cloud:
+xcode_cloud_default:
 #   # App Store Connect API認証情報
 #   # JWT (JSON Web Token)認証を使用
 #   #
