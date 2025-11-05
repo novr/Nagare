@@ -10,6 +10,7 @@ Usage:
 import os
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote_plus
 
 import pandas as pd
