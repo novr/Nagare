@@ -11,6 +11,7 @@
 | [003](./003-bitrise-client-implementation-strategy.md) | Bitrise クライアント実装戦略 | Accepted | 2025-10-27 |
 | [004](./004-docker-dev-dependencies-strategy.md) | Docker 開発環境依存関係戦略 | Accepted | 2025-10-27 |
 | [005](./005-env-var-expansion-in-connections.md) | 環境変数展開機能の実装 | Accepted | 2025-10-28 |
+| [006](./006-temporary-table-for-dag-data-transfer.md) | 一時テーブル方式によるDAG間データ転送 | Accepted | 2025-11-04 |
 
 ---
 
@@ -221,5 +222,5 @@ ADRに関する質問やフィードバック:
 ---
 
 **作成日**: 2025年10月22日
-**最終更新**: 2025年10月28日
+**最終更新**: 2025年11月04日
 **メンテナー**: プロジェクトオーナー

@@ -258,7 +258,7 @@ def from_file(cls, path: str | Path) -> None:
 ### 緩和策
 
 1. **明確なドキュメント**
-   - `connections.yml.sample`に豊富な例を記載
+   - `connections.yml`に豊富な例を記載
    - セキュリティベストプラクティスを明示
    - トラブルシューティングガイドを提供
 
@@ -369,7 +369,7 @@ GITHUB_ENTERPRISE_URL=https://github.example.com/api/v3
 
 - [x] `ConnectionRegistry._expand_env_vars()`の実装
 - [x] 環境変数展開の包括的なテスト
-- [x] `connections.yml.sample`の更新
+- [x] `connections.yml`の更新（環境変数参照形式）
 - [x] ADRドキュメントの作成
 - [x] 全テストの実行と検証
 

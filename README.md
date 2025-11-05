@@ -126,8 +126,9 @@ Nagareは2つの認証方式をサポートしています。**Personal Access T
 - 推奨: 16文字以上の強力なパスワード（`./scripts/setup-secrets.sh`で自動生成可能）
 
 **⚠️ セキュリティ警告**:
-- `connections.yml`ファイルは`.gitignore`で除外されています
-- GitHubトークンや秘密鍵を**絶対に**コミットしないでください
+- `connections.yml`は環境変数参照形式（`${VAR_NAME}`）でgitコミット可能
+- 実際の機密情報は`.env`ファイルに保存（`.gitignore`で除外）
+- GitHubトークンや秘密鍵を**絶対に**`connections.yml`に直接記載しないでください
 
 詳細は [ADR-002: Connection管理アーキテクチャ](docs/02_design/adr/002-connection-management-architecture.md) を参照。
 

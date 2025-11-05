@@ -28,8 +28,8 @@
 # GitHub接続設定
 # ==============================================================================
 
-# デフォルトのGitHub接続（推奨：環境変数から読み込み）
-github_default:
+# GitHub接続（推奨：環境変数から読み込み）
+github:
   # Personal Access Token認証
   # ✅ 推奨: 環境変数から読み込み（.env ファイルで管理）
   token: ${GITHUB_TOKEN}
@@ -82,13 +82,56 @@ github_default:
 # ==============================================================================
 # Bitrise接続設定
 # ==============================================================================
-bitrise_default:
+bitrise:
   # Personal Access Token
   # ✅ 推奨: 環境変数から読み込み（.env ファイルで管理）
   api_token: ${BITRISE_TOKEN}
 
   # Bitrise API ベースURL
   # base_url: ${BITRISE_API_URL:-https://api.bitrise.io/v0.1}
+
+
+# ==============================================================================
+# Xcode Cloud接続設定
+# ==============================================================================
+xcode_cloud:
+  # App Store Connect API認証情報
+  # JWT (JSON Web Token)認証を使用
+  #
+  # ✅ 推奨: 環境変数から読み込み（.env ファイルで管理）
+  #
+  # 取得方法:
+  #   1. App Store Connect (https://appstoreconnect.apple.com) にログイン
+  #   2. Users and Access > Keys > App Store Connect API
+  #   3. 新しいキーを作成（権限: App Manager または Admin）
+  #   4. Key ID, Issuer ID, Private Key (.p8ファイル) をダウンロード
+
+  # App Store Connect API Key ID
+  key_id: ${APPSTORE_KEY_ID}
+
+  # App Store Connect API Issuer ID
+  issuer_id: ${APPSTORE_ISSUER_ID}
+
+  # Private Key (P8形式の内容)
+  # オプション1: 環境変数に直接P8ファイルの内容を設定
+  private_key: ${APPSTORE_PRIVATE_KEY}
+
+  # オプション2: P8ファイルのパスを指定（どちらか一方を使用）
+  # private_key_path: ${APPSTORE_PRIVATE_KEY_PATH}
+
+  # App Store Connect API ベースURL
+  # base_url: ${APPSTORE_API_URL:-https://api.appstoreconnect.apple.com/v1}
+
+# 複数のApple開発者アカウントを使用する例
+# xcode_cloud_team_a:
+#   key_id: ${APPSTORE_TEAM_A_KEY_ID}
+#   issuer_id: ${APPSTORE_TEAM_A_ISSUER_ID}
+#   private_key: ${APPSTORE_TEAM_A_PRIVATE_KEY}
+#
+# xcode_cloud_team_b:
+#   key_id: ${APPSTORE_TEAM_B_KEY_ID}
+#   issuer_id: ${APPSTORE_TEAM_B_ISSUER_ID}
+#   private_key: ${APPSTORE_TEAM_B_PRIVATE_KEY}
 
 
 # ==============================================================================
@@ -128,12 +171,24 @@ database:
 #
 # 1. .env ファイルで機密情報のみを設定:
 #    GITHUB_TOKEN=ghp_xxxxxxxxxxxxx
+#    BITRISE_TOKEN=your_bitrise_token
+#    APPSTORE_KEY_ID=your_key_id
+#    APPSTORE_ISSUER_ID=your_issuer_id
+#    APPSTORE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----
+#    MIGTAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBHkwdwIBAQQg...
+#    -----END PRIVATE KEY-----"
 #    DATABASE_PASSWORD=secure_password
 #    # DATABASE_HOSTとPORTは不要（docker-compose.ymlで管理）
 #
 # 2. connections.yml で構造を定義（このファイル）:
-#    github_default:
+#    github:
 #      token: ${GITHUB_TOKEN}
+#    bitrise:
+#      api_token: ${BITRISE_TOKEN}
+#    xcode_cloud:
+#      key_id: ${APPSTORE_KEY_ID}
+#      issuer_id: ${APPSTORE_ISSUER_ID}
+#      private_key: ${APPSTORE_PRIVATE_KEY}
 #    database:
 #      host: postgres  # 固定値（Docker Composeのサービス名）
 #      port: 5432      # 固定値
@@ -147,12 +202,18 @@ database:
 #
 #    # 接続を取得
 #    github_conn = ConnectionRegistry.get_github()
+#    bitrise_conn = ConnectionRegistry.get_bitrise()
+#    xcode_cloud_conn = ConnectionRegistry.get_xcode_cloud()
 #    db_conn = ConnectionRegistry.get_database()
 #
 # 【ローカル開発環境（docker-compose.yml不使用）】
 #
 # 1. .env ファイルですべての設定:
 #    GITHUB_TOKEN=ghp_xxxxxxxxxxxxx
+#    BITRISE_TOKEN=your_bitrise_token
+#    APPSTORE_KEY_ID=your_key_id
+#    APPSTORE_ISSUER_ID=your_issuer_id
+#    APPSTORE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----..."
 #    DATABASE_HOST=localhost  # ローカル環境では必要
 #    DATABASE_PORT=5432
 #    DATABASE_PASSWORD=secure_password
@@ -225,6 +286,12 @@ database:
 # A: ${VAR_NAME:-default} の構文を確認してください（コロンとハイフン）。
 #
 # Q: 複数の接続を定義したが使えない
-# A: 現在の実装では、github/gitlab/circleci/bitrise/database の
+# A: 現在の実装では、github/gitlab/circleci/bitrise/xcode_cloud/database の
 #    キー名で1つずつしか読み込めません。複数定義する場合は
 #    Airflow Connection として登録してください。
+#
+# Q: Xcode CloudのPrivate Keyが認識されない
+# A: Private Keyは改行を含む複数行の文字列です。.envファイルでは
+#    ダブルクォートで囲み、\nで改行を表現するか、ヒアドキュメント形式を
+#    使用してください。または、private_key_pathでファイルパスを指定する
+#    方法もあります。

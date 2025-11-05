@@ -9,7 +9,7 @@ from airflow.models import TaskInstance
 from github import GithubException
 
 from nagare.constants import FetchConfig, SourceType, TaskIds, XComKeys
-from nagare.utils.protocols import BitriseClientProtocol, DatabaseClientProtocol, GitHubClientProtocol
+from nagare.utils.protocols import BitriseClientProtocol, DatabaseClientProtocol, GitHubClientProtocol, XcodeCloudClientProtocol
 from nagare.utils.xcom_utils import check_xcom_size
 
 logger = logging.getLogger(__name__)
@@ -256,7 +256,7 @@ def fetch_workflow_runs(
         logger.warning("No repositories found to fetch workflow runs")
         return
 
-    _fetch_workflow_runs_impl(repositories, github_client, db, ti)
+    _fetch_workflow_runs_impl(repositories, github_client, db, ti, context)
 
 
 def fetch_workflow_runs_batch(
@@ -293,7 +293,7 @@ def fetch_workflow_runs_batch(
     )
 
     _fetch_workflow_runs_impl(
-        batch_repos, github_client, db, ti,
+        batch_repos, github_client, db, ti, context,
         xcom_suffix=f"_batch_{map_index}",
         since=since,
         until=until
@@ -346,6 +346,7 @@ def _fetch_workflow_runs_impl(
     github_client: GitHubClientProtocol,
     db: DatabaseClientProtocol,
     ti: TaskInstance,
+    context: dict[str, Any],
     xcom_suffix: str = "",
     since: str | None = None,
     until: str | None = None
@@ -357,6 +358,7 @@ def _fetch_workflow_runs_impl(
         github_client: GitHubClientインスタンス
         db: DatabaseClientインスタンス
         ti: TaskInstanceインスタンス
+        context: Airflowのコンテキスト
         xcom_suffix: XComキーに付加するサフィックス（バッチ処理用）
         since: 取得開始日時（ISO8601形式、優先使用）
         until: 取得終了日時（ISO8601形式）
@@ -429,14 +431,28 @@ def _fetch_workflow_runs_impl(
 
     logger.info(f"Total workflow runs fetched: {len(all_workflow_runs)}")
 
-    # エラー統計をXComに保存（モニタリング用）
-    ti.xcom_push(key=f"{XComKeys.WORKFLOW_RUNS}_error_stats{xcom_suffix}", value=error_stats)
+    # ADR-006: 一時テーブルにデータを保存（XComは統計のみ）
+    run_id = context.get("run_id", ti.run_id)
+    task_id = ti.task_id
 
-    # XComサイズチェック
-    check_xcom_size(all_workflow_runs, f"{XComKeys.WORKFLOW_RUNS}{xcom_suffix}")
+    # 一時テーブルに保存
+    db.insert_temp_workflow_runs(all_workflow_runs, task_id=task_id, run_id=run_id)
 
-    # XComで次のタスクに渡す
-    ti.xcom_push(key=f"{XComKeys.WORKFLOW_RUNS}{xcom_suffix}", value=all_workflow_runs)
+    # XComには統計情報のみ保存（軽量）
+    ti.xcom_push(
+        key=f"batch_stats{xcom_suffix}",
+        value={
+            "count": len(all_workflow_runs),
+            "task_id": task_id,
+            "run_id": run_id,
+            "error_stats": error_stats,
+        }
+    )
+
+    logger.info(
+        f"Saved {len(all_workflow_runs)} workflow runs to temp table "
+        f"(task_id={task_id}, run_id={run_id})"
+    )
 
     # 全てのリポジトリで失敗した場合はエラーを投げる
     if error_stats["successful"] == 0 and error_stats["total_items"] > 0:
@@ -529,6 +545,7 @@ def _fetch_bitrise_builds_impl(
     bitrise_client: BitriseClientProtocol,
     db: DatabaseClientProtocol,
     ti: TaskInstance,
+    context: dict[str, Any],
     xcom_suffix: str = "",
     since: str | None = None,
     until: str | None = None,
@@ -540,6 +557,7 @@ def _fetch_bitrise_builds_impl(
         bitrise_client: BitriseClientインスタンス
         db: DatabaseClientインスタンス
         ti: TaskInstanceインスタンス
+        context: Airflowのコンテキスト
         xcom_suffix: XComキーのサフィックス（バッチ処理時に使用）
         since: 取得開始日時（ISO8601形式、オプショナル）
         until: 取得終了日時（ISO8601形式、オプショナル）
@@ -631,14 +649,28 @@ def _fetch_bitrise_builds_impl(
 
     logger.info(f"Total builds fetched: {len(all_builds)}")
 
-    # エラー統計をXComに保存
-    ti.xcom_push(key=f"bitrise_builds_error_stats{xcom_suffix}", value=error_stats)
+    # ADR-006: 一時テーブルにデータを保存（XComは統計のみ）
+    run_id = context.get("run_id", ti.run_id)
+    task_id = ti.task_id
 
-    # XComサイズチェック
-    check_xcom_size(all_builds, f"bitrise_builds{xcom_suffix}")
+    # 一時テーブルに保存
+    db.insert_temp_workflow_runs(all_builds, task_id=task_id, run_id=run_id)
 
-    # XComで次のタスクに渡す
-    ti.xcom_push(key=f"{XComKeys.WORKFLOW_RUNS}{xcom_suffix}", value=all_builds)
+    # XComには統計情報のみ保存（軽量）
+    ti.xcom_push(
+        key=f"batch_stats{xcom_suffix}",
+        value={
+            "count": len(all_builds),
+            "task_id": task_id,
+            "run_id": run_id,
+            "error_stats": error_stats,
+        }
+    )
+
+    logger.info(
+        f"Saved {len(all_builds)} Bitrise builds to temp table "
+        f"(task_id={task_id}, run_id={run_id})"
+    )
 
     if error_stats["successful"] == 0 and error_stats["total_items"] > 0:
         logger.error(
@@ -669,7 +701,7 @@ def fetch_bitrise_builds(
         logger.warning("No Bitrise apps found in XCom")
         return
 
-    _fetch_bitrise_builds_impl(bitrise_apps, bitrise_client, db, ti)
+    _fetch_bitrise_builds_impl(bitrise_apps, bitrise_client, db, ti, context)
 
 
 def fetch_bitrise_builds_batch(
@@ -706,7 +738,189 @@ def fetch_bitrise_builds_batch(
     )
 
     _fetch_bitrise_builds_impl(
-        batch_apps, bitrise_client, db, ti,
+        batch_apps, bitrise_client, db, ti, context,
+        xcom_suffix=f"_batch_{map_index}",
+        since=since,
+        until=until
+    )
+
+
+def _fetch_xcode_cloud_builds_impl(
+    xcode_cloud_apps: list[dict[str, Any]],
+    xcode_cloud_client: XcodeCloudClientProtocol,
+    db: DatabaseClientProtocol,
+    ti: TaskInstance,
+    context: dict[str, Any],
+    xcom_suffix: str = "",
+    since: str | None = None,
+    until: str | None = None,
+) -> None:
+    """Xcode Cloudビルドデータを取得する内部実装（バッチ処理対応）
+
+    Args:
+        xcode_cloud_apps: Xcode Cloudアプリのリスト
+        xcode_cloud_client: XcodeCloudClientインスタンス
+        db: DatabaseClientインスタンス
+        ti: TaskInstanceインスタンス
+        context: Airflowのコンテキスト
+        xcom_suffix: XComキーのサフィックス（バッチ処理時に使用）
+        since: 取得開始日時（ISO8601形式、オプショナル）
+        until: 取得終了日時（ISO8601形式、オプショナル）
+    """
+    all_builds = []
+    error_stats = {
+        "total_items": len(xcode_cloud_apps),
+        "successful": 0,
+        "failed": 0,
+        "errors": [],
+    }
+
+    for app in xcode_cloud_apps:
+        # source_repository_idがApp Store ConnectのApp ID
+        app_id = app["source_repository_id"]
+        repository_name = app["repository_name"]  # アプリ名（表示用）
+        try:
+            # repository_nameを"owner/repo"形式に分割（アプリ名をそのまま使用）
+            owner, repo = repository_name.split("/", 1) if "/" in repository_name else (repository_name, repository_name)
+
+            # 期間パラメータが指定されている場合はそれを使用、なければ既存のロジック
+            filter_start = None
+            filter_end = None
+            if since is not None:
+                # 期間指定あり: バッチの期間を使用
+                filter_start = since
+                filter_end = until
+                logger.info(
+                    f"Fetching builds for {repository_name} for period {since} to {until}"
+                )
+            else:
+                # 期間指定なし: 既存の差分取得ロジック
+                logger.info(f"Fetching builds for Xcode Cloud app: {repository_name} (app_id: {app_id})")
+                try:
+                    latest_timestamp = db.get_latest_run_timestamp(owner, repo)
+                    if latest_timestamp:
+                        # ISO8601形式に変換
+                        filter_start = latest_timestamp.isoformat()
+                        logger.info(f"Fetching builds after {latest_timestamp} for {app_id}")
+                    else:
+                        logger.info(f"Fetching initial builds for {repository_name}")
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to get timestamp for {owner}/{repo}: {e}. "
+                        f"Fetching all recent builds."
+                    )
+
+            # ビルドを取得
+            builds = xcode_cloud_client.list_ci_builds_for_app(
+                app_id=app_id,
+                limit=200,
+                filter_created_date_start=filter_start,
+                filter_created_date_end=filter_end,
+            )
+
+            logger.info(f"Fetched {len(builds)} builds from {repository_name}")
+
+            # リポジトリ情報を追加（transform_dataで必要）
+            owner, repo = repository_name.split("/", 1) if "/" in repository_name else (repository_name, repository_name)
+            for build in builds:
+                build["repository_id"] = app["id"]
+                build["app_id"] = app_id
+                build["_repository_owner"] = owner
+                build["_repository_name"] = repo
+                build["_source"] = "xcode_cloud"  # ソース識別子
+
+            all_builds.extend(builds)
+            error_stats["successful"] += 1
+
+        except Exception as e:
+            error_msg = f"Error fetching builds for {repository_name}: {type(e).__name__}: {e}"
+            logger.error(error_msg, exc_info=True)
+            error_stats["failed"] += 1
+            error_stats["errors"].append({
+                "item": repository_name,
+                "error_type": type(e).__name__,
+                "message": str(e),
+            })
+            continue
+
+    # サマリーログ
+    success_rate = (error_stats["successful"] / error_stats["total_items"] * 100) if error_stats["total_items"] > 0 else 0
+    logger.info(
+        f"Xcode Cloud builds fetch summary: {error_stats['successful']}/{error_stats['total_items']} successful "
+        f"({success_rate:.1f}%), {error_stats['failed']} failed"
+    )
+
+    logger.info(f"Total builds fetched: {len(all_builds)}")
+
+    # ADR-006: 一時テーブルにデータを保存（XComは統計のみ）
+    run_id = context.get("run_id", ti.run_id)
+    task_id = ti.task_id
+
+    # 一時テーブルに保存
+    db.insert_temp_workflow_runs(all_builds, task_id=task_id, run_id=run_id)
+
+    # XComには統計情報のみ保存（軽量）
+    ti.xcom_push(
+        key=f"batch_stats{xcom_suffix}",
+        value={
+            "count": len(all_builds),
+            "task_id": task_id,
+            "run_id": run_id,
+            "error_stats": error_stats,
+        }
+    )
+
+    logger.info(
+        f"Saved {len(all_builds)} Xcode Cloud builds to temp table "
+        f"(task_id={task_id}, run_id={run_id})"
+    )
+
+    if error_stats["successful"] == 0 and error_stats["total_items"] > 0:
+        logger.error(
+            f"All {error_stats['total_items']} Xcode Cloud apps failed to fetch builds. "
+            f"However, continuing with empty builds list."
+        )
+
+
+def fetch_xcode_cloud_builds_batch(
+    xcode_cloud_client: XcodeCloudClientProtocol,
+    db: DatabaseClientProtocol,
+    batch_apps: list[dict[str, Any]],
+    since: str | None = None,
+    until: str | None = None,
+    **context: Any,
+) -> None:
+    """Xcode Cloudビルドデータをバッチ単位で取得する
+
+    Dynamic Task Mappingで使用される。各タスクは1つのバッチ（アプリのリスト）と期間を処理する。
+
+    Args:
+        xcode_cloud_client: XcodeCloudClientインスタンス
+        db: DatabaseClientインスタンス
+        batch_apps: 処理対象のアプリリスト
+        since: 取得開始日時（ISO8601形式、オプショナル）
+        until: 取得終了日時（ISO8601形式、オプショナル）
+        **context: Airflowコンテキスト（tiを含む）
+    """
+    ti: TaskInstance = context["ti"]
+
+    if not batch_apps:
+        logger.warning("No Xcode Cloud apps in this batch")
+        return
+
+    # map_indexを取得してログに使用（Dynamic Task Mappingで自動設定される）
+    map_index = context.get("task_instance").map_index
+    period_info = f" (period: {since} to {until})" if since and until else ""
+    logger.info(
+        f"Processing batch {map_index}: {len(batch_apps)} apps{period_info}"
+    )
+
+    _fetch_xcode_cloud_builds_impl(
+        xcode_cloud_apps=batch_apps,
+        xcode_cloud_client=xcode_cloud_client,
+        db=db,
+        ti=ti,
+        context=context,
         xcom_suffix=f"_batch_{map_index}",
         since=since,
         until=until

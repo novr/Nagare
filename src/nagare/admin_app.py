@@ -21,6 +21,7 @@ from nagare.constants import Platform, PipelineStatus, SourceType
 from nagare.utils.connections import ConnectionRegistry
 from nagare.utils.github_client import GitHubClient
 from nagare.utils.bitrise_client import BitriseClient
+from nagare.utils.xcode_cloud_client import XcodeCloudClient
 
 # Connection設定ファイルの読み込み
 connections_file = os.getenv("NAGARE_CONNECTIONS_FILE")
@@ -65,7 +66,7 @@ def get_available_github_connections():
 
 
 def get_all_cicd_connections():
-    """利用可能な全てのCI/CD Connections（GitHub/Bitrise）を取得する
+    """利用可能な全てのCI/CD Connections（GitHub/Bitrise/Xcode Cloud）を取得する
 
     Returns:
         List[(conn_id, description, platform)] - Connection情報とプラットフォームのリスト
@@ -96,14 +97,14 @@ def get_all_cicd_connections():
 
 
 def detect_platform_from_connection(conn_id: str, description: str) -> str | None:
-    """ConnectionからプラットフォームGitHub/Bitrise）を判定する
+    """ConnectionからプラットフォームGitHub/Bitrise/Xcode Cloud）を判定する
 
     Args:
         conn_id: Connection ID
         description: Connection description
 
     Returns:
-        "github", "bitrise", または None（判定不可）
+        "github", "bitrise", "xcode_cloud", または None（判定不可）
     """
     conn_id_lower = conn_id.lower()
     description_lower = description.lower()
@@ -116,11 +117,17 @@ def detect_platform_from_connection(conn_id: str, description: str) -> str | Non
     if "bitrise" in conn_id_lower or "bitrise" in description_lower:
         return "bitrise"
 
-    # デフォルトConnectionの判定（github_default, bitrise_default）
+    # Xcode Cloud判定
+    if "xcode" in conn_id_lower or "xcode" in description_lower or "appstore" in conn_id_lower:
+        return "xcode_cloud"
+
+    # デフォルトConnectionの判定（github_default, bitrise_default, xcode_cloud_default）
     if conn_id in ["github_default", "gh_default"]:
         return "github"
     if conn_id in ["bitrise_default", "br_default"]:
         return "bitrise"
+    if conn_id in ["xcode_cloud_default", "xc_default", "appstore_default"]:
+        return "xcode_cloud"
 
     # 判定不可
     return None
@@ -290,6 +297,81 @@ def fetch_bitrise_apps():
         return None
 
 
+def get_xcode_cloud_client():
+    """Xcode Cloudクライアントを取得する"""
+    try:
+        xcode_cloud_conn = ConnectionRegistry.get_xcode_cloud()
+        return XcodeCloudClient(connection=xcode_cloud_conn)
+    except ValueError as e:
+        st.error(f"Xcode Cloud認証エラー: {e}")
+        st.info(
+            "Xcode Cloud API機能を使用するには、connections.ymlでXcode Cloud Connectionを設定してください"
+        )
+        return None
+
+
+def get_xcode_cloud_client_from_connection(conn_id: str = None):
+    """指定されたConnectionからXcode Cloudクライアントを取得する
+
+    Args:
+        conn_id: Connection ID。Noneの場合はデフォルト動作
+
+    Returns:
+        XcodeCloudClient or None
+    """
+    from nagare.utils.connections import XcodeCloudConnection
+
+    # Connection IDが指定された場合
+    if conn_id:
+        try:
+            engine = get_database_engine()
+            with engine.connect() as conn:
+                result = conn.execute(
+                    text("SELECT login, password, extra FROM connection WHERE conn_id = :conn_id"),
+                    {"conn_id": conn_id}
+                )
+                row = result.fetchone()
+                if row:
+                    import json
+                    extra = json.loads(row[2]) if row[2] else {}
+                    key_id = row[0]  # login に key_id
+                    issuer_id = row[1]  # password に issuer_id
+                    private_key = extra.get("private_key")
+                    private_key_path = extra.get("private_key_path")
+
+                    xcode_cloud_conn = XcodeCloudConnection(
+                        key_id=key_id,
+                        issuer_id=issuer_id,
+                        private_key=private_key,
+                        private_key_path=private_key_path
+                    )
+                    return XcodeCloudClient(connection=xcode_cloud_conn)
+        except Exception as e:
+            st.error(f"Connection '{conn_id}' からの取得エラー: {e}")
+            return None
+
+    # Connection IDが指定されていない場合は、デフォルト
+    return get_xcode_cloud_client()
+
+
+def fetch_xcode_cloud_apps():
+    """Xcode Cloudからアプリ一覧を取得する
+
+    Returns:
+        アプリのリスト、またはエラー時はNone
+    """
+    xcode_cloud_client = get_xcode_cloud_client()
+    if not xcode_cloud_client:
+        return None
+
+    try:
+        apps = xcode_cloud_client.list_apps(limit=200)
+        return apps
+    except Exception as e:
+        st.error(f"Xcode Cloud APIエラー: {e}")
+        return None
+
+
 def fetch_repositories_unified(platform: str, search_params: dict, page: int = 1, per_page: int = 30):
     """統一されたインターフェースでリポジトリ/アプリを取得する（ページング対応）
 
@@ -439,6 +521,60 @@ def fetch_repositories_unified(platform: str, search_params: dict, page: int = 1
 
         except Exception as e:
             st.error(f"Bitrise APIエラー: {e}")
+            return None
+
+    elif platform == Platform.XCODE_CLOUD:
+        conn_id = search_params.get("conn_id")
+        xcode_cloud_client = get_xcode_cloud_client_from_connection(conn_id) if conn_id else get_xcode_cloud_client()
+        if not xcode_cloud_client:
+            return None
+
+        try:
+            # Xcode Cloudは全件取得してからページングを実装
+            limit = per_page * (page + 1)  # 次のページも考慮して多めに取得
+            all_apps = xcode_cloud_client.list_apps(limit=limit)
+
+            # ページングのためのスライス
+            start_idx = (page - 1) * per_page
+            end_idx = start_idx + per_page
+            page_apps = all_apps[start_idx:end_idx]
+
+            # Xcode Cloudのデータを統一形式に変換
+            items = []
+            for app in page_apps:
+                attributes = app.get("attributes", {})
+                app_id = app.get("id")
+                app_name = attributes.get("name", app_id)
+
+                # Bundle IDを取得
+                bundle_id = attributes.get("bundleId", "")
+
+                items.append({
+                    "id": app_id,
+                    "name": app_name,
+                    "repo": app_name,  # アプリ名をrepoとして使用
+                    "updated_at": "",  # Xcode CloudにはAPI経由での更新日時がない
+                    "url": f"https://appstoreconnect.apple.com/apps/{app_id}",
+                    "description": f"Bundle ID: {bundle_id}",
+                    "platform": "xcode_cloud",
+                    "metadata": {
+                        "app_id": app_id,  # 内部IDを保持
+                        "bundle_id": bundle_id,
+                        "sku": attributes.get("sku"),
+                        "primary_locale": attributes.get("primaryLocale"),
+                    }
+                })
+
+            return {
+                "items": items,
+                "page": page,
+                "per_page": per_page,
+                "has_next": len(all_apps) > end_idx,
+                "total_count": None  # Xcode Cloudは総数を返さない
+            }
+
+        except Exception as e:
+            st.error(f"Xcode Cloud APIエラー: {e}")
             return None
 
     else:
@@ -1286,14 +1422,18 @@ elif page == "📦 リポジトリ管理":
             with col1:
                 new_repo = st.text_input(
                     "リポジトリ/アプリ名",
-                    placeholder="owner/repo（GitHub）またはapp-slug（Bitrise）",
-                    help="GitHub: 'owner/repo' 形式、Bitrise: app-slug",
+                    placeholder="owner/repo（GitHub）またはapp_id（Xcode Cloud）またはapp-slug（Bitrise）",
+                    help="GitHub: 'owner/repo' 形式、Xcode Cloud: app ID、Bitrise: app-slug",
                 )
             with col2:
                 source = st.selectbox(
                     "プラットフォーム",
-                    ["github_actions", "bitrise"],
-                    format_func=lambda x: "GitHub Actions" if x == SourceType.GITHUB_ACTIONS else "Bitrise"
+                    ["github_actions", "xcode_cloud", "bitrise"],
+                    format_func=lambda x: {
+                        SourceType.GITHUB_ACTIONS: "GitHub Actions",
+                        SourceType.XCODE_CLOUD: "Xcode Cloud",
+                        SourceType.BITRISE: "Bitrise"
+                    }.get(x, x)
                 )
 
             submitted = st.form_submit_button("追加", type="primary")
@@ -1341,8 +1481,18 @@ elif page == "📦 リポジトリ管理":
                 per_page = st.selectbox("表示件数", options=[10, 20, 30, 50], index=2, key="unified_per_page")
 
             # プラットフォーム表示
-            platform_icon = "📦" if platform == Platform.GITHUB else "📱"
-            platform_name = "GitHub Actions" if platform == Platform.GITHUB else "Bitrise"
+            platform_icons = {
+                Platform.GITHUB: "📦",
+                Platform.BITRISE: "📱",
+                Platform.XCODE_CLOUD: "🍎"
+            }
+            platform_names = {
+                Platform.GITHUB: "GitHub Actions",
+                Platform.BITRISE: "Bitrise",
+                Platform.XCODE_CLOUD: "Xcode Cloud"
+            }
+            platform_icon = platform_icons.get(platform, "📦")
+            platform_name = platform_names.get(platform, platform)
             st.caption(f"{platform_icon} プラットフォーム: **{platform_name}**")
 
             # セッションステートの初期化

@@ -321,7 +321,7 @@ ConnectionRegistry.from_file("connections.yml")
 - `src/nagare/utils/github_client.py` - Client修正
 - `src/nagare/utils/database.py` - Client修正
 - `src/nagare/admin_app.py` - 重複コード削減
-- `connections.yml.sample` - 設定ファイルサンプル（新規）
+- `connections.yml` - 設定ファイル（環境変数参照のみ、gitコミット可能）
 
 ---
 
@@ -469,7 +469,7 @@ def create_gitlab_client(
 
 ### 実装（実装後に追加）
 - [src/nagare/utils/connections.py](../../src/nagare/utils/connections.py)
-- [connections.yml.sample](../../../connections.yml.sample)
+- [connections.yml](../../../connections.yml)
 - [tests/utils/test_connections.py](../../tests/utils/test_connections.py)
 
 ### 関連ADR
@@ -496,7 +496,7 @@ def create_gitlab_client(
 - [ ] `admin_app.py`の重複コード削減
 
 ### Phase 3: 設定ファイル対応（優先度: 中）
-- [ ] `connections.yml.sample`の作成
+- [x] `connections.yml`の作成（環境変数参照形式でgitコミット可能）
 - [ ] `ConnectionRegistry.from_file()`の実装
 - [ ] YAMLパース処理の実装
 

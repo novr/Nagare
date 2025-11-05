@@ -912,6 +912,136 @@ class BitriseConnection(BaseConnection):
         }
 
 
+@dataclass
+class XcodeCloudConnection(BaseConnection):
+    """Xcode Cloud / App Store Connect API接続設定
+
+    App Store Connect APIを使用してXcode Cloudのビルドデータを取得する。
+    JWT (JSON Web Token)認証を使用。
+
+    Reference:
+        https://developer.apple.com/documentation/appstoreconnectapi
+    """
+
+    CONN_TYPE: ClassVar[str] = "http"
+
+    key_id: str | None = None
+    issuer_id: str | None = None
+    private_key: str | None = None  # Private Key文字列
+    private_key_path: str | None = None  # Private Key P8ファイルパス
+    base_url: str = "https://api.appstoreconnect.apple.com/v1"
+
+    def get_platform(self) -> str:
+        """プラットフォーム識別子を返す
+
+        Returns:
+            str: Platform.XCODE_CLOUD
+        """
+        return Platform.XCODE_CLOUD
+
+    @classmethod
+    def from_env(cls) -> "XcodeCloudConnection":
+        """環境変数から生成
+
+        Environment Variables:
+            APPSTORE_KEY_ID: App Store Connect API Key ID
+            APPSTORE_ISSUER_ID: App Store Connect API Issuer ID
+            APPSTORE_PRIVATE_KEY: Private Key文字列（P8形式）
+            APPSTORE_PRIVATE_KEY_PATH: Private Key P8ファイルパス
+            APPSTORE_API_URL: ベースURL（デフォルト: https://api.appstoreconnect.apple.com/v1）
+
+        Returns:
+            XcodeCloudConnection インスタンス
+        """
+        return cls(
+            key_id=os.getenv("APPSTORE_KEY_ID"),
+            issuer_id=os.getenv("APPSTORE_ISSUER_ID"),
+            private_key=os.getenv("APPSTORE_PRIVATE_KEY"),
+            private_key_path=os.getenv("APPSTORE_PRIVATE_KEY_PATH"),
+            base_url=os.getenv("APPSTORE_API_URL", "https://api.appstoreconnect.apple.com/v1"),
+        )
+
+    @classmethod
+    def from_airflow_extra(
+        cls,
+        conn_id: str,
+        password: str | None,
+        host: str | None,
+        port: int | None,
+        schema: str | None,
+        login: str | None,
+        extra: dict[str, Any],
+        description: str,
+    ) -> "XcodeCloudConnection":
+        """Airflow Connectionの各フィールドからインスタンスを生成
+
+        Airflow Connectionのフィールドマッピング：
+        - login: Key ID
+        - password: Private Key文字列
+        - host: App Store Connect API base URL
+        - extra.key_id: Key ID（loginの代替）
+        - extra.issuer_id: Issuer ID（必須）
+        - extra.private_key: Private Key文字列（passwordの代替）
+        - extra.private_key_path: Private Key P8ファイルパス
+        - extra.base_url: ベースURL（hostの代替）
+
+        Args:
+            conn_id: Connection ID（ロギング用）
+            password: Private Key文字列
+            host: App Store Connect APIホスト
+            port: ポート（未使用）
+            schema: スキーマ（未使用）
+            login: Key ID
+            extra: 追加設定
+            description: 説明
+
+        Returns:
+            XcodeCloudConnection: 生成されたインスタンス
+        """
+        base_url = "https://api.appstoreconnect.apple.com/v1"
+        if host:
+            base_url = f"https://{host}" if not host.startswith("http") else host
+        elif extra.get("base_url"):
+            base_url = extra["base_url"]
+
+        # key_idの優先順位: extra.key_id > login
+        key_id = extra.get("key_id") or login
+
+        # private_keyの優先順位: extra.private_key > password
+        private_key = extra.get("private_key") or password
+
+        return cls(
+            key_id=key_id,
+            issuer_id=extra.get("issuer_id"),
+            private_key=private_key,
+            private_key_path=extra.get("private_key_path"),
+            base_url=base_url,
+        )
+
+    def validate(self) -> bool:
+        """接続情報の検証
+
+        Returns:
+            有効な設定の場合True（Key ID, Issuer ID, Private Key/Pathが必須）
+        """
+        has_private_key = bool(self.private_key or self.private_key_path)
+        return bool(self.key_id and self.issuer_id and has_private_key)
+
+    def to_dict(self) -> dict[str, Any]:
+        """辞書形式に変換（シークレットは除外）
+
+        Returns:
+            シークレットを含まない設定情報
+        """
+        return {
+            "type": "xcode_cloud",
+            "base_url": self.base_url,
+            "has_key_id": bool(self.key_id),
+            "has_issuer_id": bool(self.issuer_id),
+            "has_private_key": bool(self.private_key or self.private_key_path),
+        }
+
+
 # ============================================================================
 # 6. Database Connection（インフラストラクチャ設定）
 # ============================================================================
@@ -1059,6 +1189,7 @@ class ConnectionRegistry:
     _gitlab: GitLabConnection | None = None
     _circleci: CircleCIConnection | None = None
     _bitrise: BitriseConnection | None = None
+    _xcode_cloud: XcodeCloudConnection | None = None
     _database: DatabaseConnection | None = None
 
     @classmethod
@@ -1146,6 +1277,27 @@ class ConnectionRegistry:
         logger.debug("Bitrise connection updated")
 
     @classmethod
+    def get_xcode_cloud(cls) -> XcodeCloudConnection:
+        """Xcode Cloud接続設定を取得
+
+        Returns:
+            XcodeCloudConnection: Xcode Cloud接続設定
+        """
+        if cls._xcode_cloud is None:
+            cls._xcode_cloud = XcodeCloudConnection.from_env()
+        return cls._xcode_cloud
+
+    @classmethod
+    def set_xcode_cloud(cls, conn: XcodeCloudConnection) -> None:
+        """Xcode Cloud接続設定を設定（テスト用）
+
+        Args:
+            conn: XcodeCloudConnection
+        """
+        cls._xcode_cloud = conn
+        logger.debug("Xcode Cloud connection updated")
+
+    @classmethod
     def get_database(cls) -> DatabaseConnection:
         """データベース接続設定を取得
 
@@ -1173,6 +1325,7 @@ class ConnectionRegistry:
         cls._gitlab = None
         cls._circleci = None
         cls._bitrise = None
+        cls._xcode_cloud = None
         cls._database = None
         logger.debug("All connections reset")
 
@@ -1397,6 +1550,17 @@ class ConnectionRegistry:
                 masked_config = cls._mask_secrets(br_config)
                 logger.error(f"Failed to create Bitrise connection: {e}, config={masked_config}")
                 raise ValueError(f"Failed to create Bitrise connection: {e}") from e
+
+        # Xcode Cloudの設定
+        if "xcode_cloud" in config:
+            xc_config = config["xcode_cloud"]
+            try:
+                cls._xcode_cloud = XcodeCloudConnection(**xc_config)
+                logger.info("Xcode Cloud connection loaded from file")
+            except Exception as e:
+                masked_config = cls._mask_secrets(xc_config)
+                logger.error(f"Failed to create Xcode Cloud connection: {e}, config={masked_config}")
+                raise ValueError(f"Failed to create Xcode Cloud connection: {e}") from e
 
         # Databaseの設定
         if "database" in config:

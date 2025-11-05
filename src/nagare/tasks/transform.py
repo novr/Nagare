@@ -14,7 +14,7 @@ from nagare.constants import (
     XComKeys,
 )
 from nagare.utils.datetime_utils import calculate_duration_ms, parse_iso_datetime
-from nagare.utils.xcom_utils import check_xcom_size
+from nagare.utils.protocols import DatabaseClientProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -92,69 +92,24 @@ def _transform_items_with_error_handling(
     return results
 
 
-def transform_data(**context: Any) -> None:
-    """GitHub/Bitrise APIから取得したデータを汎用データモデルに変換する
+def transform_data(db: DatabaseClientProtocol, **context: Any) -> None:
+    """GitHub/Bitrise/Xcode Cloud APIから取得したデータを汎用データモデルに変換する
 
-    Dynamic Task Mappingで生成されたバッチタスクから全データを集約して変換する。
-    ワークフロー実行データとジョブデータの両方を変換する。
+    ADR-006: 一時テーブルからデータを取得し、変換後も一時テーブルに保存。
+    XComは統計情報のみ保存する。
 
     Args:
+        db: DatabaseClientインスタンス（必須、外部から注入される）
         **context: Airflowのコンテキスト
     """
     ti: TaskInstance = context["ti"]
-    dag = context["dag"]
+    run_id = context.get("run_id", ti.run_id)
 
-    # DAG内のバッチタスクを検索（Dynamic Task Mapping対応）
-    # GitHub: fetch_github_batch, Bitrise: fetch_bitrise_batch
-    batch_task_patterns = ["_batch"]
-    batch_task_id = None
-    for task in dag.tasks:
-        if any(pattern in task.task_id for pattern in batch_task_patterns):
-            batch_task_id = task.task_id
-            break
+    logger.info(f"Starting data transformation (run_id={run_id})")
 
-    logger.info(f"Found batch task ID: {batch_task_id}")
-    logger.info(f"Available tasks in DAG: {[t.task_id for t in dag.tasks]}")
-
-    # XComから全バッチのデータを集約
-    all_workflow_runs = []
-
-    if batch_task_id:
-        # Dynamic Task Mappingの各インスタンスからデータを取得
-        # サフィックス付きキーパターン: workflow_runs_batch_0, workflow_runs_batch_1, ...
-        batch_count = 0
-        for i in range(100):  # 最大100バッチをサポート
-            batch_key = f"{XComKeys.WORKFLOW_RUNS}_batch_{i}"
-            logger.info(f"Trying to pull XCom: task_id={batch_task_id}, key={batch_key}")
-            batch_data = ti.xcom_pull(task_ids=batch_task_id, key=batch_key)
-            logger.info(f"XCom pull result: type={type(batch_data)}, is_none={batch_data is None}, length={len(batch_data) if isinstance(batch_data, list) else 'N/A'}")
-
-            if batch_data is None:
-                # このバッチ番号のデータが存在しない = 全バッチを取得完了
-                logger.info(f"No data found for batch {i}, stopping")
-                break
-
-            # Dynamic Task Mappingの場合、LazyXComSelectSequenceが返される
-            # これを list() すると、各map_indexの結果を含むリストになる: [[runs_from_map_0]]
-            # 通常は1つのmap_indexのデータしか含まれないので、最初の要素を取得
-            if hasattr(batch_data, '__iter__') and not isinstance(batch_data, (str, bytes)):
-                batch_list = list(batch_data) if not isinstance(batch_data, list) else batch_data
-                # LazyXComSelectSequenceの場合、[actual_data]形式なので最初の要素を取得
-                if len(batch_list) > 0 and isinstance(batch_list[0], list):
-                    batch_list = batch_list[0]
-                all_workflow_runs.extend(batch_list)
-                batch_count += 1
-                logger.info(f"Retrieved {len(batch_list)} runs from {batch_task_id} batch {i}")
-
-        if batch_count > 0:
-            logger.info(f"Total: Retrieved {len(all_workflow_runs)} runs from {batch_count} batches (Dynamic Task Mapping)")
-
-    # 後方互換性: 古い固定タスクIDからも取得を試みる
-    if not all_workflow_runs:
-        legacy_data = ti.xcom_pull(task_ids=TaskIds.FETCH_WORKFLOW_RUNS, key=XComKeys.WORKFLOW_RUNS)
-        if legacy_data:
-            all_workflow_runs = legacy_data if isinstance(legacy_data, list) else []
-            logger.info(f"Retrieved {len(all_workflow_runs)} runs from legacy task ID")
+    # ADR-006: 一時テーブルから全ワークフロー実行データを取得
+    all_workflow_runs = db.get_temp_workflow_runs(run_id)
+    logger.info(f"Retrieved {len(all_workflow_runs)} workflow runs from temp table")
 
     if all_workflow_runs:
         # デバッグ: 最初のアイテムのキーを表示
@@ -172,7 +127,8 @@ def transform_data(**context: Any) -> None:
         logger.warning("No workflow runs to transform")
         transformed_runs = []
 
-    # ジョブデータの変換（既存の詳細取得タスクから）
+    # ジョブデータの変換（既存の詳細取得タスクから、まだ一時テーブル化していない）
+    # TODO: fetch_workflow_run_jobsも一時テーブル化する
     workflow_run_jobs: list[dict[str, Any]] = ti.xcom_pull(
         task_ids=TaskIds.FETCH_WORKFLOW_RUN_JOBS, key=XComKeys.WORKFLOW_RUN_JOBS
     )
@@ -189,13 +145,25 @@ def transform_data(**context: Any) -> None:
         logger.warning("No jobs to transform")
         transformed_jobs = []
 
-    # XComサイズチェック
-    check_xcom_size(transformed_runs, XComKeys.TRANSFORMED_RUNS)
-    check_xcom_size(transformed_jobs, XComKeys.TRANSFORMED_JOBS)
+    # ADR-006: 変換済みデータを一時テーブルに保存
+    db.insert_temp_transformed_runs(transformed_runs, run_id)
+    db.insert_temp_workflow_jobs(transformed_jobs, run_id)
 
-    # XComで次のタスクに渡す
-    ti.xcom_push(key=XComKeys.TRANSFORMED_RUNS, value=transformed_runs)
-    ti.xcom_push(key=XComKeys.TRANSFORMED_JOBS, value=transformed_jobs)
+    # XComには統計情報のみ保存（軽量）
+    ti.xcom_push(
+        key="transform_stats",
+        value={
+            "input_count": len(all_workflow_runs),
+            "transformed_runs_count": len(transformed_runs),
+            "transformed_jobs_count": len(transformed_jobs),
+            "run_id": run_id,
+        }
+    )
+
+    logger.info(
+        f"Saved {len(transformed_runs)} transformed runs and {len(transformed_jobs)} jobs "
+        f"to temp tables (run_id={run_id})"
+    )
 
 
 def _transform_workflow_run(run: dict[str, Any]) -> dict[str, Any]:
@@ -217,11 +185,25 @@ def _transform_workflow_run(run: dict[str, Any]) -> dict[str, Any]:
         data_type="workflow run",
     )
 
-    # ステータスをマッピング（GitHub ActionsまたはBitrise）
+    # ステータスをマッピング（GitHub Actions, Bitrise, Xcode Cloud）
     run_status = run.get("status", "unknown")
+    source = run.get("_source", "github_actions")
 
+    # Xcode Cloud: processingState field (VALID, PROCESSING, FAILED, INVALID)
+    if source == "xcode_cloud":
+        processing_state = run.get("attributes", {}).get("processingState", "unknown")
+        if processing_state == "VALID":
+            status = PipelineStatus.SUCCESS
+        elif processing_state == "PROCESSING":
+            status = PipelineStatus.IN_PROGRESS
+        elif processing_state == "FAILED":
+            status = PipelineStatus.FAILURE
+        elif processing_state == "INVALID":
+            status = PipelineStatus.FAILURE
+        else:
+            status = PipelineStatus.UNKNOWN
     # Bitriseは整数ステータス: 0=in_progress, 1=success, 2=failed, 3/4=aborted
-    if isinstance(run_status, int):
+    elif isinstance(run_status, int):
         if run_status == 0:
             status = PipelineStatus.IN_PROGRESS
         elif run_status == 1:
@@ -245,33 +227,54 @@ def _transform_workflow_run(run: dict[str, Any]) -> dict[str, Any]:
     # 実行時間を計算（ミリ秒）
     # GitHub: run_started_at/created_at, updated_at
     # Bitrise: triggered_at, started_on_worker_at, finished_at
-    started_at_str = (run.get("run_started_at") or run.get("created_at") or
-                     run.get("triggered_at") or run.get("started_on_worker_at"))
-    completed_at_str = run.get("updated_at") or run.get("finished_at")
+    # Xcode Cloud: attributes.uploadedDate
+    if source == "xcode_cloud":
+        # Xcode Cloudはupload日時を使用
+        attributes = run.get("attributes", {})
+        started_at_str = attributes.get("uploadedDate")
+        completed_at_str = attributes.get("uploadedDate")
+    else:
+        started_at_str = (run.get("run_started_at") or run.get("created_at") or
+                         run.get("triggered_at") or run.get("started_on_worker_at"))
+        completed_at_str = run.get("updated_at") or run.get("finished_at")
 
     started_at = parse_iso_datetime(started_at_str)
     completed_at = parse_iso_datetime(completed_at_str)
     duration_ms = calculate_duration_ms(started_at, completed_at)
 
-    # ソース識別（GitHub ActionsまたはBitrise）
-    source = run.get("_source", "github_actions")
+    # ソース識別（GitHub Actions, Bitrise, Xcode Cloud）
+    # Already extracted above for status mapping
 
     # 汎用データモデルに変換
     # 必須フィールドは既にバリデーション済みなので安全にアクセス可能
+
+    # Xcode Cloud用の特殊処理
+    if source == "xcode_cloud":
+        attributes = run.get("attributes", {})
+        pipeline_name = attributes.get("name", "Unknown")
+        branch_name = attributes.get("sourceBranchOrTag")
+        commit_sha = attributes.get("sourceCommit", {}).get("commitSha") if isinstance(attributes.get("sourceCommit"), dict) else None
+        url = None  # Xcode CloudにはWeb URLがない
+    else:
+        pipeline_name = run.get("name") or run.get("triggered_workflow", "Unknown")
+        branch_name = run.get("head_branch") or run.get("branch")
+        commit_sha = run.get("head_sha") or run.get("commit_hash")
+        url = run.get("html_url") or run.get("commit_view_url")
+
     return {
         "source_run_id": str(run["id"]),
         "source": source,
-        "pipeline_name": run.get("name") or run.get("triggered_workflow", "Unknown"),
+        "pipeline_name": pipeline_name,
         "status": status,
         "trigger_event": run.get("event") or run.get("triggered_by", "UNKNOWN"),
         "repository_owner": run["_repository_owner"],
         "repository_name": run["_repository_name"],
-        "branch_name": run.get("head_branch") or run.get("branch"),
-        "commit_sha": run.get("head_sha") or run.get("commit_hash"),
+        "branch_name": branch_name,
+        "commit_sha": commit_sha,
         "started_at": started_at,
         "completed_at": completed_at,
         "duration_ms": duration_ms,
-        "url": run.get("html_url") or run.get("commit_view_url"),
+        "url": url,
     }
 
 

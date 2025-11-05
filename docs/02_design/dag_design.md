@@ -64,31 +64,63 @@ task1 >> task2 >> task3 >> task4
 
 ## 3. データハンドリングルール
 
-### 3.1. XComの使用ルール
+### 3.1. XComの使用ルール（更新: ADR-006）
 
-**使用が許可される場合**
-- 軽量なメタデータ（リポジトリIDのリストなど、10KB以下）
-- タスク間の制御情報
+**✅ 使用が許可される場合**
+- 軽量なメタデータ（統計情報、エラーカウントなど、10KB以下）
+- タスク間の制御情報（run_id、task_idなど）
+- バッチ処理の統計情報（count, error_stats）
 
-**使用が禁止される場合**
+**❌ 使用が禁止される場合**
 - 大きなデータセット（100KB以上）
+- APIレスポンスの全体（GitHub/Bitrise APIレスポンス）
+- 変換済みデータ（pipeline_runs, jobs）
 - バイナリデータ
-- APIレスポンスの全体
 
-**代替手段**
-- 大きなデータ: 一時テーブルまたはファイルストレージ
-- バイナリ: オブジェクトストレージ（S3など）
+**✅ 推奨される代替手段（ADR-006: 一時テーブル方式）**
+
+タスク間のデータ転送には**一時テーブル**を使用する：
+
+```python
+# ❌ 悪い例: XComに大きなデータを保存
+ti.xcom_push(key="workflow_runs", value=all_workflow_runs)  # 40MB!
+
+# ✅ 良い例: 一時テーブルに保存、XComは統計のみ
+db.insert_temp_workflow_runs(all_workflow_runs, task_id, run_id)
+ti.xcom_push(key="batch_stats", value={"count": len(all_workflow_runs)})  # 数KB
+```
+
+**一時テーブルの利点**:
+- XComテーブルの肥大化防止（81MB → 数KB、99%削減達成）
+- PostgreSQLのトランザクション機能を活用
+- データ整合性の保証（ACID特性）
+- 自動クリーンアップ（7日で自動削除）
+
+**一時テーブルの使用パターン**:
+1. **fetchタスク**: APIレスポンスを一時テーブルに保存
+2. **transformタスク**: 一時テーブルから読み込み、変換後も一時テーブルに保存
+3. **loadタスク**: 一時テーブルから本番テーブルへ移動、完了後クリーンアップ
 
 ### 3.2. データの永続化
 
-**一時データ**
-- タスク実行中のみ必要なデータはメモリまたはローカルファイル
-- タスク完了後は必ずクリーンアップ
+**一時データ（ADR-006: 一時テーブル方式）**
+- タスク間のデータ転送: **一時テーブル**（temp_workflow_runs, temp_transformed_runs, temp_workflow_jobs）
+- 各DAG run用にrun_idで識別
+- 成功時: load_to_databaseタスクで自動クリーンアップ
+- 失敗時: cleanup_temp_tablesDAGで7日後に自動削除
 
 **永続データ**
-- データベースに保存
+- データベースに保存（pipeline_runs, jobs テーブル）
 - トランザクションを適切に管理
 - UPSERTで冪等性を保証
+
+**一時テーブルのライフサイクル**:
+```
+1. fetchタスク: temp_workflow_runs に保存
+2. transformタスク: temp_workflow_runs から読込 → temp_transformed_runs に保存
+3. loadタスク: temp_transformed_runs から本番テーブルへ移動 → 一時テーブルをクリーンアップ
+4. 失敗時: cleanup_temp_tablesDAG（毎日2:00 UTC）が7日より古いデータを削除
+```
 
 ## 4. エラーハンドリングルール
 

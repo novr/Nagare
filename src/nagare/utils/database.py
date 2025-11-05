@@ -6,10 +6,11 @@ ADR-002: Connection管理アーキテクチャに準拠し、
 DatabaseConnectionから接続情報を受け取る。
 """
 
+import json
 import logging
 from collections.abc import Generator
 from contextlib import contextmanager
-from datetime import timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import create_engine, text
@@ -17,6 +18,23 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from nagare.constants import SourceType
+
+
+def _json_serializer(obj: Any) -> str:
+    """JSON serializer for objects not serializable by default json encoder
+
+    Args:
+        obj: Object to serialize
+
+    Returns:
+        ISO format string for datetime objects
+
+    Raises:
+        TypeError: If object is not serializable
+    """
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"Type {type(obj)} not serializable")
 from nagare.utils.connections import DatabaseConnection
 
 logger = logging.getLogger(__name__)
@@ -421,6 +439,326 @@ class DatabaseClient:
             logger.info(
                 f"Upserted {len(jobs) - skipped_count} jobs ({skipped_count} skipped)"
             )
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    # 一時テーブル関連メソッド（ADR-006: XCom削減のため）
+
+    def insert_temp_workflow_runs(
+        self, runs: list[dict[str, Any]], task_id: str, run_id: str
+    ) -> None:
+        """一時テーブルにワークフロー実行データを保存する
+
+        Args:
+            runs: ワークフロー実行データのリスト（GitHub/Bitrise APIレスポンス）
+            task_id: バッチタスクID（例: fetch_github_batch_0）
+            run_id: DAG run ID（Airflow生成、例: manual__2025-11-04T10:00:00）
+        """
+        if not runs:
+            return
+
+        session = self.session_factory()
+        try:
+            for run in runs:
+                # source_run_idとsourceを抽出
+                source_run_id = str(run.get("id", run.get("slug")))  # GitHub: id, Bitrise: slug
+                source = run.get("_source", "github_actions")
+
+                query = text(
+                    """
+                    INSERT INTO temp_workflow_runs (
+                        task_id, run_id, source_run_id, source, data
+                    )
+                    VALUES (
+                        :task_id, :run_id, :source_run_id, :source, :data
+                    )
+                    ON CONFLICT (task_id, run_id, source_run_id) DO UPDATE SET
+                        data = EXCLUDED.data,
+                        created_at = NOW()
+                    """
+                )
+                session.execute(
+                    query,
+                    {
+                        "task_id": task_id,
+                        "run_id": run_id,
+                        "source_run_id": source_run_id,
+                        "source": source,
+                        "data": json.dumps(run, default=_json_serializer),
+                    },
+                )
+
+            session.commit()
+            logger.info(
+                f"Inserted {len(runs)} workflow runs to temp table "
+                f"(task_id={task_id}, run_id={run_id})"
+            )
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def get_temp_workflow_runs(self, run_id: str) -> list[dict[str, Any]]:
+        """一時テーブルから全ワークフロー実行データを取得する
+
+        Args:
+            run_id: DAG run ID
+
+        Returns:
+            ワークフロー実行データのリスト
+        """
+        session = self.session_factory()
+        try:
+            query = text(
+                """
+                SELECT data
+                FROM temp_workflow_runs
+                WHERE run_id = :run_id
+                ORDER BY created_at
+                """
+            )
+            result = session.execute(query, {"run_id": run_id})
+
+            runs = []
+            for row in result:
+                # JSONBカラムは既にPython辞書として返される
+                runs.append(row[0])
+
+            logger.info(f"Retrieved {len(runs)} workflow runs from temp table (run_id={run_id})")
+            return runs
+        finally:
+            session.close()
+
+    def insert_temp_transformed_runs(
+        self, runs: list[dict[str, Any]], run_id: str
+    ) -> None:
+        """一時テーブルに変換済みデータを保存する
+
+        Args:
+            runs: 変換済みワークフロー実行データのリスト（汎用データモデル形式）
+            run_id: DAG run ID
+        """
+        if not runs:
+            return
+
+        session = self.session_factory()
+        try:
+            for run in runs:
+                query = text(
+                    """
+                    INSERT INTO temp_transformed_runs (
+                        run_id, source_run_id, source, data
+                    )
+                    VALUES (
+                        :run_id, :source_run_id, :source, :data
+                    )
+                    ON CONFLICT (run_id, source_run_id) DO UPDATE SET
+                        data = EXCLUDED.data,
+                        created_at = NOW()
+                    """
+                )
+                session.execute(
+                    query,
+                    {
+                        "run_id": run_id,
+                        "source_run_id": run["source_run_id"],
+                        "source": run["source"],
+                        "data": json.dumps(run, default=_json_serializer),
+                    },
+                )
+
+            session.commit()
+            logger.info(
+                f"Inserted {len(runs)} transformed runs to temp table (run_id={run_id})"
+            )
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def get_temp_transformed_runs(self, run_id: str) -> list[dict[str, Any]]:
+        """一時テーブルから変換済みデータを取得する
+
+        Args:
+            run_id: DAG run ID
+
+        Returns:
+            変換済みワークフロー実行データのリスト
+        """
+        session = self.session_factory()
+        try:
+            query = text(
+                """
+                SELECT data
+                FROM temp_transformed_runs
+                WHERE run_id = :run_id
+                ORDER BY created_at
+                """
+            )
+            result = session.execute(query, {"run_id": run_id})
+
+            runs = []
+            for row in result:
+                # JSONBカラムは既にPython辞書として返される
+                runs.append(row[0])
+
+            logger.info(f"Retrieved {len(runs)} transformed runs from temp table (run_id={run_id})")
+            return runs
+        finally:
+            session.close()
+
+    def insert_temp_workflow_jobs(
+        self, jobs: list[dict[str, Any]], run_id: str
+    ) -> None:
+        """一時テーブルにジョブデータを保存する
+
+        Args:
+            jobs: ジョブデータのリスト
+            run_id: DAG run ID
+        """
+        if not jobs:
+            return
+
+        session = self.session_factory()
+        try:
+            for job in jobs:
+                query = text(
+                    """
+                    INSERT INTO temp_workflow_jobs (
+                        run_id, source_job_id, source_run_id, data
+                    )
+                    VALUES (
+                        :run_id, :source_job_id, :source_run_id, :data
+                    )
+                    ON CONFLICT (run_id, source_job_id) DO UPDATE SET
+                        data = EXCLUDED.data,
+                        created_at = NOW()
+                    """
+                )
+                session.execute(
+                    query,
+                    {
+                        "run_id": run_id,
+                        "source_job_id": job["source_job_id"],
+                        "source_run_id": job["source_run_id"],
+                        "data": json.dumps(job, default=_json_serializer),
+                    },
+                )
+
+            session.commit()
+            logger.info(
+                f"Inserted {len(jobs)} workflow jobs to temp table (run_id={run_id})"
+            )
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def get_temp_workflow_jobs(self, run_id: str) -> list[dict[str, Any]]:
+        """一時テーブルからジョブデータを取得する
+
+        Args:
+            run_id: DAG run ID
+
+        Returns:
+            ジョブデータのリスト
+        """
+        session = self.session_factory()
+        try:
+            query = text(
+                """
+                SELECT data
+                FROM temp_workflow_jobs
+                WHERE run_id = :run_id
+                ORDER BY created_at
+                """
+            )
+            result = session.execute(query, {"run_id": run_id})
+
+            jobs = []
+            for row in result:
+                # JSONBカラムは既にPython辞書として返される
+                jobs.append(row[0])
+
+            logger.info(f"Retrieved {len(jobs)} workflow jobs from temp table (run_id={run_id})")
+            return jobs
+        finally:
+            session.close()
+
+    def move_temp_to_production(self, run_id: str) -> None:
+        """一時テーブルから本番テーブルへデータを移動する
+
+        トランザクション内で呼び出すこと。
+        temp_transformed_runs → pipeline_runs
+        temp_workflow_jobs → jobs
+
+        Args:
+            run_id: DAG run ID
+        """
+        # 一時テーブルからデータを取得
+        transformed_runs = self.get_temp_transformed_runs(run_id)
+        transformed_jobs = self.get_temp_workflow_jobs(run_id)
+
+        # 本番テーブルにUPSERT
+        if transformed_runs:
+            self.upsert_pipeline_runs(transformed_runs)
+
+        if transformed_jobs:
+            self.upsert_jobs(transformed_jobs)
+
+        logger.info(
+            f"Moved {len(transformed_runs)} runs and {len(transformed_jobs)} jobs "
+            f"from temp to production tables (run_id={run_id})"
+        )
+
+    def cleanup_temp_tables(self, run_id: str | None = None, days: int = 7) -> int:
+        """一時テーブルをクリーンアップする
+
+        Args:
+            run_id: 特定のDAG runのデータを削除（Noneの場合は古いデータを削除）
+            days: 保持日数（run_idがNoneの場合のみ有効）
+
+        Returns:
+            削除されたレコード数の合計
+        """
+        session = self.session_factory()
+        try:
+            deleted_count = 0
+
+            if run_id:
+                # 特定のDAG runのデータを削除
+                for table in ["temp_workflow_runs", "temp_transformed_runs", "temp_workflow_jobs"]:
+                    query = text(f"DELETE FROM {table} WHERE run_id = :run_id")
+                    result = session.execute(query, {"run_id": run_id})
+                    deleted_count += result.rowcount
+
+                logger.info(
+                    f"Deleted {deleted_count} records from temp tables (run_id={run_id})"
+                )
+            else:
+                # 古いデータを削除
+                for table in ["temp_workflow_runs", "temp_transformed_runs", "temp_workflow_jobs"]:
+                    query = text(
+                        f"""
+                        DELETE FROM {table}
+                        WHERE created_at < NOW() - INTERVAL '{days} days'
+                        """
+                    )
+                    result = session.execute(query)
+                    deleted_count += result.rowcount
+
+                logger.info(
+                    f"Deleted {deleted_count} old records from temp tables (older than {days} days)"
+                )
+
+            session.commit()
+            return deleted_count
         except Exception:
             session.rollback()
             raise

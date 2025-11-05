@@ -124,12 +124,15 @@ def create_cicd_collection_dag(
         **dag_kwargs,
     ) as dag:
         # タスク1: 監視対象リポジトリ/アプリの取得（プラットフォームでフィルタ）
-        # ソースタイプを決定（github -> github_actions, bitrise -> bitrise）
-        source_type = (
-            SourceType.GITHUB_ACTIONS
-            if platform_config.name == Platform.GITHUB
-            else SourceType.BITRISE
-        )
+        # ソースタイプを決定（github -> github_actions, bitrise -> bitrise, xcode_cloud -> xcode_cloud）
+        if platform_config.name == Platform.GITHUB:
+            source_type = SourceType.GITHUB_ACTIONS
+        elif platform_config.name == Platform.BITRISE:
+            source_type = SourceType.BITRISE
+        elif platform_config.name == Platform.XCODE_CLOUD:
+            source_type = SourceType.XCODE_CLOUD
+        else:
+            raise ValueError(f"Unknown platform: {platform_config.name}")
         task_fetch_repositories = PythonOperator(
             task_id=TaskIds.FETCH_REPOSITORIES,
             python_callable=with_database_client(fetch_repositories),
@@ -145,7 +148,7 @@ def create_cicd_collection_dag(
                 platform_config.fetch_runs_batch,
                 conn_id=platform_config.connection_id,
             ),
-            execution_timeout=timedelta(minutes=10),  # バッチタスク個別タイムアウト
+            execution_timeout=timedelta(minutes=30),  # バッチタスク個別タイムアウト（GitHub API制限考慮）
         ).expand(
             op_kwargs=task_fetch_repositories.output
         )
@@ -163,10 +166,10 @@ def create_cicd_collection_dag(
             previous_tasks = [task_fetch_details]
             batch_tasks >> task_fetch_details  # type: ignore[arg-type]
 
-        # タスク4: データ変換
+        # タスク4: データ変換（ADR-006: 一時テーブルからデータ取得）
         task_transform_data = PythonOperator(
             task_id=TaskIds.TRANSFORM_DATA,
-            python_callable=transform_data,
+            python_callable=with_database_client(transform_data),
         )
 
         # タスク5: データベースへの保存

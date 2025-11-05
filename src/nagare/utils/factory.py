@@ -14,14 +14,17 @@ from nagare.utils.connections import (
     ConnectionRegistry,
     DatabaseConnection,
     GitHubConnection,
+    XcodeCloudConnection,
 )
 from nagare.utils.bitrise_client import BitriseClient
 from nagare.utils.database import DatabaseClient
 from nagare.utils.github_client import GitHubClient
+from nagare.utils.xcode_cloud_client import XcodeCloudClient
 from nagare.utils.protocols import (
     BitriseClientProtocol,
     DatabaseClientProtocol,
     GitHubClientProtocol,
+    XcodeCloudClientProtocol,
 )
 
 logger = logging.getLogger(__name__)
@@ -147,6 +150,53 @@ class ClientFactory:
         connection = ConnectionRegistry.get_bitrise()
         logger.debug("Using environment variables for Bitrise authentication")
         return BitriseClient(connection=connection)
+
+    @staticmethod
+    def create_xcode_cloud_client(
+        connection: XcodeCloudConnection | None = None,
+        conn_id: str | None = None,
+    ) -> XcodeCloudClientProtocol:
+        """XcodeCloudClientインスタンスを生成する
+
+        優先順位:
+        1. connection引数（明示的に指定されたConnection）
+        2. conn_id引数（Airflow Connection ID）
+        3. ConnectionRegistry（環境変数または設定ファイル）
+
+        Args:
+            connection: Xcode Cloud接続設定（省略時はconn_idまたはRegistryから取得）
+            conn_id: Airflow Connection ID（省略時はRegistryから取得）
+
+        Returns:
+            XcodeCloudClientProtocol実装インスタンス
+
+        Example:
+            # Airflow Connectionから作成
+            client = ClientFactory.create_xcode_cloud_client(conn_id="xcode_cloud_default")
+
+            # 環境変数から作成（デフォルト）
+            client = ClientFactory.create_xcode_cloud_client()
+        """
+        # 1. connection引数が指定されている場合はそれを使用
+        if connection is not None:
+            return XcodeCloudClient(connection=connection)
+
+        # 2. conn_id が指定されている場合はAirflow Connectionから取得
+        if conn_id is not None:
+            try:
+                connection = XcodeCloudConnection.from_airflow(conn_id)
+                logger.debug(f"Using Airflow Connection: {conn_id}")
+                return XcodeCloudClient(connection=connection)
+            except (ImportError, ValueError) as e:
+                logger.warning(
+                    f"Failed to load Airflow Connection '{conn_id}': {e}. "
+                    f"Falling back to environment variables."
+                )
+
+        # 3. ConnectionRegistryから取得（環境変数）
+        connection = ConnectionRegistry.get_xcode_cloud()
+        logger.debug("Using environment variables for Xcode Cloud authentication")
+        return XcodeCloudClient(connection=connection)
 
 
 # グローバルなFactoryインスタンス

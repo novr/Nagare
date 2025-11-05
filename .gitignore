@@ -40,7 +40,19 @@ Thumbs.db
 .env.*.local
 
 # Connection configuration
-connections.yml
+# connections.yml - 環境変数参照のみなのでコミット可能
+# 実際の機密情報は.envファイルで管理
+
+# Secrets and keys
+secrets/
+keys/
+*.p8
+*.pem
+*.key
+*.crt
+*.cer
+*.p12
+*.pfx
 
 # Airflow
 airflow.db

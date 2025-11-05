@@ -932,7 +932,7 @@ Docker環境でのテスト実行環境も整備され、全137テストが実�
 - ✅ 環境変数展開機能の実装（`${VAR_NAME}`, `${VAR_NAME:-default}`）
 - ✅ テスト修正（ConnectionRegistry、DAG構造）
 - ✅ ADR-005の作成
-- ✅ connections.yml.sampleの大幅更新
+- ✅ connections.ymlの大幅更新（環境変数参照形式でgitコミット可能に）
 
 ### 発見された問題
 **🔴 Critical (1件)**:

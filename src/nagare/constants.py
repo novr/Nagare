@@ -14,6 +14,7 @@ class SourceType:
 
     GITHUB_ACTIONS = "github_actions"
     BITRISE = "bitrise"
+    XCODE_CLOUD = "xcode_cloud"
 
 
 class Platform:
@@ -24,6 +25,7 @@ class Platform:
 
     GITHUB = "github"
     BITRISE = "bitrise"
+    XCODE_CLOUD = "xcode_cloud"
     GITLAB = "gitlab"
     CIRCLECI = "circleci"
 

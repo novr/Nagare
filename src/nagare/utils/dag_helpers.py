@@ -278,3 +278,115 @@ def with_bitrise_and_database_clients(
     wrapper.__doc__ = task_func.__doc__
 
     return wrapper
+
+
+def with_xcode_cloud_client(
+    task_func: Callable[..., T],
+    factory: ClientFactory | None = None,
+    conn_id: str | None = None,
+) -> Callable[..., T]:
+    """XcodeCloudClientを注入してタスク関数を実行するラッパーを生成する
+
+    Args:
+        task_func: XcodeCloudClientを第一引数として受け取るタスク関数
+        factory: ClientFactoryインスタンス（省略時はget_factory()を使用）
+        conn_id: Airflow Connection ID（省略時は環境変数から取得）
+
+    Returns:
+        ラップされた関数（Airflowのコンテキストを受け取る）
+
+    Example:
+        ```python
+        def my_task(xcode_cloud_client: XcodeCloudClientProtocol, **context: Any) -> None:
+            builds = xcode_cloud_client.list_ci_builds_for_app(...)
+            ...
+
+        # Airflow Connectionを使用（推奨）
+        task = PythonOperator(
+            task_id="my_task",
+            python_callable=with_xcode_cloud_client(my_task, conn_id="xcode_cloud_default"),
+        )
+
+        # 環境変数を使用（後方互換性）
+        task = PythonOperator(
+            task_id="my_task",
+            python_callable=with_xcode_cloud_client(my_task),
+        )
+        ```
+    """
+
+    def wrapper(**context: Any) -> T:
+        """Airflowから呼ばれるラッパー関数"""
+        if factory is None:
+            current_factory = get_factory()
+        else:
+            current_factory = factory
+
+        with current_factory.create_xcode_cloud_client(conn_id=conn_id) as xcode_cloud_client:
+            return task_func(xcode_cloud_client=xcode_cloud_client, **context)
+
+    # 元の関数名とdocstringを保持
+    wrapper.__name__ = task_func.__name__
+    wrapper.__doc__ = task_func.__doc__
+
+    return wrapper
+
+
+def with_xcode_cloud_and_database_clients(
+    task_func: Callable[..., T],
+    factory: ClientFactory | None = None,
+    conn_id: str | None = None,
+) -> Callable[..., T]:
+    """XcodeCloudClientとDatabaseClientの両方を注入してタスク関数を実行するラッパーを生成する
+
+    Args:
+        task_func: XcodeCloudClientとDatabaseClientを引数として受け取るタスク関数
+        factory: ClientFactoryインスタンス（省略時はget_factory()を使用）
+        conn_id: Xcode Cloud用のAirflow Connection ID（省略時は環境変数から取得）
+
+    Returns:
+        ラップされた関数（Airflowのコンテキストを受け取る）
+
+    Example:
+        ```python
+        def my_task(
+            xcode_cloud_client: XcodeCloudClientProtocol,
+            db: DatabaseClientProtocol,
+            **context: Any
+        ) -> None:
+            latest_timestamp = db.get_latest_run_timestamp(repo_id, "xcode_cloud")
+            builds = xcode_cloud_client.list_ci_builds_for_app(app_id, ...)
+            ...
+
+        # Airflow Connectionを使用（推奨）
+        task = PythonOperator(
+            task_id="my_task",
+            python_callable=with_xcode_cloud_and_database_clients(
+                my_task, conn_id="xcode_cloud_default"
+            ),
+        )
+
+        # 環境変数を使用（後方互換性）
+        task = PythonOperator(
+            task_id="my_task",
+            python_callable=with_xcode_cloud_and_database_clients(my_task),
+        )
+        ```
+    """
+
+    def wrapper(**context: Any) -> T:
+        """Airflowから呼ばれるラッパー関数"""
+        if factory is None:
+            current_factory = get_factory()
+        else:
+            current_factory = factory
+
+        with current_factory.create_xcode_cloud_client(conn_id=conn_id) as xcode_cloud_client:
+            with current_factory.create_database_client() as db:
+                return task_func(xcode_cloud_client=xcode_cloud_client, db=db, **context)
+
+    # 元の関数名とdocstringを保持
+    wrapper.__name__ = task_func.__name__
+    wrapper.__doc__ = task_func.__doc__
+
+    return wrapper
