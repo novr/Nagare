@@ -83,10 +83,10 @@ github:
 # Bitrise接続設定
 # ==============================================================================
 # ⚠️ Bitriseを使用する場合のみ、以下のコメントを解除してください
-# bitrise:
+bitrise:
 #   # Personal Access Token
 #   # ✅ 推奨: 環境変数から読み込み（.env ファイルで管理）
-#   api_token: ${BITRISE_TOKEN}
+  api_token: ${BITRISE_TOKEN}
 #
 #   # Bitrise API ベースURL
 #   # base_url: ${BITRISE_API_URL:-https://api.bitrise.io/v0.1}
@@ -96,7 +96,7 @@ github:
 # Xcode Cloud接続設定
 # ==============================================================================
 # ⚠️ Xcode Cloudを使用する場合のみ、以下のコメントを解除してください
-# xcode_cloud:
+xcode_cloud:
 #   # App Store Connect API認証情報
 #   # JWT (JSON Web Token)認証を使用
 #   #
@@ -109,17 +109,17 @@ github:
 #   #   4. Key ID, Issuer ID, Private Key (.p8ファイル) をダウンロード
 #
 #   # App Store Connect API Key ID
-#   key_id: ${APPSTORE_KEY_ID}
+  key_id: ${APPSTORE_KEY_ID}
 #
 #   # App Store Connect API Issuer ID
-#   issuer_id: ${APPSTORE_ISSUER_ID}
+  issuer_id: ${APPSTORE_ISSUER_ID}
 #
 #   # Private Key (P8形式の内容)
 #   # オプション1: 環境変数に直接P8ファイルの内容を設定
 #   # private_key: ${APPSTORE_PRIVATE_KEY}
 #
 #   # オプション2: P8ファイルのパスを指定（どちらか一方を使用）
-#   private_key_path: ${APPSTORE_PRIVATE_KEY_PATH}
+  private_key_path: ${APPSTORE_PRIVATE_KEY_PATH}
 #
 #   # App Store Connect API ベースURL
 #   # base_url: ${APPSTORE_API_URL:-https://api.appstoreconnect.apple.com/v1}
