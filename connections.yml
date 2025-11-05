@@ -114,10 +114,10 @@ xcode_cloud:
 
   # Private Key (P8形式の内容)
   # オプション1: 環境変数に直接P8ファイルの内容を設定
-  private_key: ${APPSTORE_PRIVATE_KEY}
+  # private_key: ${APPSTORE_PRIVATE_KEY}
 
   # オプション2: P8ファイルのパスを指定（どちらか一方を使用）
-  # private_key_path: ${APPSTORE_PRIVATE_KEY_PATH}
+  private_key_path: ${APPSTORE_PRIVATE_KEY_PATH}
 
   # App Store Connect API ベースURL
   # base_url: ${APPSTORE_API_URL:-https://api.appstoreconnect.apple.com/v1}
