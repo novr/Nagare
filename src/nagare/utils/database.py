@@ -86,12 +86,13 @@ class DatabaseClient:
         PostgreSQLから監視対象リポジトリを取得する。
 
         Args:
-            source: ソースタイプでフィルタ（オプション）。例: "github_actions", "bitrise"
+            source: ソースタイプでフィルタ（オプション）。例: "github_actions", "bitrise", "xcode_cloud"
 
         Returns:
             リポジトリ情報のリスト
             - GitHub/デフォルト: {"owner": str, "repo": str}
-            - Bitrise: {"id": int, "repository_name": str, "source_repository_id": str}
+            - Bitrise: {"id": int, "repository_name": str, "source_repository_id": str (app_slug)}
+            - Xcode Cloud: {"id": int, "repository_name": str, "source_repository_id": str (app_id)}
         """
         session = self.session_factory()
         try:
@@ -117,7 +118,7 @@ class DatabaseClient:
 
             repositories = []
             for row in result:
-                # ソースタイプで判定（GitHub ActionsとBitriseで異なる構造を返す）
+                # ソースタイプで判定（GitHub Actions、Bitrise、Xcode Cloudで異なる構造を返す）
                 if row.source == SourceType.GITHUB_ACTIONS:
                     # GitHub形式: owner/repoに分割
                     parts = row.repository_name.split("/", 1)
@@ -130,6 +131,14 @@ class DatabaseClient:
                 elif row.source == SourceType.BITRISE:
                     # Bitrise形式: id/repository_name/source_repository_idを返す
                     # source_repository_idはBitriseのapp_slug（UUID）
+                    repositories.append({
+                        "id": row.id,
+                        "repository_name": row.repository_name,
+                        "source_repository_id": row.source_repository_id
+                    })
+                elif row.source == SourceType.XCODE_CLOUD:
+                    # Xcode Cloud形式: Bitriseと同様の構造を返す
+                    # source_repository_idはXcode CloudのApp ID
                     repositories.append({
                         "id": row.id,
                         "repository_name": row.repository_name,
