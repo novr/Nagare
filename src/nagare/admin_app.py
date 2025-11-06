@@ -8,6 +8,7 @@ Usage:
 """
 
 import os
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,93 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+
+@contextmanager
+def temporary_env_var(key: str, value: str):
+    """環境変数を一時的に設定するコンテキストマネージャー
+
+    Args:
+        key: 環境変数名
+        value: 設定する値
+
+    Yields:
+        None
+
+    Note:
+        終了時に元の値に復元する。元の値がない場合は削除する。
+    """
+    original = os.environ.get(key)
+    os.environ[key] = value
+    try:
+        yield
+    finally:
+        if original is not None:
+            os.environ[key] = original
+        else:
+            os.environ.pop(key, None)
+
+
+def validate_repository_name(repo_name: str) -> tuple[bool, str]:
+    """リポジトリ名の形式を検証する
+
+    Args:
+        repo_name: リポジトリ名（owner/repo形式）
+
+    Returns:
+        (is_valid, error_message): 検証結果とエラーメッセージのタプル
+    """
+    if not repo_name or not repo_name.strip():
+        return False, "リポジトリ名を入力してください"
+
+    repo_name = repo_name.strip()
+
+    if "/" not in repo_name:
+        return False, "リポジトリ名は 'owner/repo' 形式で入力してください"
+
+    parts = repo_name.split("/")
+    if len(parts) != 2:
+        return False, "リポジトリ名は 'owner/repo' 形式で入力してください"
+
+    owner, repo = parts
+    if not owner or not repo:
+        return False, "所有者名とリポジトリ名の両方を入力してください"
+
+    # 不正な文字チェック（GitHubの命名規則に基づく）
+    invalid_chars = set('<>:"|?*\\')
+    if any(c in invalid_chars for c in repo_name):
+        return False, f"リポジトリ名に使用できない文字が含まれています: {', '.join(invalid_chars)}"
+
+    return True, ""
+
+
+def validate_connection_id(conn_id: str) -> tuple[bool, str]:
+    """接続IDの形式を検証する
+
+    Args:
+        conn_id: 接続ID
+
+    Returns:
+        (is_valid, error_message): 検証結果とエラーメッセージのタプル
+    """
+    if not conn_id or not conn_id.strip():
+        return False, "接続IDを入力してください"
+
+    conn_id = conn_id.strip()
+
+    # 英数字、アンダースコア、ハイフンのみ許可
+    if not all(c.isalnum() or c in ('_', '-') for c in conn_id):
+        return False, "接続IDは英数字、アンダースコア、ハイフンのみ使用できます"
+
+    # 先頭は英字のみ
+    if not conn_id[0].isalpha():
+        return False, "接続IDは英字で始める必要があります"
+
+    # 長さチェック
+    if len(conn_id) > 64:
+        return False, "接続IDは64文字以内にしてください"
+
+    return True, ""
 
 
 @st.cache_resource
@@ -211,8 +299,6 @@ def get_github_client_from_connection(conn_id: str = None):
     Returns:
         GitHubClient or None
     """
-    import os
-
     # Connection IDが指定された場合
     if conn_id:
         try:
@@ -224,24 +310,8 @@ def get_github_client_from_connection(conn_id: str = None):
                 )
                 row = result.fetchone()
                 if row and row[0]:
-                    # 一時的に環境変数を設定
-                    original_token = os.environ.get("GITHUB_TOKEN")
-                    os.environ["GITHUB_TOKEN"] = row[0]
-                    try:
-                        client = GitHubClient()
-                        # 元に戻す
-                        if original_token:
-                            os.environ["GITHUB_TOKEN"] = original_token
-                        else:
-                            os.environ.pop("GITHUB_TOKEN", None)
-                        return client
-                    except Exception as e:
-                        # 元に戻す
-                        if original_token:
-                            os.environ["GITHUB_TOKEN"] = original_token
-                        else:
-                            os.environ.pop("GITHUB_TOKEN", None)
-                        raise e
+                    with temporary_env_var("GITHUB_TOKEN", row[0]):
+                        return GitHubClient()
         except Exception as e:
             st.error(f"Connection '{conn_id}' からの取得エラー: {e}")
             return None
@@ -257,20 +327,8 @@ def get_github_client_from_connection(conn_id: str = None):
             )
             row = result.fetchone()
             if row and row[0]:
-                original_token = os.environ.get("GITHUB_TOKEN")
-                os.environ["GITHUB_TOKEN"] = row[0]
-                try:
-                    client = GitHubClient()
-                    if original_token:
-                        os.environ["GITHUB_TOKEN"] = original_token
-                    else:
-                        os.environ.pop("GITHUB_TOKEN", None)
-                    return client
-                except Exception:
-                    if original_token:
-                        os.environ["GITHUB_TOKEN"] = original_token
-                    else:
-                        os.environ.pop("GITHUB_TOKEN", None)
+                with temporary_env_var("GITHUB_TOKEN", row[0]):
+                    return GitHubClient()
     except Exception:
         pass
 
@@ -991,7 +1049,16 @@ def add_repository(repo_name: str, source: str = "github_actions", source_repo_i
         source: ソースタイプ（"github_actions", "bitrise"など）
         source_repo_id: プラットフォーム固有ID（BitriseのUUID app_slug等）
                        指定しない場合はrepo_nameから生成
+
+    Raises:
+        ValueError: リポジトリ名の形式が不正な場合
     """
+    # GitHub Actionsの場合はリポジトリ名の形式を検証
+    if source == "github_actions":
+        is_valid, error_message = validate_repository_name(repo_name)
+        if not is_valid:
+            raise ValueError(error_message)
+
     engine = get_database_engine()
     # source_repo_idが指定されない場合はrepo_nameから生成（GitHub用）
     if source_repo_id is None:
@@ -1189,7 +1256,16 @@ def get_connections():
 
 def add_connection(conn_id: str, conn_type: str, description: str = "", host: str = "",
                    schema: str = "", login: str = "", password: str = "", port: int = None, extra: str = ""):
-    """Connectionを追加する"""
+    """Connectionを追加する
+
+    Raises:
+        ValueError: 接続IDの形式が不正な場合
+    """
+    # 接続IDの形式を検証
+    is_valid, error_message = validate_connection_id(conn_id)
+    if not is_valid:
+        raise ValueError(error_message)
+
     engine = get_database_engine()
 
     with engine.begin() as conn:
@@ -1524,19 +1600,17 @@ elif page == "📦 リポジトリ管理":
 
             if submitted:
                 if new_repo:
-                    # GitHub Actionsの場合は '/' が必要
-                    if source == SourceType.GITHUB_ACTIONS and "/" not in new_repo:
-                        st.error("GitHubリポジトリ名を 'owner/repo' 形式で入力してください")
-                    else:
-                        try:
-                            success, message = add_repository(new_repo, source)
-                            if success:
-                                st.success(message)
-                                st.rerun()
-                            else:
-                                st.warning(message)
-                        except Exception as e:
-                            st.error(f"追加エラー: {e}")
+                    try:
+                        success, message = add_repository(new_repo, source)
+                        if success:
+                            st.success(message)
+                            st.rerun()
+                        else:
+                            st.warning(message)
+                    except ValueError as e:
+                        st.error(f"入力エラー: {e}")
+                    except Exception as e:
+                        st.error(f"追加エラー: {e}")
                 else:
                     st.error("リポジトリ/アプリ名を入力してください")
 
