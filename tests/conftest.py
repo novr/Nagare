@@ -164,12 +164,13 @@ class MockDatabaseClient:
         return self.temp_workflow_jobs.get(run_id, [])
 
     def insert_temp_workflow_runs(
-        self, runs: list[dict[str, Any]], run_id: str
+        self, runs: list[dict[str, Any]], task_id: str, run_id: str
     ) -> None:
         """一時テーブルにワークフロー実行データを保存する
 
         Args:
             runs: ワークフロー実行データのリスト
+            task_id: タスクID
             run_id: DAG run ID
         """
         if run_id not in self.temp_workflow_runs:
@@ -199,6 +200,51 @@ class MockDatabaseClient:
         if run_id not in self.temp_workflow_jobs:
             self.temp_workflow_jobs[run_id] = []
         self.temp_workflow_jobs[run_id].extend(jobs)
+
+    def move_temp_to_production(self, run_id: str) -> None:
+        """一時テーブルから本番テーブルへデータを移動する
+
+        Args:
+            run_id: DAG run ID
+        """
+        # 一時テーブルからデータを取得
+        transformed_runs = self.get_temp_transformed_runs(run_id)
+        transformed_jobs = self.get_temp_workflow_jobs(run_id)
+
+        # 本番テーブルにUPSERT
+        if transformed_runs:
+            self.upsert_pipeline_runs(transformed_runs)
+
+        if transformed_jobs:
+            self.upsert_jobs(transformed_jobs)
+
+    def cleanup_temp_tables(self, run_id: str | None = None, days: int = 7) -> int:
+        """一時テーブルをクリーンアップする
+
+        Args:
+            run_id: 特定のDAG runのデータを削除（Noneの場合は古いデータを削除）
+            days: 保持日数（run_idがNoneの場合のみ有効）
+
+        Returns:
+            削除されたレコード数の合計
+        """
+        deleted_count = 0
+
+        if run_id:
+            # 特定のDAG runのデータを削除
+            if run_id in self.temp_workflow_runs:
+                deleted_count += len(self.temp_workflow_runs[run_id])
+                del self.temp_workflow_runs[run_id]
+
+            if run_id in self.temp_transformed_runs:
+                deleted_count += len(self.temp_transformed_runs[run_id])
+                del self.temp_transformed_runs[run_id]
+
+            if run_id in self.temp_workflow_jobs:
+                deleted_count += len(self.temp_workflow_jobs[run_id])
+                del self.temp_workflow_jobs[run_id]
+
+        return deleted_count
 
     def upsert_pipeline_runs(self, runs: list[dict[str, Any]]) -> None:
         """モックのUPSERT処理（冪等性を実装）

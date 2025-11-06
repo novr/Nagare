@@ -11,9 +11,10 @@ def test_load_to_database_with_mock(
     """load_to_database関数がモックDBClientで動作することを確認"""
     from nagare.tasks.load import load_to_database
 
-    # 前のタスクのデータを設定
+    # 一時テーブルに変換済みデータを設定（ADR-006準拠）
     ti = mock_airflow_context["ti"]
-    ti.xcom_data["transformed_runs"] = [
+    run_id = ti.run_id
+    mock_db_client.temp_transformed_runs[run_id] = [
         {
             "source_run_id": "123456",
             "source": "github_actions",
@@ -46,16 +47,17 @@ def test_load_to_database_with_jobs(
     """load_to_database関数がジョブデータもロードできることを確認"""
     from nagare.tasks.load import load_to_database
 
-    # 前のタスクのデータを設定
+    # 一時テーブルに変換済みデータを設定（ADR-006準拠）
     ti = mock_airflow_context["ti"]
-    ti.xcom_data["transformed_runs"] = [
+    run_id = ti.run_id
+    mock_db_client.temp_transformed_runs[run_id] = [
         {
             "source_run_id": "123456",
             "source": "github_actions",
             "status": "SUCCESS",
         }
     ]
-    ti.xcom_data["transformed_jobs"] = [
+    mock_db_client.temp_workflow_jobs[run_id] = [
         {
             "source_job_id": "789",
             "source_run_id": "123456",
@@ -84,12 +86,13 @@ def test_load_to_database_uses_transaction(
     """load_to_database関数がトランザクションを使用することを確認"""
     from nagare.tasks.load import load_to_database
 
-    # 前のタスクのデータを設定
+    # 一時テーブルに変換済みデータを設定（ADR-006準拠）
     ti = mock_airflow_context["ti"]
-    ti.xcom_data["transformed_runs"] = [
+    run_id = ti.run_id
+    mock_db_client.temp_transformed_runs[run_id] = [
         {"source_run_id": "123", "status": "SUCCESS"}
     ]
-    ti.xcom_data["transformed_jobs"] = [
+    mock_db_client.temp_workflow_jobs[run_id] = [
         {"source_job_id": "456", "source_run_id": "123", "status": "SUCCESS"}
     ]
 

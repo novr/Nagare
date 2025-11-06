@@ -14,22 +14,34 @@ def test_fetch_repositories_with_mock(
     # モックを注入して実行
     result = fetch_repositories(db=mock_db_client, **mock_airflow_context)
 
-    # 検証
+    # 検証: 期間バッチングにより、リポジトリは複数のバッチに分割される
     assert mock_db_client.get_repositories_called
-    assert len(result) == 2
-    assert result[0]["owner"] == "test-org"
-    assert result[0]["repo"] == "test-repo-1"
+    # 結果は [{"batch_apps": [...], "since": "...", "until": "..."}, ...] 形式
+    assert len(result) > 0
+    assert all("batch_apps" in batch for batch in result)
 
-    # XComに保存されたか確認
+    # 各バッチに2つのリポジトリが含まれることを確認
+    for batch in result:
+        assert len(batch["batch_apps"]) == 2
+        assert batch["batch_apps"][0]["owner"] == "test-org"
+        assert batch["batch_apps"][0]["repo"] == "test-repo-1"
+
+    # XComには元のリポジトリリストが保存される（期間バッチング前）
     ti = mock_airflow_context["ti"]
     xcom_data = ti.xcom_data.get("repositories")
-    assert xcom_data == result
+    assert xcom_data is not None
+    assert len(xcom_data) == 2
+    assert xcom_data[0]["owner"] == "test-org"
+    assert xcom_data[0]["repo"] == "test-repo-1"
 
 
 def test_fetch_workflow_runs_with_mock(
     mock_github_client: MockGitHubClient, mock_airflow_context: dict[str, Any]
 ) -> None:
-    """fetch_workflow_runs関数がモックGitHubClientで動作することを確認"""
+    """fetch_workflow_runs関数がモックGitHubClientで動作することを確認
+
+    ADR-006: データは一時テーブルに保存され、XComには統計情報のみ保存
+    """
     from nagare.tasks.fetch import fetch_workflow_runs
     from tests.conftest import MockDatabaseClient
 
@@ -50,11 +62,15 @@ def test_fetch_workflow_runs_with_mock(
     # 検証
     assert mock_github_client.get_workflow_runs_called
 
-    # XComに保存されたか確認
-    workflow_runs = ti.xcom_data.get("workflow_runs")
-    assert workflow_runs is not None
+    # 一時テーブルに保存されたか確認（ADR-006準拠）
+    run_id = ti.run_id
+    workflow_runs = mock_db_client.temp_workflow_runs.get(run_id, [])
     assert len(workflow_runs) == 1
     assert workflow_runs[0]["id"] == 123456
+
+    # リポジトリ情報が追加されていることを確認
+    assert workflow_runs[0]["_repository_owner"] == "test-org"
+    assert workflow_runs[0]["_repository_name"] == "test-repo-1"
 
 
 def test_fetch_workflow_run_jobs_with_mock(
