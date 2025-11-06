@@ -53,10 +53,30 @@ docker compose exec airflow-scheduler uv run python
    - DATABASE_HOST, DATABASE_PORT等は`.env`ではなく`docker-compose.yml`で設定済み
    - `.env`で設定が必要なのは:
      - `GITHUB_TOKEN`
+     - `BITRISE_TOKEN`
+     - `APPSTORE_KEY_ID`, `APPSTORE_ISSUER_ID`, `APPSTORE_PRIVATE_KEY`
      - `AIRFLOW_ADMIN_PASSWORD`
      - `DATABASE_PASSWORD`（`setup-secrets.sh`で生成）
 
-3. **データベース操作**
+3. **環境変数の更新方法（重要）**
+   ```bash
+   # ❌ Bad: restart では環境変数が更新されない
+   docker compose restart streamlit-admin
+
+   # ✅ Good: コンテナを再作成する必要がある
+   docker compose down streamlit-admin
+   docker compose up -d streamlit-admin
+
+   # または、複数のサービスを一度に
+   docker compose down airflow-webserver airflow-scheduler
+   docker compose up -d airflow-webserver airflow-scheduler
+   ```
+
+   **理由**: `docker compose restart`はコンテナを再起動するだけで、
+   環境変数は再読み込みされません。`.env`ファイルを更新した場合は、
+   必ず`down`してから`up`する必要があります。
+
+4. **データベース操作**
    ```bash
    # PostgreSQLに直接接続
    docker compose exec postgres psql -U nagare_user -d nagare
@@ -412,7 +432,53 @@ docker compose exec postgres psql -U nagare_user -d nagare -c "SELECT 1;"
 cat .env | grep DATABASE_PASSWORD
 ```
 
+### 環境変数が反映されない
+
+**症状**: `.env`ファイルを更新したが、コンテナ内で古い値が使われている
+
+**原因**: `docker compose restart`では環境変数が再読み込みされない
+
+**解決方法**:
+```bash
+# 1. 影響を受けるサービスを特定
+docker compose ps
+
+# 2. サービスを再作成（例: streamlit-admin）
+docker compose down streamlit-admin
+docker compose up -d streamlit-admin
+
+# 3. 複数サービスの場合
+docker compose down airflow-webserver airflow-scheduler
+docker compose up -d airflow-webserver airflow-scheduler
+
+# 4. 環境変数が正しく読み込まれたか確認
+docker exec <container-name> env | grep VARIABLE_NAME
+```
+
+### Airflow DAGのインポートエラー
+
+**症状**: `DAG Import Errors` に `UnicodeDecodeError` や `YAML parse error`
+
+**原因**: Airflowコンテナに環境変数が渡されていない
+
+**解決方法**:
+```bash
+# 1. Airflowサービスを再作成
+docker compose down airflow-webserver airflow-scheduler
+docker compose up -d airflow-webserver airflow-scheduler
+
+# 2. DAGインポートエラーを確認
+docker exec nagare-airflow-webserver airflow dags list-import-errors
+
+# 3. 接続が正しく読み込まれているか確認
+docker exec nagare-airflow-webserver python3 -c "
+from nagare.utils.connections import ConnectionRegistry
+ConnectionRegistry.from_file('/opt/airflow/connections.yml')
+print('Loaded:', list(ConnectionRegistry._all_connections.keys()))
+"
+```
+
 ---
 
-**最終更新**: 2025年10月26日
+**最終更新**: 2025年11月5日
 **メンテナー**: プロジェクトオーナー
