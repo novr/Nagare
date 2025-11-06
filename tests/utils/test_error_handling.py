@@ -272,7 +272,7 @@ class TestDataTransformationErrorHandling:
     """データ変換のエラーハンドリングテスト"""
 
     def test_transform_data_with_malformed_dates(
-        self, mock_airflow_context: dict
+        self, mock_db_client, mock_airflow_context: dict
     ) -> None:
         """不正な日付形式のデータ"""
         from nagare.tasks.transform import transform_data
@@ -294,13 +294,13 @@ class TestDataTransformationErrorHandling:
         # 日付パースエラーが発生することを期待
         # （実装によってはスキップされる可能性もある）
         try:
-            transform_data(**mock_airflow_context)
+            transform_data(db=mock_db_client, **mock_airflow_context)
         except (ValueError, KeyError):
             # エラーが発生するのは正常
             pass
 
     def test_transform_data_with_missing_fields(
-        self, mock_airflow_context: dict
+        self, mock_db_client, mock_airflow_context: dict
     ) -> None:
         """必須フィールドが欠けているデータ
 
@@ -311,19 +311,22 @@ class TestDataTransformationErrorHandling:
         from nagare.tasks.transform import transform_data
 
         ti = mock_airflow_context["ti"]
-        ti.xcom_data["workflow_runs"] = [
+        run_id = ti.run_id
+
+        # 一時テーブルに不正なデータをセット
+        mock_db_client.temp_workflow_runs[run_id] = [
             {
                 "id": 123,
                 # name, status, conclusionなどが欠けている
                 # _repository_owner, _repository_nameも欠けている（必須）
             }
         ]
-        ti.xcom_data["workflow_run_jobs"] = []
 
         # エラーにならず、不正なアイテムをスキップして空のリストを返す
-        transform_data(**mock_airflow_context)
+        transform_data(db=mock_db_client, **mock_airflow_context)
 
-        transformed_runs = ti.xcom_data.get("transformed_runs")
+        # 一時テーブルから結果を確認
+        transformed_runs = mock_db_client.temp_transformed_runs.get(run_id)
         assert transformed_runs is not None
         # 必須フィールドが欠けているのでスキップされ、0件
         assert len(transformed_runs) == 0

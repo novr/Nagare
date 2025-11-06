@@ -2,17 +2,21 @@
 
 from typing import Any
 
+from tests.conftest import MockDatabaseClient
+
 
 def test_transform_data_with_workflow_runs(
+    mock_db_client: MockDatabaseClient,
     mock_airflow_context: dict[str, Any],
 ) -> None:
     """ワークフロー実行データが正常に変換されることを確認"""
     from nagare.tasks.transform import transform_data
 
     ti = mock_airflow_context["ti"]
+    run_id = ti.run_id
 
-    # XComにワークフロー実行データをセット
-    ti.xcom_data["workflow_runs"] = [
+    # 一時テーブルにワークフロー実行データをセット（ADR-006準拠）
+    mock_db_client.temp_workflow_runs[run_id] = [
         {
             "id": 123456,
             "name": "CI",
@@ -31,10 +35,10 @@ def test_transform_data_with_workflow_runs(
     ]
 
     # 変換実行
-    transform_data(**mock_airflow_context)
+    transform_data(db=mock_db_client, **mock_airflow_context)
 
-    # 変換結果を確認
-    transformed_runs = ti.xcom_data["transformed_runs"]
+    # 変換結果を一時テーブルから確認
+    transformed_runs = mock_db_client.temp_transformed_runs[run_id]
     assert len(transformed_runs) == 1
 
     run = transformed_runs[0]
@@ -54,35 +58,40 @@ def test_transform_data_with_workflow_runs(
 
 
 def test_transform_data_with_empty_workflow_runs(
+    mock_db_client: MockDatabaseClient,
     mock_airflow_context: dict[str, Any],
 ) -> None:
-    """空のワークフローリストの場合、空リストがpushされることを確認"""
+    """空のワークフローリストの場合、空リストが保存されることを確認"""
     from nagare.tasks.transform import transform_data
 
     ti = mock_airflow_context["ti"]
-    ti.xcom_data["workflow_runs"] = []
+    run_id = ti.run_id
+    mock_db_client.temp_workflow_runs[run_id] = []
 
     # 変換実行
-    transform_data(**mock_airflow_context)
+    transform_data(db=mock_db_client, **mock_airflow_context)
 
-    # transformed_runsが空リストとしてpushされることを確認
-    assert ti.xcom_data["transformed_runs"] == []
-    assert ti.xcom_data["transformed_jobs"] == []
+    # 一時テーブルが空リストとして保存されることを確認
+    assert mock_db_client.temp_transformed_runs[run_id] == []
+    assert mock_db_client.temp_workflow_jobs[run_id] == []
 
 
 def test_transform_data_with_no_workflow_runs(
+    mock_db_client: MockDatabaseClient,
     mock_airflow_context: dict[str, Any],
 ) -> None:
-    """workflow_runsがNoneの場合、空リストがpushされることを確認"""
+    """workflow_runsがない場合、空リストが保存されることを確認"""
     from nagare.tasks.transform import transform_data
 
-    # XComにデータをセットしない（Noneが返される）
-    transform_data(**mock_airflow_context)
-
-    # transformed_runsが空リストとしてpushされることを確認
     ti = mock_airflow_context["ti"]
-    assert ti.xcom_data["transformed_runs"] == []
-    assert ti.xcom_data["transformed_jobs"] == []
+    run_id = ti.run_id
+    # 一時テーブルにデータをセットしない（空として扱われる）
+
+    transform_data(db=mock_db_client, **mock_airflow_context)
+
+    # 一時テーブルが空リストとして保存されることを確認
+    assert mock_db_client.temp_transformed_runs[run_id] == []
+    assert mock_db_client.temp_workflow_jobs[run_id] == []
 
 
 def test_transform_workflow_run_status_mapping() -> None:
@@ -229,15 +238,17 @@ def test_map_conclusion_to_status() -> None:
 
 
 def test_transform_data_continues_on_error(
+    mock_db_client: MockDatabaseClient,
     mock_airflow_context: dict[str, Any],
 ) -> None:
     """一部のrunの変換が失敗しても、他のrunは処理されることを確認"""
     from nagare.tasks.transform import transform_data
 
     ti = mock_airflow_context["ti"]
+    run_id = ti.run_id
 
     # 3つのrun: 2つは正常、1つはidフィールドがない（KeyError発生）
-    ti.xcom_data["workflow_runs"] = [
+    mock_db_client.temp_workflow_runs[run_id] = [
         {
             "id": 123,
             "status": "completed",
@@ -266,10 +277,10 @@ def test_transform_data_continues_on_error(
     ]
 
     # 変換実行
-    transform_data(**mock_airflow_context)
+    transform_data(db=mock_db_client, **mock_airflow_context)
 
     # エラーがあっても、正常なrunは変換される
-    transformed_runs = ti.xcom_data["transformed_runs"]
+    transformed_runs = mock_db_client.temp_transformed_runs[run_id]
     assert len(transformed_runs) == 2
     assert transformed_runs[0]["source_run_id"] == "123"
     assert transformed_runs[1]["source_run_id"] == "456"
@@ -346,15 +357,21 @@ def test_transform_job_missing_required_fields() -> None:
 
 
 def test_transform_data_with_jobs(
+    mock_db_client: MockDatabaseClient,
     mock_airflow_context: dict[str, Any],
 ) -> None:
-    """ジョブデータが正常に変換されることを確認"""
+    """ジョブデータが正常に変換されることを確認
+
+    Note: ジョブデータは現在XComから取得（TODO: 一時テーブル化予定）
+    """
     from nagare.tasks.transform import transform_data
+    from nagare.constants import TaskIds, XComKeys
 
     ti = mock_airflow_context["ti"]
+    run_id = ti.run_id
 
-    # XComにジョブデータをセット
-    ti.xcom_data["workflow_run_jobs"] = [
+    # ジョブデータはまだXComから取得（transform.py L132-134）
+    ti.xcom_data[XComKeys.WORKFLOW_RUN_JOBS] = [
         {
             "id": 789,
             "run_id": 123456,
@@ -370,10 +387,10 @@ def test_transform_data_with_jobs(
     ]
 
     # 変換実行
-    transform_data(**mock_airflow_context)
+    transform_data(db=mock_db_client, **mock_airflow_context)
 
-    # 変換結果を確認
-    transformed_jobs = ti.xcom_data["transformed_jobs"]
+    # 変換結果を一時テーブルから確認
+    transformed_jobs = mock_db_client.temp_workflow_jobs[run_id]
     assert len(transformed_jobs) == 1
 
     job = transformed_jobs[0]

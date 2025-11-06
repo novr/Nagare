@@ -84,11 +84,19 @@ class MockDatabaseClient:
         # close tracking
         self.close_called = False
 
-    def get_repositories(self) -> list[dict[str, str]]:
+        # Temporary table storage (keyed by run_id)
+        self.temp_workflow_runs: dict[str, list[dict[str, Any]]] = {}
+        self.temp_transformed_runs: dict[str, list[dict[str, Any]]] = {}
+        self.temp_workflow_jobs: dict[str, list[dict[str, Any]]] = {}
+
+    def get_repositories(self, source: str | None = None) -> list[dict[str, str]]:
         """モックのリポジトリリストを返す
 
-        self.repositoriesで設定されたリストを返す。
-        テストで動的に変更可能。
+        Args:
+            source: ソースタイプでフィルタ（オプション）。モック実装ではフィルタリングは行わない。
+
+        Returns:
+            self.repositoriesで設定されたリスト。テストで動的に変更可能。
         """
         self.get_repositories_called = True
         self.get_repositories_call_count += 1
@@ -109,6 +117,88 @@ class MockDatabaseClient:
         self.get_latest_run_timestamp_calls.append({"owner": owner, "repo": repo})
         # テストでは常に初回取得をシミュレート
         return None
+
+    def get_oldest_run_timestamp(self, source: str | None = None) -> datetime | None:
+        """モックの最も古いタイムスタンプを返す
+
+        Args:
+            source: ソースタイプでフィルタ（オプション）
+
+        Returns:
+            常にNone（初回取得をシミュレート）
+        """
+        # テストでは常に初回取得をシミュレート
+        return None
+
+    def get_temp_workflow_runs(self, run_id: str) -> list[dict[str, Any]]:
+        """一時テーブルからワークフロー実行データを取得する
+
+        Args:
+            run_id: DAG run ID
+
+        Returns:
+            ワークフロー実行データのリスト
+        """
+        return self.temp_workflow_runs.get(run_id, [])
+
+    def get_temp_transformed_runs(self, run_id: str) -> list[dict[str, Any]]:
+        """一時テーブルから変換済みデータを取得する
+
+        Args:
+            run_id: DAG run ID
+
+        Returns:
+            変換済みワークフロー実行データのリスト
+        """
+        return self.temp_transformed_runs.get(run_id, [])
+
+    def get_temp_workflow_jobs(self, run_id: str) -> list[dict[str, Any]]:
+        """一時テーブルからジョブデータを取得する
+
+        Args:
+            run_id: DAG run ID
+
+        Returns:
+            ジョブデータのリスト
+        """
+        return self.temp_workflow_jobs.get(run_id, [])
+
+    def insert_temp_workflow_runs(
+        self, runs: list[dict[str, Any]], run_id: str
+    ) -> None:
+        """一時テーブルにワークフロー実行データを保存する
+
+        Args:
+            runs: ワークフロー実行データのリスト
+            run_id: DAG run ID
+        """
+        if run_id not in self.temp_workflow_runs:
+            self.temp_workflow_runs[run_id] = []
+        self.temp_workflow_runs[run_id].extend(runs)
+
+    def insert_temp_transformed_runs(
+        self, runs: list[dict[str, Any]], run_id: str
+    ) -> None:
+        """一時テーブルに変換済みデータを保存する
+
+        Args:
+            runs: 変換済みワークフロー実行データのリスト
+            run_id: DAG run ID
+        """
+        if run_id not in self.temp_transformed_runs:
+            self.temp_transformed_runs[run_id] = []
+        self.temp_transformed_runs[run_id].extend(runs)
+
+    def insert_temp_workflow_jobs(self, jobs: list[dict[str, Any]], run_id: str) -> None:
+        """一時テーブルにジョブデータを保存する
+
+        Args:
+            jobs: ジョブデータのリスト
+            run_id: DAG run ID
+        """
+        if run_id not in self.temp_workflow_jobs:
+            self.temp_workflow_jobs[run_id] = []
+        self.temp_workflow_jobs[run_id].extend(jobs)
 
     def upsert_pipeline_runs(self, runs: list[dict[str, Any]]) -> None:
         """モックのUPSERT処理（冪等性を実装）
@@ -364,10 +454,15 @@ def mock_airflow_context() -> dict[str, Any]:
 
         Attributes:
             xcom_data: XComデータを保存する辞書
+            run_id: DAG run ID
+            map_index: Dynamic Task Mappingのインデックス
         """
 
         def __init__(self) -> None:
             self.xcom_data: dict[str, Any] = {}
+            self.run_id: str = "test_run_id"
+            self.map_index: int = -1
+            self.task_id: str = "test_task"
 
         def xcom_push(self, key: str, value: Any) -> None:
             """XComにデータを保存する
