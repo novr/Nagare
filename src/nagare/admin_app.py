@@ -266,7 +266,7 @@ with st.sidebar:
     st.header("ナビゲーション")
     page = st.radio(
         "ページ選択",
-        ["📊 ダッシュボード", "📦 リポジトリ管理", "🔌 Connections管理", "📈 実行履歴", "⚙️ 設定"],
+        ["📊 ダッシュボード", "📦 リポジトリ管理", "📈 実行履歴", "⚙️ 設定"],
         label_visibility="collapsed",
     )
 
@@ -383,7 +383,7 @@ elif page == "📦 リポジトリ管理":
         available_connections = get_all_cicd_connections()
         if not available_connections:
             st.warning("⚠️ GitHub/Bitrise/Xcode Cloud Connectionが登録されていません")
-            st.info("🔌 Connections管理ページでGitHub/Bitrise/Xcode Cloud Connectionを登録してください")
+            st.info("⚙️ 設定ページでGitHub/Bitrise/Xcode Cloud Connectionの状態を確認してください")
         else:
             col_conn, col_per_page = st.columns([3, 1])
             with col_conn:
@@ -570,81 +570,6 @@ elif page == "📦 リポジトリ管理":
 
     except Exception as e:
         st.error(f"リポジトリ取得エラー: {e}")
-
-# Connections管理
-elif page == "🔌 Connections管理":
-    st.header("🔌 Airflow Connections管理")
-
-    try:
-        conns_df = get_connections()
-
-        if not conns_df.empty:
-            st.caption(f"全{len(conns_df)}件")
-
-            # Connections一覧表示と操作
-            for _idx, row in conns_df.iterrows():
-                with st.container():
-                    col1, col2, col3 = st.columns([3, 2, 2])
-
-                    with col1:
-                        st.markdown(f"**🔌 {row['Connection ID']}**")
-                        st.caption(f"ID: {row['ID']} | Type: {row['Type']}")
-                        if row['Description']:
-                            st.caption(f"📝 {row['Description']}")
-
-                    with col2:
-                        if row['Host']:
-                            st.caption(f"🖥️ Host: {row['Host']}")
-                        if row['Port']:
-                            st.caption(f"🔌 Port: {row['Port']}")
-
-                    with col3:
-                        if row['Login']:
-                            st.caption(f"👤 Login: {row['Login']}")
-                        if row['Schema']:
-                            st.caption(f"🗄️ Schema: {row['Schema']}")
-
-                    # 接続テストセクション
-                    with st.expander("🔍 接続テスト", expanded=False):
-                        if st.button("接続テストを実行", key=f"test_{row['ID']}", type="primary"):
-                            with st.spinner("接続テスト中..."):
-                                # データベースから最新のConnection情報を取得（パスワード含む）
-                                engine = get_database_engine()
-                                with engine.connect() as conn:
-                                    result = conn.execute(
-                                        text("SELECT host, port, login, password, schema, extra FROM connection WHERE id = :id"),
-                                        {"id": row['ID']}
-                                    )
-                                    conn_data = result.fetchone()
-
-                                if conn_data:
-                                    success, message, details = test_connection(
-                                        connection_id=row['ID'],
-                                        conn_type=row['Type'],
-                                        host=conn_data[0],
-                                        port=conn_data[1],
-                                        login=conn_data[2],
-                                        password=conn_data[3],
-                                        schema=conn_data[4],
-                                        extra=conn_data[5]
-                                    )
-
-                                    if success:
-                                        st.success(message)
-                                    else:
-                                        st.error(message)
-
-                                    if details:
-                                        st.json(details)
-                                else:
-                                    st.error("Connection情報の取得に失敗しました")
-
-                    st.divider()
-        else:
-            st.info("登録されているConnectionがありません。")
-
-    except Exception as e:
-        st.error(f"Connections取得エラー: {e}")
 
 # 実行履歴
 elif page == "📈 実行履歴":
@@ -848,6 +773,85 @@ elif page == "⚙️ 設定":
                 st.dataframe(df_cicd, use_container_width=True, hide_index=True)
             else:
                 st.warning("⚠️ 利用可能なCI/CD接続がありません")
+
+            st.divider()
+
+            # Airflow Connections一覧と接続テスト
+            st.markdown("### Airflow Connections接続テスト")
+            st.caption("データベースに登録されている接続の動作確認ができます")
+
+            try:
+                conns_df = get_connections()
+
+                if not conns_df.empty:
+                    st.caption(f"全{len(conns_df)}件のConnectionが登録されています")
+
+                    # Connections一覧表示
+                    for _idx, row in conns_df.iterrows():
+                        with st.container():
+                            col1, col2 = st.columns([2, 1])
+
+                            with col1:
+                                st.markdown(f"**🔌 {row['Connection ID']}** (Type: {row['Type']})")
+                                if row['Description']:
+                                    st.caption(f"📝 {row['Description']}")
+
+                                # 接続情報を簡潔に表示
+                                info_parts = []
+                                if row['Host']:
+                                    info_parts.append(f"🖥️ {row['Host']}")
+                                if row['Port']:
+                                    info_parts.append(f":{row['Port']}")
+                                if row['Login']:
+                                    info_parts.append(f"👤 {row['Login']}")
+                                if row['Schema']:
+                                    info_parts.append(f"🗄️ {row['Schema']}")
+
+                                if info_parts:
+                                    st.caption(" | ".join(info_parts))
+
+                            with col2:
+                                # 接続テストボタン
+                                if st.button("🔍 接続テスト", key=f"test_conn_{row['ID']}", use_container_width=True):
+                                    with st.spinner("接続テスト中..."):
+                                        # データベースから最新のConnection情報を取得（パスワード含む）
+                                        engine = get_database_engine()
+                                        with engine.connect() as conn:
+                                            result = conn.execute(
+                                                text("SELECT host, port, login, password, schema, extra FROM connection WHERE id = :id"),
+                                                {"id": row['ID']}
+                                            )
+                                            conn_data = result.fetchone()
+
+                                        if conn_data:
+                                            success, message, details = test_connection(
+                                                connection_id=row['ID'],
+                                                conn_type=row['Type'],
+                                                host=conn_data[0],
+                                                port=conn_data[1],
+                                                login=conn_data[2],
+                                                password=conn_data[3],
+                                                schema=conn_data[4],
+                                                extra=conn_data[5]
+                                            )
+
+                                            if success:
+                                                st.success(message)
+                                            else:
+                                                st.error(message)
+
+                                            if details:
+                                                with st.expander("詳細情報"):
+                                                    st.json(details)
+                                        else:
+                                            st.error("Connection情報の取得に失敗しました")
+
+                            st.divider()
+                else:
+                    st.info("登録されているConnectionがありません")
+
+            except Exception as e:
+                st.error(f"Connections取得エラー: {e}")
 
         else:
             st.warning("⚠️ 設定ファイルが見つかりません")
