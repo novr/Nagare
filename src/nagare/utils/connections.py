@@ -1017,10 +1017,9 @@ class XcodeCloudConnection(BaseConnection):
         """接続情報の検証
 
         Returns:
-            有効な設定の場合True（Key ID, Issuer ID, Private Key/Pathが必須）
+            有効な設定の場合True（Key ID, Issuer ID, Private Keyが必須）
         """
-        has_private_key = bool(self.private_key or self.private_key_path)
-        return bool(self.key_id and self.issuer_id and has_private_key)
+        return bool(self.key_id and self.issuer_id and self.private_key)
 
     def to_dict(self) -> dict[str, Any]:
         """辞書形式に変換（シークレットは除外）
@@ -1033,7 +1032,7 @@ class XcodeCloudConnection(BaseConnection):
             "base_url": self.base_url,
             "has_key_id": bool(self.key_id),
             "has_issuer_id": bool(self.issuer_id),
-            "has_private_key": bool(self.private_key or self.private_key_path),
+            "has_private_key": bool(self.private_key),
         }
 
 
