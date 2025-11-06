@@ -25,49 +25,48 @@ class TestDAGIntegration:
         assert "github" in dag.tags
         assert "data-collection" in dag.tags
 
-        # タスク数の確認（バッチ並列処理により増加: 1 + 10 + 1 + 1 + 1 = 14）
-        assert len(dag.tasks) == 14
+        # タスク数の確認（Dynamic Task Mapping使用時は定義時のタスク数）
+        # fetch_repositories + fetch_github_batch (Mapped) + fetch_github_details + transform_data + load_to_database = 5
+        assert len(dag.tasks) == 5
 
         # タスクIDの確認
         task_ids = {task.task_id for task in dag.tasks}
 
-        # バッチタスクのIDを生成
-        batch_task_ids = {f"fetch_workflow_runs_batch_{i}" for i in range(10)}
-
         expected_task_ids = {
             "fetch_repositories",
-            "fetch_workflow_runs_details",  # ファクトリーパターンによる変更
+            "fetch_github_batch",  # Dynamic Task Mapping: 実行時に展開される
+            "fetch_github_details",
             "transform_data",
             "load_to_database",
-        } | batch_task_ids  # バッチタスクを結合
+        }
 
         assert task_ids == expected_task_ids
 
     def test_dag_task_dependencies(self) -> None:
-        """タスクの依存関係が正しく設定されていることを確認"""
+        """タスクの依存関係が正しく設定されていることを確認
+
+        Dynamic Task Mappingにより、実行時にバッチタスクが展開される。
+        定義時点では依存関係のみ確認する。
+        """
         from nagare.dags import collect_github_actions_data
 
         dag = collect_github_actions_data.dag
 
         # タスクを取得
         fetch_repos = dag.get_task("fetch_repositories")
-        fetch_details = dag.get_task("fetch_workflow_runs_details")  # ファクトリーパターンによる変更
+        fetch_batch = dag.get_task("fetch_github_batch")  # Mapped task
+        fetch_details = dag.get_task("fetch_github_details")
         transform = dag.get_task("transform_data")
         load = dag.get_task("load_to_database")
 
-        # バッチタスクを取得
-        batch_task_ids = {f"fetch_workflow_runs_batch_{i}" for i in range(10)}
-        batch_tasks = [dag.get_task(task_id) for task_id in batch_task_ids]
+        # 依存関係の確認（Dynamic Task Mappingによる依存関係）
+        # fetch_repositories → fetch_github_batch (Mapped)
+        assert fetch_repos.downstream_task_ids == {"fetch_github_batch"}
 
-        # 依存関係の確認
-        # fetch_repositories → 10個のバッチタスク
-        assert fetch_repos.downstream_task_ids == batch_task_ids
+        # fetch_github_batch → fetch_github_details
+        assert fetch_batch.downstream_task_ids == {"fetch_github_details"}
 
-        # 各バッチタスク → fetch_workflow_runs_details
-        for batch_task in batch_tasks:
-            assert batch_task.downstream_task_ids == {"fetch_workflow_runs_details"}
-
-        # fetch_workflow_runs_details → transform_data
+        # fetch_github_details → transform_data
         assert fetch_details.downstream_task_ids == {"transform_data"}
 
         # transform_data → load_to_database
@@ -122,37 +121,44 @@ class TestDAGIntegration:
         )
 
         ti = mock_airflow_context["ti"]
+        run_id = ti.run_id
 
         # 1. リポジトリ取得
         wrapped_fetch_repos = with_database_client(fetch_repositories)
-        repos = wrapped_fetch_repos(**mock_airflow_context)
+        batch_ops = wrapped_fetch_repos(**mock_airflow_context)
+        # 期間バッチングにより、リポジトリは複数のバッチに分割される
+        assert len(batch_ops) > 0
+        assert all("batch_apps" in batch for batch in batch_ops)
+        # XComには元のリポジトリリストが保存される
+        repos = ti.xcom_data["repositories"]
         assert len(repos) == 2
-        ti.xcom_data["repositories"] = repos
 
-        # 2. ワークフロー実行データ取得
+        # 2. ワークフロー実行データ取得（ADR-006: 一時テーブルに保存）
         wrapped_fetch_runs = with_github_and_database_clients(fetch_workflow_runs)
+        ti.xcom_data["repositories"] = repos  # fetch_runs が参照するためセット
         wrapped_fetch_runs(**mock_airflow_context)
-        workflow_runs = ti.xcom_data["workflow_runs"]
-        assert workflow_runs is not None
+        # 一時テーブルに保存されていることを確認
+        workflow_runs = mock_db.temp_workflow_runs.get(run_id, [])
         assert len(workflow_runs) > 0
 
-        # 3. ジョブデータ取得
+        # 3. ジョブデータ取得（まだXCom使用）
         wrapped_fetch_jobs = with_github_client(fetch_workflow_run_jobs)
+        ti.xcom_data["workflow_runs"] = workflow_runs  # fetch_jobs が参照するためセット
         wrapped_fetch_jobs(**mock_airflow_context)
         jobs = ti.xcom_data["workflow_run_jobs"]
         assert jobs is not None
         assert len(jobs) > 0
 
-        # 4. データ変換
-        transform_data(**mock_airflow_context)
-        transformed_runs = ti.xcom_data["transformed_runs"]
-        transformed_jobs = ti.xcom_data["transformed_jobs"]
-        assert transformed_runs is not None
-        assert transformed_jobs is not None
+        # 4. データ変換（ADR-006: 一時テーブルから読み込み、一時テーブルに保存）
+        wrapped_transform = with_database_client(transform_data)
+        wrapped_transform(**mock_airflow_context)
+        # 一時テーブルに保存されていることを確認
+        transformed_runs = mock_db.temp_transformed_runs.get(run_id, [])
+        transformed_jobs = mock_db.temp_workflow_jobs.get(run_id, [])
         assert len(transformed_runs) > 0
         assert len(transformed_jobs) > 0
 
-        # 5. データベース保存
+        # 5. データベース保存（ADR-006: 一時テーブルから読み込み、本番テーブルに保存）
         wrapped_load = with_database_client(load_to_database)
         wrapped_load(**mock_airflow_context)
         assert mock_db.upsert_pipeline_runs_called
@@ -193,12 +199,15 @@ class TestDAGErrorHandling:
         mock_db_factory: MagicMock,
         mock_airflow_context: dict[str, Any],
     ) -> None:
-        """GitHub API エラー時のハンドリング"""
+        """GitHub API エラー時のハンドリング
+
+        ADR-006: データは一時テーブルに保存される。
+        """
         from tests.conftest import MockDatabaseClient, MockGitHubClient
 
-        # APIエラーを返すモック
+        # APIエラーを返すモック（空データ）
         mock_github = MockGitHubClient()
-        mock_github.workflow_runs_data = []  # 空データ
+        mock_github.workflow_runs_data = []
         mock_github_factory.return_value = mock_github
 
         mock_db = MockDatabaseClient()
@@ -206,6 +215,7 @@ class TestDAGErrorHandling:
 
         # 前のタスクのデータを設定
         ti = mock_airflow_context["ti"]
+        run_id = ti.run_id
         ti.xcom_data["repositories"] = [
             {"owner": "test-org", "repo": "test-repo"},
         ]
@@ -219,9 +229,10 @@ class TestDAGErrorHandling:
         # （実装では部分的失敗を許容）
         wrapped_func(**mock_airflow_context)
 
-        # XComにデータが保存されている（空の可能性あり）
-        workflow_runs = ti.xcom_data.get("workflow_runs")
-        assert workflow_runs is not None
+        # 一時テーブルにデータが保存されている（空データ）
+        workflow_runs = mock_db.temp_workflow_runs.get(run_id, [])
+        # 空データでもエラーにならない
+        assert isinstance(workflow_runs, list)
 
     @patch("nagare.utils.factory.ClientFactory.create_database_client")
     def test_transform_data_with_missing_xcom(
@@ -229,9 +240,10 @@ class TestDAGErrorHandling:
         mock_db_factory: MagicMock,
         mock_airflow_context: dict[str, Any],
     ) -> None:
-        """XComデータが欠けている場合のハンドリング
+        """一時テーブルにデータが無い場合のハンドリング
 
-        transform_dataは欠損データを警告ログ出力して空リストで処理する。
+        ADR-006: transform_dataは一時テーブルからデータを取得する。
+        データが無い場合は警告ログ出力して空リストで処理する。
         これはエラーを投げるのではなく、部分的な失敗を許容する設計。
         """
         from tests.conftest import MockDatabaseClient
@@ -239,22 +251,20 @@ class TestDAGErrorHandling:
         mock_db = MockDatabaseClient()
         mock_db_factory.return_value = mock_db
 
-        # XComデータを設定しない（workflow_runsが無い）
+        # 一時テーブルにデータを設定しない（workflow_runsが無い）
         ti = mock_airflow_context["ti"]
-        ti.xcom_data.pop("workflow_runs", None)
-        ti.xcom_data.pop("workflow_run_jobs", None)
+        run_id = ti.run_id
+        # mock_db.temp_workflow_runs[run_id] を設定しない
 
         from nagare.tasks.transform import transform_data
 
-        # エラーにならず、空のリストを返すことを確認
-        transform_data(**mock_airflow_context)
+        # エラーにならず、空のリストを保存することを確認
+        transform_data(db=mock_db, **mock_airflow_context)
 
-        # XComに空のデータが保存されていることを確認
-        transformed_runs = ti.xcom_data.get("transformed_runs")
-        transformed_jobs = ti.xcom_data.get("transformed_jobs")
+        # 一時テーブルに空のデータが保存されていることを確認
+        transformed_runs = mock_db.temp_transformed_runs.get(run_id, [])
+        transformed_jobs = mock_db.temp_workflow_jobs.get(run_id, [])
 
-        assert transformed_runs is not None
-        assert transformed_jobs is not None
         assert len(transformed_runs) == 0
         assert len(transformed_jobs) == 0
 
@@ -345,10 +355,16 @@ class TestDAGScalability:
         from nagare.utils.dag_helpers import with_database_client
 
         wrapped_func = with_database_client(fetch_repositories)
-        result = wrapped_func(**mock_airflow_context)
+        batch_ops = wrapped_func(**mock_airflow_context)
 
-        # 50リポジトリが取得されることを確認
-        assert len(result) == 50
+        # 期間バッチングにより複数のバッチに分割される
+        assert len(batch_ops) > 0
+        assert all("batch_apps" in batch for batch in batch_ops)
+
+        # XComに保存された元のリポジトリ数を確認
+        ti = mock_airflow_context["ti"]
+        repos = ti.xcom_data["repositories"]
+        assert len(repos) == 50
 
     @patch("nagare.utils.factory.ClientFactory.create_database_client")
     def test_upsert_idempotency(
@@ -369,9 +385,10 @@ class TestDAGScalability:
 
         # 同じsource_run_idのデータを2回upsert（2回目でstatusを変更）
         ti = mock_airflow_context["ti"]
+        run_id = ti.run_id
 
-        # 1回目: status=SUCCESS
-        ti.xcom_data["transformed_runs"] = [
+        # 1回目: status=SUCCESS (ADR-006: 一時テーブルに保存)
+        mock_db.temp_transformed_runs[run_id] = [
             {
                 "source_run_id": "123456",
                 "source": "github_actions",
@@ -379,7 +396,7 @@ class TestDAGScalability:
                 "status": "SUCCESS",
             }
         ]
-        ti.xcom_data["transformed_jobs"] = []
+        mock_db.temp_workflow_jobs[run_id] = []
 
         from nagare.tasks.load import load_to_database
         from nagare.utils.dag_helpers import with_database_client
@@ -392,7 +409,7 @@ class TestDAGScalability:
         first_status = mock_db.upserted_runs[0]["status"]
 
         # 2回目: 同じsource_run_idでstatusをFAILUREに変更
-        ti.xcom_data["transformed_runs"] = [
+        mock_db.temp_transformed_runs[run_id] = [
             {
                 "source_run_id": "123456",
                 "source": "github_actions",

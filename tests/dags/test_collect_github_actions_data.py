@@ -32,10 +32,14 @@ def test_with_database_client_wrapper(mock_airflow_context: dict[str, Any]) -> N
         wrapped_func = with_database_client(fetch_repositories)
         result = wrapped_func(**mock_airflow_context)
 
-        # 結果を検証
-        assert len(result) == 2
-        assert result[0]["owner"] == "test-org"
-        assert result[0]["repo"] == "test-repo-1"
+        # 結果を検証（期間バッチングにより、リポジトリは複数のバッチに分割される）
+        assert len(result) > 0
+        assert all("batch_apps" in batch for batch in result)
+        # 各バッチに2つのリポジトリが含まれることを確認
+        for batch in result:
+            assert len(batch["batch_apps"]) == 2
+            assert batch["batch_apps"][0]["owner"] == "test-org"
+            assert batch["batch_apps"][0]["repo"] == "test-repo-1"
 
     finally:
         # 元に戻す
@@ -55,7 +59,9 @@ def test_with_github_client_wrapper(mock_airflow_context: dict[str, Any]) -> Non
         {"owner": "test-org", "repo": "test-repo-1"},
     ]
 
-    # モック用のFactoryを作成
+    # モック用のFactoryを作成（同一インスタンスを返すように）
+    mock_db = MockDatabaseClient()
+
     class MockFactory(ClientFactory):
         @staticmethod
         def create_github_client(conn_id: str | None = None) -> MockGitHubClient:
@@ -63,7 +69,7 @@ def test_with_github_client_wrapper(mock_airflow_context: dict[str, Any]) -> Non
 
         @staticmethod
         def create_database_client(conn_id: str | None = None) -> MockDatabaseClient:
-            return MockDatabaseClient()
+            return mock_db
 
     # Factoryを差し替え
     original_factory = ClientFactory()
@@ -74,9 +80,9 @@ def test_with_github_client_wrapper(mock_airflow_context: dict[str, Any]) -> Non
         wrapped_func = with_github_and_database_clients(fetch_workflow_runs)
         wrapped_func(**mock_airflow_context)
 
-        # XComに保存されたか確認
-        workflow_runs = ti.xcom_data.get("workflow_runs")
-        assert workflow_runs is not None
+        # 一時テーブルに保存されたか確認（ADR-006準拠）
+        run_id = ti.run_id
+        workflow_runs = mock_db.temp_workflow_runs.get(run_id, [])
         assert len(workflow_runs) == 1
         assert workflow_runs[0]["id"] == 123456
 
@@ -92,9 +98,13 @@ def test_with_database_client_load_wrapper(mock_airflow_context: dict[str, Any])
     from nagare.utils.factory import ClientFactory, set_factory
     from tests.conftest import MockDatabaseClient
 
-    # 前のタスクのデータを設定
+    # 前のタスクのデータを設定（ADR-006準拠で一時テーブルを使用）
     ti = mock_airflow_context["ti"]
-    ti.xcom_data["transformed_runs"] = [
+    run_id = ti.run_id
+
+    # モック用のFactoryを作成
+    mock_db = MockDatabaseClient()
+    mock_db.temp_transformed_runs[run_id] = [
         {
             "source_run_id": "123456",
             "source": "github_actions",
@@ -102,9 +112,6 @@ def test_with_database_client_load_wrapper(mock_airflow_context: dict[str, Any])
             "status": "SUCCESS",
         }
     ]
-
-    # モック用のFactoryを作成
-    mock_db = MockDatabaseClient()
 
     class MockFactory(ClientFactory):
         @staticmethod
