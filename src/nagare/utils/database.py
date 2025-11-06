@@ -10,7 +10,7 @@ import json
 import logging
 from collections.abc import Generator
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import create_engine, text
@@ -18,6 +18,9 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from nagare.constants import SourceType
+from nagare.utils.connections import DatabaseConnection
+
+logger = logging.getLogger(__name__)
 
 
 def _json_serializer(obj: Any) -> str:
@@ -35,9 +38,6 @@ def _json_serializer(obj: Any) -> str:
     if isinstance(obj, datetime):
         return obj.isoformat()
     raise TypeError(f"Type {type(obj)} not serializable")
-from nagare.utils.connections import DatabaseConnection
-
-logger = logging.getLogger(__name__)
 
 
 class DatabaseClient:
@@ -178,7 +178,7 @@ class DatabaseClient:
             row = result.fetchone()
             if row and row[0]:
                 # PostgreSQL TIMESTAMP列はnaiveなので、UTCとして明示的に設定
-                timestamp = row[0].replace(tzinfo=timezone.utc)
+                timestamp = row[0].replace(tzinfo=UTC)
                 logger.debug(f"Latest run timestamp for {repository_name}: {timestamp}")
                 return timestamp
             else:
@@ -225,7 +225,7 @@ class DatabaseClient:
             row = result.fetchone()
             if row and row[0]:
                 # PostgreSQL TIMESTAMP列はnaiveなので、UTCとして明示的に設定
-                timestamp = row[0].replace(tzinfo=timezone.utc)
+                timestamp = row[0].replace(tzinfo=UTC)
                 logger.debug(f"Oldest run timestamp for source '{source}': {timestamp}")
                 return timestamp
             else:

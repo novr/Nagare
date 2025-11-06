@@ -11,17 +11,16 @@ import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote_plus
 
 import pandas as pd
 import streamlit as st
 from github import GithubException
 from sqlalchemy import create_engine, text
 
-from nagare.constants import Platform, PipelineStatus, SourceType
+from nagare.constants import PipelineStatus, Platform, SourceType
+from nagare.utils.bitrise_client import BitriseClient
 from nagare.utils.connections import ConnectionRegistry
 from nagare.utils.github_client import GitHubClient
-from nagare.utils.bitrise_client import BitriseClient
 from nagare.utils.xcode_cloud_client import XcodeCloudClient
 
 # Connection設定ファイルの読み込み
@@ -1694,14 +1693,14 @@ elif page == "📦 リポジトリ管理":
                 )
 
             if status_filter == "有効のみ":
-                repos_df = repos_df[repos_df["有効"] == True]
+                repos_df = repos_df[repos_df["有効"]]
             elif status_filter == "無効のみ":
-                repos_df = repos_df[repos_df["有効"] == False]
+                repos_df = repos_df[~repos_df["有効"]]
 
             st.caption(f"全{len(repos_df)}件")
 
             # リポジトリ一覧表示と操作
-            for idx, row in repos_df.iterrows():
+            for _idx, row in repos_df.iterrows():
                 with st.container():
                     col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
 
@@ -1754,7 +1753,7 @@ elif page == "🔌 Connections管理":
             st.caption(f"全{len(conns_df)}件")
 
             # Connections一覧表示と操作
-            for idx, row in conns_df.iterrows():
+            for _idx, row in conns_df.iterrows():
                 with st.container():
                     col1, col2, col3 = st.columns([3, 2, 2])
 
@@ -2032,8 +2031,8 @@ elif page == "⚙️ 設定":
     with tab2:
         st.subheader("システム情報")
 
-        import sys
         import platform
+        import sys
 
         col1, col2 = st.columns(2)
 

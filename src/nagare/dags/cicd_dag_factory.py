@@ -28,9 +28,10 @@ Usage:
     ... )
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, Callable
+from typing import Any
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator

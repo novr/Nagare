@@ -20,8 +20,6 @@ from contextlib import AbstractContextManager
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
-from nagare.constants import Platform
-
 
 @runtime_checkable
 class DatabaseClientProtocol(Protocol):

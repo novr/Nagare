@@ -47,7 +47,9 @@ select = [
     "C4",  # flake8-comprehensions
     "UP",  # pyupgrade
 ]
-ignore = []
+ignore = [
+    "E501",  # Line too long - 日本語コメントと長い文字列リテラルで超過する場合が多いため許容
+]
 
 [tool.ruff.format]
 quote-style = "double"

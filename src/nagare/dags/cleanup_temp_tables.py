@@ -82,5 +82,3 @@ with DAG(
         task_id="cleanup_old_temp_data",
         python_callable=with_database_client(cleanup_old_temp_data),
     )
-
-    cleanup_task

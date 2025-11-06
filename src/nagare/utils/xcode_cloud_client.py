@@ -12,7 +12,6 @@ Reference:
 """
 
 import logging
-import time
 from datetime import datetime, timedelta
 from typing import Any
 

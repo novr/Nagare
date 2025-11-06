@@ -9,6 +9,7 @@ ConnectionRegistryから接続情報を取得してクライアントを生成�
 
 import logging
 
+from nagare.utils.bitrise_client import BitriseClient
 from nagare.utils.connections import (
     BitriseConnection,
     ConnectionRegistry,
@@ -16,16 +17,15 @@ from nagare.utils.connections import (
     GitHubConnection,
     XcodeCloudConnection,
 )
-from nagare.utils.bitrise_client import BitriseClient
 from nagare.utils.database import DatabaseClient
 from nagare.utils.github_client import GitHubClient
-from nagare.utils.xcode_cloud_client import XcodeCloudClient
 from nagare.utils.protocols import (
     BitriseClientProtocol,
     DatabaseClientProtocol,
     GitHubClientProtocol,
     XcodeCloudClientProtocol,
 )
+from nagare.utils.xcode_cloud_client import XcodeCloudClient
 
 logger = logging.getLogger(__name__)
 

@@ -2,14 +2,19 @@
 
 import logging
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any, TypeVar
 
 from airflow.models import TaskInstance
 from github import GithubException
 
 from nagare.constants import FetchConfig, SourceType, TaskIds, XComKeys
-from nagare.utils.protocols import BitriseClientProtocol, DatabaseClientProtocol, GitHubClientProtocol, XcodeCloudClientProtocol
+from nagare.utils.protocols import (
+    BitriseClientProtocol,
+    DatabaseClientProtocol,
+    GitHubClientProtocol,
+    XcodeCloudClientProtocol,
+)
 from nagare.utils.xcom_utils import check_xcom_size
 
 logger = logging.getLogger(__name__)
@@ -147,7 +152,7 @@ def fetch_repositories(
 
     # 期間を生成（前回取得時を起点に7日ごと）
     # データベースから全リポジトリの最も古いタイムスタンプを直接取得
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # SQLで最小値を直接取得（サンプリング不要、正確で高速）
     try:
@@ -387,7 +392,6 @@ def _fetch_workflow_runs_impl(
         # 期間パラメータが指定されている場合はそれを使用、なければ既存のロジック
         if since is not None:
             # 期間指定あり: バッチの期間を使用
-            created_after_str = since
             # ISO8601形式の文字列をパース（タイムゾーン情報を含む）
             created_after = datetime.fromisoformat(since)
             logger.info(
@@ -401,7 +405,6 @@ def _fetch_workflow_runs_impl(
                 # 初回実行: 全件取得
                 logger.info(f"Initial fetch for {owner}/{repo_name} (fetching all runs)")
                 created_after = None
-                created_after_str = None
             else:
                 # 2回目以降: 差分取得
                 logger.info(
@@ -409,7 +412,6 @@ def _fetch_workflow_runs_impl(
                     f"(fetching runs after {latest_timestamp.isoformat()})"
                 )
                 created_after = latest_timestamp
-                created_after_str = latest_timestamp.isoformat()
 
         runs = github_client.get_workflow_runs(
             owner=owner, repo=repo_name, created_after=created_after
