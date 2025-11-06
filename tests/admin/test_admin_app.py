@@ -1,6 +1,6 @@
 """Streamlit管理画面の統合テスト
 
-admin_app.pyの主要な関数をテストする。
+admin_db.pyの主要な関数をテストする。
 Streamlit特有のUIテストは含まれないが、ビジネスロジックを検証する。
 """
 
@@ -13,13 +13,13 @@ import pytest
 class TestAdminAppFunctions:
     """admin_appの主要関数のテスト"""
 
-    @patch("nagare.admin_app.create_engine")
-    @patch("nagare.admin_app.ConnectionRegistry.get_database")
+    @patch("nagare.admin_db.create_engine")
+    @patch("nagare.admin_db.ConnectionRegistry.get_database")
     def test_get_database_engine(
         self, mock_get_database: MagicMock, mock_create_engine: MagicMock
     ) -> None:
         """データベースエンジンの作成"""
-        from nagare.admin_app import get_database_engine
+        from nagare.admin_db import get_database_engine
 
         # Streamlitのキャッシュをクリア
         get_database_engine.clear()
@@ -36,10 +36,10 @@ class TestAdminAppFunctions:
             "postgresql://testuser:testpass@testhost:5432/testdb", pool_pre_ping=True
         )
 
-    @patch("nagare.admin_app.GitHubClient")
+    @patch("nagare.admin_db.GitHubClient")
     def test_get_github_client_success(self, mock_github_client: MagicMock) -> None:
         """GitHubクライアントの作成（成功）"""
-        from nagare.admin_app import get_github_client
+        from nagare.admin_db import get_github_client
 
         # Streamlitのキャッシュをクリア
         get_github_client.clear()
@@ -53,10 +53,10 @@ class TestAdminAppFunctions:
         assert client is not None
         mock_github_client.assert_called_once()
 
-    @patch("nagare.admin_app.GitHubClient")
+    @patch("nagare.admin_db.GitHubClient")
     def test_get_github_client_failure(self, mock_github_client: MagicMock) -> None:
         """GitHubクライアントの作成（失敗）"""
-        from nagare.admin_app import get_github_client
+        from nagare.admin_db import get_github_client
 
         # Streamlitのキャッシュをクリア
         get_github_client.clear()
@@ -65,19 +65,19 @@ class TestAdminAppFunctions:
         mock_github_client.side_effect = ValueError("GitHub Token not configured")
 
         # Streamlitのエラー表示をモック
-        with patch("nagare.admin_app.st") as mock_st:
+        with patch("nagare.admin_db.st") as mock_st:
             client = get_github_client()
 
             assert client is None
             mock_st.error.assert_called()
             mock_st.info.assert_called()
 
-    @patch("nagare.admin_app.get_github_client")
+    @patch("nagare.admin_db.get_github_client")
     def test_fetch_github_repositories_organization(
         self, mock_get_client: MagicMock
     ) -> None:
         """組織リポジトリの取得"""
-        from nagare.admin_app import fetch_github_repositories
+        from nagare.admin_db import fetch_github_repositories
 
         # モッククライアントの設定
         mock_client = MagicMock()
@@ -98,10 +98,10 @@ class TestAdminAppFunctions:
             "test-org", page=1, per_page=30
         )
 
-    @patch("nagare.admin_app.get_github_client")
+    @patch("nagare.admin_db.get_github_client")
     def test_fetch_github_repositories_user(self, mock_get_client: MagicMock) -> None:
         """ユーザーリポジトリの取得"""
-        from nagare.admin_app import fetch_github_repositories
+        from nagare.admin_db import fetch_github_repositories
 
         mock_client = MagicMock()
         mock_client.get_user_repositories.return_value = {
@@ -118,10 +118,10 @@ class TestAdminAppFunctions:
         assert "repos" in result
         mock_client.get_user_repositories.assert_called_once()
 
-    @patch("nagare.admin_app.get_github_client")
+    @patch("nagare.admin_db.get_github_client")
     def test_fetch_github_repositories_search(self, mock_get_client: MagicMock) -> None:
         """キーワード検索"""
-        from nagare.admin_app import fetch_github_repositories
+        from nagare.admin_db import fetch_github_repositories
 
         mock_client = MagicMock()
         mock_client.search_repositories.return_value = {
@@ -139,12 +139,12 @@ class TestAdminAppFunctions:
         assert result["total_count"] == 100
         mock_client.search_repositories.assert_called_once()
 
-    @patch("nagare.admin_app.get_github_client")
+    @patch("nagare.admin_db.get_github_client")
     def test_fetch_github_repositories_error(self, mock_get_client: MagicMock) -> None:
         """GitHub APIエラーのハンドリング"""
         from github import GithubException
 
-        from nagare.admin_app import fetch_github_repositories
+        from nagare.admin_db import fetch_github_repositories
 
         mock_client = MagicMock()
         mock_client.get_organization_repositories.side_effect = GithubException(
@@ -152,16 +152,16 @@ class TestAdminAppFunctions:
         )
         mock_get_client.return_value = mock_client
 
-        with patch("nagare.admin_app.st") as mock_st:
+        with patch("nagare.admin_db.st") as mock_st:
             result = fetch_github_repositories("organization", "notfound", page=1, per_page=30)
 
             assert result is None
             mock_st.error.assert_called()
 
-    @patch("nagare.admin_app.get_database_engine")
+    @patch("nagare.admin_db.get_database_engine")
     def test_get_repositories(self, mock_get_engine: MagicMock) -> None:
         """リポジトリ一覧の取得"""
-        from nagare.admin_app import get_repositories
+        from nagare.admin_db import get_repositories
 
         # モックエンジンとコネクションの設定
         mock_engine = MagicMock()
@@ -192,10 +192,10 @@ class TestAdminAppFunctions:
             "更新日時",
         ]
 
-    @patch("nagare.admin_app.get_database_engine")
+    @patch("nagare.admin_db.get_database_engine")
     def test_add_repository_new(self, mock_get_engine: MagicMock) -> None:
         """新規リポジトリの追加"""
-        from nagare.admin_app import add_repository
+        from nagare.admin_db import add_repository
 
         mock_engine = MagicMock()
         mock_conn = MagicMock()
@@ -218,10 +218,10 @@ class TestAdminAppFunctions:
         assert "追加しました" in message
         assert "ID: 1" in message
 
-    @patch("nagare.admin_app.get_database_engine")
+    @patch("nagare.admin_db.get_database_engine")
     def test_add_repository_existing_active(self, mock_get_engine: MagicMock) -> None:
         """既に有効なリポジトリの追加（失敗）"""
-        from nagare.admin_app import add_repository
+        from nagare.admin_db import add_repository
 
         mock_engine = MagicMock()
         mock_conn = MagicMock()
@@ -241,10 +241,10 @@ class TestAdminAppFunctions:
         assert success is False
         assert "既に登録されています" in message
 
-    @patch("nagare.admin_app.get_database_engine")
+    @patch("nagare.admin_db.get_database_engine")
     def test_add_repository_reactivate(self, mock_get_engine: MagicMock) -> None:
         """無効なリポジトリの再有効化"""
-        from nagare.admin_app import add_repository
+        from nagare.admin_db import add_repository
 
         mock_engine = MagicMock()
         mock_conn = MagicMock()
@@ -269,10 +269,10 @@ class TestAdminAppFunctions:
         assert "有効化しました" in message
         assert "ID: 5" in message
 
-    @patch("nagare.admin_app.get_database_engine")
+    @patch("nagare.admin_db.get_database_engine")
     def test_toggle_repository_enable(self, mock_get_engine: MagicMock) -> None:
         """リポジトリの有効化"""
-        from nagare.admin_app import toggle_repository
+        from nagare.admin_db import toggle_repository
 
         mock_engine = MagicMock()
         mock_conn = MagicMock()
@@ -286,10 +286,10 @@ class TestAdminAppFunctions:
         assert success is True
         assert "有効化しました" in message
 
-    @patch("nagare.admin_app.get_database_engine")
+    @patch("nagare.admin_db.get_database_engine")
     def test_toggle_repository_disable(self, mock_get_engine: MagicMock) -> None:
         """リポジトリの無効化"""
-        from nagare.admin_app import toggle_repository
+        from nagare.admin_db import toggle_repository
 
         mock_engine = MagicMock()
         mock_conn = MagicMock()
@@ -303,10 +303,10 @@ class TestAdminAppFunctions:
         assert success is True
         assert "無効化しました" in message
 
-    @patch("nagare.admin_app.get_database_engine")
+    @patch("nagare.admin_db.get_database_engine")
     def test_get_statistics(self, mock_get_engine: MagicMock) -> None:
         """統計情報の取得"""
-        from nagare.admin_app import get_statistics
+        from nagare.admin_db import get_statistics
 
         mock_engine = MagicMock()
         mock_conn = MagicMock()
@@ -340,10 +340,10 @@ class TestAdminAppFunctions:
         assert stats["pipeline_runs"]["success"] == 85
         assert stats["pipeline_runs"]["avg_duration_sec"] == 60.0
 
-    @patch("nagare.admin_app.get_database_engine")
+    @patch("nagare.admin_db.get_database_engine")
     def test_get_recent_pipeline_runs(self, mock_get_engine: MagicMock) -> None:
         """最近のパイプライン実行履歴の取得"""
-        from nagare.admin_app import get_recent_pipeline_runs
+        from nagare.admin_db import get_recent_pipeline_runs
 
         mock_engine = MagicMock()
         mock_conn = MagicMock()
@@ -376,10 +376,10 @@ class TestAdminAppFunctions:
 class TestAdminAppEdgeCases:
     """エッジケースのテスト"""
 
-    @patch("nagare.admin_app.get_database_engine")
+    @patch("nagare.admin_db.get_database_engine")
     def test_get_repositories_empty(self, mock_get_engine: MagicMock) -> None:
         """リポジトリが0件の場合"""
-        from nagare.admin_app import get_repositories
+        from nagare.admin_db import get_repositories
 
         mock_engine = MagicMock()
         mock_conn = MagicMock()
@@ -402,10 +402,10 @@ class TestAdminAppEdgeCases:
             "更新日時",
         ]
 
-    @patch("nagare.admin_app.get_database_engine")
+    @patch("nagare.admin_db.get_database_engine")
     def test_get_statistics_no_data(self, mock_get_engine: MagicMock) -> None:
         """統計データが無い場合"""
-        from nagare.admin_app import get_statistics
+        from nagare.admin_db import get_statistics
 
         mock_engine = MagicMock()
         mock_conn = MagicMock()
@@ -425,12 +425,12 @@ class TestAdminAppEdgeCases:
         assert stats["pipeline_runs"]["total"] == 0
         assert stats["pipeline_runs"]["avg_duration_sec"] == 0
 
-    @patch("nagare.admin_app.get_github_client")
+    @patch("nagare.admin_db.get_github_client")
     def test_fetch_github_repositories_no_client(
         self, mock_get_client: MagicMock
     ) -> None:
         """GitHubクライアントが無い場合"""
-        from nagare.admin_app import fetch_github_repositories
+        from nagare.admin_db import fetch_github_repositories
 
         mock_get_client.return_value = None
 
@@ -438,18 +438,22 @@ class TestAdminAppEdgeCases:
 
         assert result is None
 
-    @patch("nagare.admin_app.get_database_engine")
+    @patch("nagare.admin_db.get_database_engine")
     def test_add_repository_invalid_format(self, mock_get_engine: MagicMock) -> None:
         """不正なリポジトリ名の処理"""
-        from nagare.admin_app import add_repository
+        from nagare.admin_db import add_repository
 
         mock_engine = MagicMock()
         mock_get_engine.return_value = mock_engine
 
-        # 正常な形式でないリポジトリ名でも処理は継続される
-        # （バリデーションはUI層で行う）
-        # ここでは単にsource_repository_idが作成されることを確認
+        # GitHub Actionsの場合は入力検証が行われ、不正な形式はValueErrorが発生する
+        # スラッシュが無いリポジトリ名
+        with pytest.raises(ValueError) as exc_info:
+            add_repository("invalid_repo_name", "github_actions")
 
+        assert "owner/repo" in str(exc_info.value)
+
+        # Bitriseの場合は検証が行われないため、処理は継続される
         mock_conn = MagicMock()
         mock_existing_result = MagicMock()
         mock_existing_result.fetchone.return_value = None
@@ -460,7 +464,6 @@ class TestAdminAppEdgeCases:
         mock_conn.execute.side_effect = [mock_existing_result, mock_insert_result]
         mock_engine.begin.return_value.__enter__.return_value = mock_conn
 
-        # スラッシュが無いリポジトリ名
-        success, message = add_repository("invalid_repo_name", "github_actions")
+        success, message = add_repository("invalid_repo_name", "bitrise")
 
         assert success is True
