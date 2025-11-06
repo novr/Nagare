@@ -83,4 +83,5 @@ superset_config.py
 *~
 
 # Review/Analysis files (optional)
-# REVIEW.md
+REVIEW.md
+RESOLVED.md

@@ -419,19 +419,6 @@ docker compose exec airflow-scheduler uv run pyright src/
 # 型ヒントを追加または修正
 ```
 
-### データベース接続エラー
-
-```bash
-# PostgreSQLの起動確認
-docker compose ps postgres
-
-# 接続テスト
-docker compose exec postgres psql -U nagare_user -d nagare -c "SELECT 1;"
-
-# .envファイルの確認
-cat .env | grep DATABASE_PASSWORD
-```
-
 ### 環境変数が反映されない
 
 **症状**: `.env`ファイルを更新したが、コンテナ内で古い値が使われている
@@ -453,29 +440,6 @@ docker compose up -d airflow-webserver airflow-scheduler
 
 # 4. 環境変数が正しく読み込まれたか確認
 docker exec <container-name> env | grep VARIABLE_NAME
-```
-
-### Airflow DAGのインポートエラー
-
-**症状**: `DAG Import Errors` に `UnicodeDecodeError` や `YAML parse error`
-
-**原因**: Airflowコンテナに環境変数が渡されていない
-
-**解決方法**:
-```bash
-# 1. Airflowサービスを再作成
-docker compose down airflow-webserver airflow-scheduler
-docker compose up -d airflow-webserver airflow-scheduler
-
-# 2. DAGインポートエラーを確認
-docker exec nagare-airflow-webserver airflow dags list-import-errors
-
-# 3. 接続が正しく読み込まれているか確認
-docker exec nagare-airflow-webserver python3 -c "
-from nagare.utils.connections import ConnectionRegistry
-ConnectionRegistry.from_file('/opt/airflow/connections.yml')
-print('Loaded:', list(ConnectionRegistry._all_connections.keys()))
-"
 ```
 
 ---
