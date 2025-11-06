@@ -4,7 +4,6 @@ ConnectionRegistry, GitHubConnection, DatabaseConnectionなど
 Connection層の動作を検証する。
 """
 
-import os
 from pathlib import Path
 
 import pytest

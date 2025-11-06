@@ -364,8 +364,8 @@ def test_transform_data_with_jobs(
 
     Note: ジョブデータは現在XComから取得（TODO: 一時テーブル化予定）
     """
+    from nagare.constants import XComKeys
     from nagare.tasks.transform import transform_data
-    from nagare.constants import TaskIds, XComKeys
 
     ti = mock_airflow_context["ti"]
     run_id = ti.run_id

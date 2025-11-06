@@ -6,8 +6,6 @@ DAG全体の実行フローとタスク間のデータ連携を検証する統�
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 
 class TestDAGIntegration:
     """DAG全体の統合テスト"""

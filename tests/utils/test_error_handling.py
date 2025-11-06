@@ -6,8 +6,7 @@ GitHub APIやデータベース接続のエラーケースを包括的にテス�
 from unittest.mock import MagicMock, patch
 
 import pytest
-from github import GithubException, RateLimitExceededException
-from sqlalchemy.exc import OperationalError, TimeoutError
+from sqlalchemy.exc import OperationalError
 
 
 class TestGitHubClientErrorHandling:

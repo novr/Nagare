@@ -17,9 +17,10 @@
   - TaskInstanceとexecution_dateを提供
 """
 
+from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Any, Generator
+from typing import Any
 
 import pytest
 

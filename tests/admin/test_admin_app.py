@@ -6,7 +6,6 @@ Streamlit特有のUIテストは含まれないが、ビジネスロジックを
 
 from unittest.mock import MagicMock, patch
 
-import pandas as pd
 import pytest
 
 
@@ -29,7 +28,7 @@ class TestAdminAppFunctions:
         mock_db_conn.url = "postgresql://testuser:testpass@testhost:5432/testdb"
         mock_get_database.return_value = mock_db_conn
 
-        engine = get_database_engine()
+        get_database_engine()
 
         # create_engineが正しいURLで呼ばれたか確認
         mock_create_engine.assert_called_once_with(

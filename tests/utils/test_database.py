@@ -7,7 +7,6 @@ Note: これらはPostgreSQLへの実際の接続を行う統合テストです�
 from typing import Any
 
 import pytest
-from sqlalchemy.exc import OperationalError
 
 
 @pytest.fixture
