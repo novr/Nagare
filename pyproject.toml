@@ -48,7 +48,7 @@ select = [
     "UP",  # pyupgrade
 ]
 ignore = [
-    "E501",  # Line too long - 日本語コメントと長い文字列リテラルで超過する場合が多いため許容
+    "E501",  # 日本語コメント対応のため
 ]
 
 [tool.ruff.format]

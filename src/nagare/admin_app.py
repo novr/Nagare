@@ -79,9 +79,9 @@ def get_all_cicd_connections():
         List[(conn_id, description, platform)] - Connection情報とプラットフォームのリスト
     """
     connections = []
-    added_platforms = set()  # 既に追加されたプラットフォームを追跡
+    added_platforms = set()
 
-    # 1. ConnectionRegistryから接続を取得（connections.yml由来）
+    # connections.yml由来の接続を取得
     for conn_id, conn_obj in ConnectionRegistry._all_connections.items():
         platform = None
         description = getattr(conn_obj, 'description', conn_id)
@@ -101,41 +101,35 @@ def get_all_cicd_connections():
             connections.append((conn_id, description, platform))
             added_platforms.add(platform)
 
-    # 2. デフォルト接続もチェック（_all_connectionsに含まれていない場合）
-    # GitHub
+    # デフォルト接続も追加（YAMLで明示的に定義されていない場合）
     if "github" not in added_platforms and ConnectionRegistry._github is not None:
         conn_id = "github"
         description = getattr(ConnectionRegistry._github, 'description', '')
         connections.append((conn_id, description, "github"))
         added_platforms.add("github")
 
-    # Bitrise
     if "bitrise" not in added_platforms and ConnectionRegistry._bitrise is not None:
         conn_id = "bitrise"
         description = getattr(ConnectionRegistry._bitrise, 'description', '')
         connections.append((conn_id, description, "bitrise"))
         added_platforms.add("bitrise")
 
-    # Xcode Cloud
     if "xcode_cloud" not in added_platforms and ConnectionRegistry._xcode_cloud is not None:
         conn_id = "xcode_cloud"
         description = getattr(ConnectionRegistry._xcode_cloud, 'description', '')
         connections.append((conn_id, description, "xcode_cloud"))
         added_platforms.add("xcode_cloud")
 
-    # 2.5. 読み込みに失敗した接続も含める（connections.ymlで定義されているがエラーになったもの）
+    # 読み込みエラーの接続も表示（トラブルシューティングのため）
     for conn_id, failed_info in ConnectionRegistry._failed_connections.items():
         platform = failed_info["platform"]
 
-        # database以外のCI/CD関連プラットフォーム
-        if platform != "database":
-            if platform not in added_platforms:
-                description = f"⚠️ エラー: {failed_info['error'][:50]}..."
-                connections.append((conn_id, description, platform))
-                added_platforms.add(platform)
+        if platform != "database" and platform not in added_platforms:
+            description = f"⚠️ エラー: {failed_info['error'][:50]}..."
+            connections.append((conn_id, description, platform))
+            added_platforms.add(platform)
 
-    # 3. Airflow Connectionテーブルからも取得（後方互換性のため）
-    # ConnectionRegistryに既に存在するプラットフォームのリストを作成
+    # Airflow Connectionテーブルとの後方互換性維持
     existing_platforms = {platform for _, _, platform in connections}
 
     engine = get_database_engine()

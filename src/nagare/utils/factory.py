@@ -83,11 +83,10 @@ class ClientFactory:
             # 環境変数から作成（デフォルト）
             client = ClientFactory.create_github_client()
         """
-        # 1. connection引数が指定されている場合はそれを使用
+        # 優先順位: connection引数 > Airflow Connection > 環境変数
         if connection is not None:
             return GitHubClient(connection=connection)
 
-        # 2. conn_id が指定されている場合はAirflow Connectionから取得
         if conn_id is not None:
             try:
                 connection = GitHubConnection.from_airflow(conn_id)
@@ -99,7 +98,6 @@ class ClientFactory:
                     f"Falling back to environment variables."
                 )
 
-        # 3. ConnectionRegistryから取得（環境変数）
         connection = ConnectionRegistry.get_github()
         logger.debug("Using environment variables for GitHub authentication")
         return GitHubClient(connection=connection)
@@ -130,11 +128,10 @@ class ClientFactory:
             # 環境変数から作成（デフォルト）
             client = ClientFactory.create_bitrise_client()
         """
-        # 1. connection引数が指定されている場合はそれを使用
+        # 優先順位: connection引数 > Airflow Connection > 環境変数
         if connection is not None:
             return BitriseClient(connection=connection)
 
-        # 2. conn_id が指定されている場合はAirflow Connectionから取得
         if conn_id is not None:
             try:
                 connection = BitriseConnection.from_airflow(conn_id)
@@ -146,7 +143,6 @@ class ClientFactory:
                     f"Falling back to environment variables."
                 )
 
-        # 3. ConnectionRegistryから取得（環境変数）
         connection = ConnectionRegistry.get_bitrise()
         logger.debug("Using environment variables for Bitrise authentication")
         return BitriseClient(connection=connection)
@@ -177,11 +173,10 @@ class ClientFactory:
             # 環境変数から作成（デフォルト）
             client = ClientFactory.create_xcode_cloud_client()
         """
-        # 1. connection引数が指定されている場合はそれを使用
+        # 優先順位: connection引数 > Airflow Connection > 環境変数
         if connection is not None:
             return XcodeCloudClient(connection=connection)
 
-        # 2. conn_id が指定されている場合はAirflow Connectionから取得
         if conn_id is not None:
             try:
                 connection = XcodeCloudConnection.from_airflow(conn_id)
@@ -193,7 +188,6 @@ class ClientFactory:
                     f"Falling back to environment variables."
                 )
 
-        # 3. ConnectionRegistryから取得（環境変数）
         connection = ConnectionRegistry.get_xcode_cloud()
         logger.debug("Using environment variables for Xcode Cloud authentication")
         return XcodeCloudClient(connection=connection)

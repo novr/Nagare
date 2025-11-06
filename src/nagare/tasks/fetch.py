@@ -21,11 +21,11 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
-# 期間バッチング設定
-INITIAL_FETCH_DAYS = 30  # 初回取得の総日数
-INITIAL_PERIOD_DAYS = 6  # 初回取得時の1期間の日数
-INITIAL_PERIODS = 5  # 初回取得の期間数
-INCREMENTAL_PERIOD_DAYS = 7  # 増分取得時の1期間の日数
+# Rate limit回避のため期間分割してバッチ取得
+INITIAL_FETCH_DAYS = 30
+INITIAL_PERIOD_DAYS = 6
+INITIAL_PERIODS = 5
+INCREMENTAL_PERIOD_DAYS = 7
 
 
 def _process_items_with_error_handling(
@@ -150,11 +150,9 @@ def fetch_repositories(
     if batch_size is None:
         batch_size = FetchConfig.BATCH_SIZE
 
-    # 期間を生成（前回取得時を起点に7日ごと）
-    # データベースから全リポジトリの最も古いタイムスタンプを直接取得
+    # Rate limit回避のため期間分割
     now = datetime.now(UTC)
 
-    # SQLで最小値を直接取得（サンプリング不要、正確で高速）
     try:
         oldest_timestamp = db.get_oldest_run_timestamp(source=source)
     except Exception as e:
@@ -164,9 +162,8 @@ def fetch_repositories(
         )
         oldest_timestamp = None
 
-    # 期間を設定
+    # 初回は過去30日、それ以降は前回取得時から現在まで
     if oldest_timestamp is None:
-        # 初回実行: 過去30日を6日×5期間に分割
         logger.info(
             f"Initial fetch detected. Splitting {INITIAL_FETCH_DAYS} days into "
             f"{INITIAL_PERIODS} periods ({INITIAL_PERIOD_DAYS} days each)"
@@ -389,24 +386,20 @@ def _fetch_workflow_runs_impl(
         owner = repo["owner"]
         repo_name = repo["repo"]
 
-        # 期間パラメータが指定されている場合はそれを使用、なければ既存のロジック
+        # バッチ処理時は指定期間、それ以外は差分取得
         if since is not None:
-            # 期間指定あり: バッチの期間を使用
-            # ISO8601形式の文字列をパース（タイムゾーン情報を含む）
             created_after = datetime.fromisoformat(since)
             logger.info(
                 f"Fetching {owner}/{repo_name} for period {since} to {until}"
             )
         else:
-            # 期間指定なし: 既存の差分取得ロジック
+            # DBから最新タイムスタンプを取得して差分取得
             latest_timestamp = db.get_latest_run_timestamp(owner, repo_name)
 
             if latest_timestamp is None:
-                # 初回実行: 全件取得
                 logger.info(f"Initial fetch for {owner}/{repo_name} (fetching all runs)")
                 created_after = None
             else:
-                # 2回目以降: 差分取得
                 logger.info(
                     f"Incremental fetch for {owner}/{repo_name} "
                     f"(fetching runs after {latest_timestamp.isoformat()})"
