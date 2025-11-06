@@ -17,8 +17,8 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from nagare.constants import SourceType
 from nagare.utils.connections import DatabaseConnection
+from nagare.utils.repository_adapters import parse_repository_data
 
 logger = logging.getLogger(__name__)
 
@@ -118,41 +118,17 @@ class DatabaseClient:
 
             repositories = []
             for row in result:
-                # ソースタイプで判定（GitHub Actions、Bitrise、Xcode Cloudで異なる構造を返す）
-                if row.source == SourceType.GITHUB_ACTIONS:
-                    # GitHub形式: owner/repoに分割
-                    parts = row.repository_name.split("/", 1)
-                    if len(parts) == 2:
-                        repositories.append({"owner": parts[0], "repo": parts[1]})
-                    else:
-                        logger.warning(
-                            f"Invalid repository_name format: {row.repository_name}"
-                        )
-                elif row.source == SourceType.BITRISE:
-                    # Bitrise形式: id/repository_name/source_repository_idを返す
-                    # source_repository_idはBitriseのapp_slug（UUID）
-                    repositories.append({
-                        "id": row.id,
-                        "repository_name": row.repository_name,
-                        "source_repository_id": row.source_repository_id
-                    })
-                elif row.source == SourceType.XCODE_CLOUD:
-                    # Xcode Cloud形式: Bitriseと同様の構造を返す
-                    # source_repository_idはXcode CloudのApp ID
-                    repositories.append({
-                        "id": row.id,
-                        "repository_name": row.repository_name,
-                        "source_repository_id": row.source_repository_id
-                    })
-                else:
-                    # デフォルト: GitHub形式として扱う
-                    parts = row.repository_name.split("/", 1)
-                    if len(parts) == 2:
-                        repositories.append({"owner": parts[0], "repo": parts[1]})
-                    else:
-                        logger.warning(
-                            f"Unknown source type '{row.source}' for repository: {row.repository_name}"
-                        )
+                # ソースタイプに応じたパーサーで処理を委譲
+                try:
+                    repo_data = parse_repository_data(row.source, row)
+                    repositories.append(repo_data)
+                except ValueError as e:
+                    # パース失敗時は警告ログを出力してスキップ
+                    logger.warning(
+                        f"Failed to parse repository '{row.repository_name}' "
+                        f"(source: {row.source}, id: {row.id}): {e}"
+                    )
+                    continue
 
             source_msg = f" for source '{source}'" if source else ""
             logger.info(f"Retrieved {len(repositories)} active repositories{source_msg}")
