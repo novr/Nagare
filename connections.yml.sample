@@ -129,22 +129,16 @@ connections:
     conn_type: database
     # PostgreSQL接続情報
 
-    # Docker環境（推奨）:
-    #   - host/portは docker-compose.yml で管理（固定値）
-    #   - パスワードのみ環境変数から読み込み
-    host: postgres  # Docker Composeのサービス名（固定）
-    port: 5432      # コンテナ内ポート（固定）
+    # 環境変数で柔軟に切り替え可能（デフォルト値はDocker環境向け）
+    host: ${DATABASE_HOST:-postgres}
+    port: ${DATABASE_PORT:-5432}
     database: ${DATABASE_NAME:-nagare}
     user: ${DATABASE_USER:-nagare_user}
     password: ${DATABASE_PASSWORD}
 
-    # ローカル開発環境（docker-compose.yml不使用）:
-    #   すべてを環境変数から読み込む場合はコメント解除
-    # host: ${DATABASE_HOST:-localhost}
-    # port: ${DATABASE_PORT:-5432}
-    # database: ${DATABASE_NAME:-nagare}
-    # user: ${DATABASE_USER:-nagare_user}
-    # password: ${DATABASE_PASSWORD}
+    # ローカル開発環境（Docker不使用）では .env に以下を設定:
+    #   DATABASE_HOST=localhost
+    #   DATABASE_PORT=5432
 
     # Connection pooling設定（オプション）
     # pool_size: 5
@@ -184,8 +178,8 @@ connections:
 #        private_key: ${APPSTORE_PRIVATE_KEY}
 #      - conn_id: database
 #        conn_type: database
-#        host: postgres  # 固定値（Docker Composeのサービス名）
-#        port: 5432      # 固定値
+#        host: ${DATABASE_HOST:-postgres}
+#        port: ${DATABASE_PORT:-5432}
 #        password: ${DATABASE_PASSWORD}
 #
 # 3. Pythonコードで読み込み:

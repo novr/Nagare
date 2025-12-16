@@ -1123,7 +1123,7 @@ class DatabaseConnection:
             DatabaseConnection: 環境変数から生成されたConnection
         """
         return cls(
-            host=os.getenv("DATABASE_HOST", "localhost"),
+            host=os.getenv("DATABASE_HOST", "postgres"),
             port=int(os.getenv("DATABASE_PORT", "5432")),
             database=os.getenv("DATABASE_NAME", "nagare"),
             user=os.getenv("DATABASE_USER", "nagare_user"),
@@ -1488,6 +1488,9 @@ class ConnectionRegistry:
             logger.info(f"Xcode Cloud connection '{conn_id}' loaded from file")
 
         elif conn_type == "database":
+            # port を整数に変換（環境変数展開後は文字列になるため）
+            if "port" in config and isinstance(config["port"], str):
+                config["port"] = int(config["port"])
             conn = DatabaseConnection(**config)
             cls._database_connections[conn_id] = conn
             cls._all_connections[conn_id] = conn
