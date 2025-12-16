@@ -388,4 +388,4 @@ docker-compose up -d
 
 ## ライセンス
 
-（ライセンス情報を追加してください）
+MIT License - 詳細は [LICENSE](LICENSE) を参照してください。
