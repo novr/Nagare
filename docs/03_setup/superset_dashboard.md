@@ -11,6 +11,36 @@ Supersetを使用して、GitHub Actionsから収集したデータを可視化�
 - ユーザー名: `admin`
 - パスワード: `.env`の`SUPERSET_ADMIN_PASSWORD`
 
+## クイックセットアップ（自動）
+
+以下のコマンドでダッシュボードを自動作成できます：
+
+```bash
+# 1. SQLビューを作成
+docker exec -i nagare-postgres psql -U nagare_user -d nagare < superset/init_views.sql
+
+# 2. Supersetにログインしてデータベース接続を作成（下記「1.1. データベース接続の追加」参照）
+
+# 3. ダッシュボードを自動作成
+docker cp scripts/setup_superset_dashboard.py nagare-superset:/app/scripts/
+docker exec nagare-superset python3 /app/scripts/setup_superset_dashboard.py
+```
+
+自動作成されるチャート：
+- **全体成功率**: Big Number（全リポジトリの平均成功率）
+- **日次成功率トレンド**: 折れ線グラフ
+- **リポジトリ別実行数**: 円グラフ
+- **時間帯別実行数**: 棒グラフ（JST）
+- **最新実行履歴**: テーブル
+
+ダッシュボードURL: http://localhost:8088/superset/dashboard/cicd-performance/
+
+---
+
+## 手動セットアップ
+
+以下は手動でダッシュボードを構築する場合の手順です。
+
 ## 1. PostgreSQLデータソースの接続
 
 ### 1.1. データベース接続の追加
