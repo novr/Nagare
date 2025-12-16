@@ -72,6 +72,6 @@ dag = create_cicd_collection_dag(
     schedule_interval="0 * * * *",  # 毎時0分に実行
     start_date=datetime(2024, 1, 1),
     catchup=False,  # 過去の実行をスキップ
-    max_active_tasks=20,  # 並列バッチ処理用に増やす（デフォルト16から20へ）
+    max_active_tasks=8,  # メモリ不足対策で並列数を制限
     max_active_runs=1,  # 同時実行DAG runは1つのみ
 )
