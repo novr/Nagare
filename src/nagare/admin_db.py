@@ -10,6 +10,7 @@ import pandas as pd
 import streamlit as st
 from github import GithubException
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import URL as SA_URL
 
 from nagare.admin_helpers import (
     temporary_env_var,
@@ -67,7 +68,7 @@ def get_all_cicd_connections():
     added_platforms = set()
 
     # connections.yml由来の接続を取得
-    for conn_id, conn_obj in ConnectionRegistry._all_connections.items():
+    for conn_id, conn_obj in ConnectionRegistry.get_all_connections().items():
         platform = None
         description = getattr(conn_obj, "description", conn_id)
 
@@ -109,7 +110,7 @@ def get_all_cicd_connections():
         added_platforms.add("xcode_cloud")
 
     # 読み込みエラーの接続も表示（トラブルシューティングのため）
-    for conn_id, failed_info in ConnectionRegistry._failed_connections.items():
+    for conn_id, failed_info in ConnectionRegistry.get_failed_connections().items():
         platform = failed_info["platform"]
 
         if platform != "database" and platform not in added_platforms:
@@ -502,9 +503,8 @@ def fetch_repositories_unified(
             return None
 
         try:
-            # Bitriseは全件取得してからページングを実装
-            # 実際にはAPIがページングをサポートしているが、ここでは簡易実装
-            limit = per_page * (page + 1)  # 次のページも考慮して多めに取得
+            # ページNを表示するために必要な最小件数: N*per_page + 1 (次ページ有無の判定用)
+            limit = per_page * page + 1
             all_apps = bitrise_client.get_apps(limit=limit)
 
             # ページングのためのスライス
@@ -594,8 +594,8 @@ def fetch_repositories_unified(
             return None
 
         try:
-            # Xcode Cloudは全件取得してからページングを実装
-            limit = per_page * (page + 1)  # 次のページも考慮して多めに取得
+            # ページNを表示するために必要な最小件数: N*per_page + 1 (次ページ有無の判定用)
+            limit = per_page * page + 1
             all_apps = xcode_cloud_client.list_apps(limit=limit)
 
             # ページングのためのスライス
@@ -745,6 +745,7 @@ def _add_repositories_batch(
     return success_count, error_count, messages
 
 
+@st.cache_data(ttl=30)
 def get_registered_repository_names(source: str = None) -> set[str]:
     """登録済みリポジトリ名のセットを取得する
 
@@ -780,6 +781,7 @@ def get_registered_repository_names(source: str = None) -> set[str]:
         return {row[0] for row in rows}
 
 
+@st.cache_data(ttl=30)
 def get_repositories():
     """リポジトリ一覧を取得する"""
     engine = get_database_engine()
@@ -856,6 +858,9 @@ def add_repository(
                     ),
                     {"id": existing.id},
                 )
+                get_repositories.clear()
+                get_registered_repository_names.clear()
+                get_statistics.clear()
                 return (
                     True,
                     f"リポジトリ '{repo_name}' を有効化しました (ID: {existing.id})",
@@ -877,6 +882,9 @@ def add_repository(
             },
         )
         repo_id = result.fetchone()[0]
+        get_repositories.clear()
+        get_registered_repository_names.clear()
+        get_statistics.clear()
         return True, f"リポジトリ '{repo_name}' を追加しました (ID: {repo_id})"
 
 
@@ -895,10 +903,14 @@ def toggle_repository(repo_id: int, active: bool):
             ),
             {"id": repo_id, "active": active},
         )
+    get_repositories.clear()
+    get_registered_repository_names.clear()
+    get_statistics.clear()
     status = "有効化" if active else "無効化"
     return True, f"リポジトリ (ID: {repo_id}) を{status}しました"
 
 
+@st.cache_data(ttl=30)
 def get_statistics():
     """統計情報を取得する"""
     engine = get_database_engine()
@@ -953,6 +965,7 @@ def get_statistics():
         }
 
 
+@st.cache_data(ttl=30)
 def get_recent_pipeline_runs(limit: int = 10):
     """最近のパイプライン実行履歴を取得する"""
     engine = get_database_engine()
@@ -998,6 +1011,7 @@ def get_recent_pipeline_runs(limit: int = 10):
         )
 
 
+@st.cache_data(ttl=30)
 def get_connections():
     """Airflow Connectionsを取得する"""
     engine = get_database_engine()
@@ -1204,7 +1218,14 @@ def test_connection(
             if not all([host, login, password, schema]):
                 return False, "PostgreSQL接続に必要な情報が不足しています", None
 
-            test_url = f"postgresql://{login}:{password}@{host}:{port or 5432}/{schema}"
+            test_url = SA_URL.create(
+                "postgresql",
+                username=login,
+                password=password,
+                host=host,
+                port=port or 5432,
+                database=schema,
+            )
             test_engine = create_test_engine(test_url, pool_pre_ping=True)
 
             with test_engine.connect() as conn:
@@ -1219,7 +1240,14 @@ def test_connection(
             if not all([host, login, password, schema]):
                 return False, "MySQL接続に必要な情報が不足しています", None
 
-            test_url = f"mysql+pymysql://{login}:{password}@{host}:{port or 3306}/{schema}"
+            test_url = SA_URL.create(
+                "mysql+pymysql",
+                username=login,
+                password=password,
+                host=host,
+                port=port or 3306,
+                database=schema,
+            )
             test_engine = create_test_engine(test_url, pool_pre_ping=True)
 
             with test_engine.connect() as conn:
@@ -1287,11 +1315,10 @@ def test_connection(
             if not host:  # hostにファイルパスが格納されている想定
                 return False, "SQLiteファイルパスが指定されていません", None
 
-            conn = sqlite3.connect(host)
-            cursor = conn.cursor()
-            cursor.execute("SELECT sqlite_version()")
-            version = cursor.fetchone()[0]
-            conn.close()
+            with sqlite3.connect(host) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT sqlite_version()")
+                version = cursor.fetchone()[0]
             return True, "✅ 接続成功！", {"version": version}
 
         else:
