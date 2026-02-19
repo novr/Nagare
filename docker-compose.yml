@@ -207,8 +207,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      airflow-init:
-        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
       interval: 30s
