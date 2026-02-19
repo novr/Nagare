@@ -74,9 +74,9 @@ def render_repository_list(result: dict, platform: str, session_key_prefix: str)
 
     # ヘッダー情報
     if total_count is not None:
-        st.success(f"検索結果: 全{total_count}件 （ページ {current_page}）")
+        st.info(f"検索結果: 全{total_count}件 （ページ {current_page}）")
     else:
-        st.success(f"{len(items)}件が見つかりました （ページ {current_page}）")
+        st.info(f"{len(items)}件が見つかりました （ページ {current_page}）")
 
     if not items:
         st.info("このページにアイテムがありません")
@@ -121,7 +121,7 @@ def render_repository_list(result: dict, platform: str, session_key_prefix: str)
         with col2:
             # プラットフォーム固有のアイコン
             icon = "📦" if platform == Platform.GITHUB else "📱"
-            if platform == "github" and item["metadata"].get("private"):
+            if platform == Platform.GITHUB and item["metadata"].get("private"):
                 icon = "🔒"
 
             # リポジトリ/アプリ名表示（登録済みの場合はバッジ追加）
@@ -169,7 +169,6 @@ def render_repository_list(result: dict, platform: str, session_key_prefix: str)
                 st.caption(" • ".join(meta_info))
 
         with col3:
-            source_type = SourceType.GITHUB_ACTIONS if platform == Platform.GITHUB else SourceType.BITRISE
             # 登録済みの場合は追加ボタンを無効化
             if st.button("追加", key=f"{session_key_prefix}_add_{item['id']}_{current_page}", disabled=is_registered):
                 # リポジトリ情報を準備（Bitriseの場合はapp_slugも含める）
@@ -193,17 +192,18 @@ def render_repository_list(result: dict, platform: str, session_key_prefix: str)
         st.divider()
 
     # ページングボタン
+    nav_key = f"{session_key_prefix}_nav"
     col1, col2, col3 = st.columns([1, 2, 1])
     with col1:
         if current_page > 1:
             if st.button("⬅️ 前のページ", key=f"{session_key_prefix}_prev"):
-                return "prev"
+                st.session_state[nav_key] = "prev"
     with col2:
-        st.markdown(f"<center>ページ {current_page}</center>", unsafe_allow_html=True)
+        st.write(f"ページ {current_page}")
     with col3:
         if has_next:
             if st.button("次のページ ➡️", key=f"{session_key_prefix}_next"):
-                return "next"
+                st.session_state[nav_key] = "next"
 
     # 一括追加ボタン
     if st.session_state[selected_key]:
@@ -239,8 +239,6 @@ def render_repository_list(result: dict, platform: str, session_key_prefix: str)
             st.session_state[selected_key].clear()
             st.session_state[repo_mapping_key].clear()
             st.rerun()
-
-    return None
 
 
 # メインUI
@@ -481,10 +479,13 @@ elif page == "📦 リポジトリ管理":
             # 検索結果表示
             state = st.session_state[search_state_key]
             if state["result"]:
-                action = render_repository_list(state["result"], platform, f"unified_{conn_id}")
+                nav_key = f"unified_{conn_id}_nav"
+                render_repository_list(state["result"], platform, f"unified_{conn_id}")
 
                 # ページング処理
+                action = st.session_state.get(nav_key)
                 if action == "prev" and state["page"] > 1:
+                    st.session_state[nav_key] = None
                     state["page"] -= 1
                     params = state["params"]
                     with st.spinner("読み込み中..."):
@@ -495,6 +496,7 @@ elif page == "📦 リポジトリ管理":
                     st.rerun()
 
                 elif action == "next":
+                    st.session_state[nav_key] = None
                     state["page"] += 1
                     params = state["params"]
                     with st.spinner("読み込み中..."):
@@ -604,7 +606,7 @@ elif page == "📈 実行履歴":
                     return ""
 
             st.dataframe(
-                filtered_df.style.applymap(color_status, subset=["ステータス"]),
+                filtered_df.style.map(color_status, subset=["ステータス"]),
                 use_container_width=True,
                 hide_index=True,
             )
@@ -713,8 +715,8 @@ elif page == "⚙️ 設定":
             # 全接続の一覧
             st.markdown("### 読み込まれた全接続")
 
-            all_connections = ConnectionRegistry._all_connections
-            failed_connections = ConnectionRegistry._failed_connections
+            all_connections = ConnectionRegistry.get_all_connections()
+            failed_connections = ConnectionRegistry.get_failed_connections()
             total_connections = len(all_connections) + len(failed_connections)
 
             if total_connections > 0:
@@ -748,7 +750,6 @@ elif page == "⚙️ 設定":
                         "description": failed_info["error"][:80] + "..."
                     })
 
-                import pandas as pd
                 df = pd.DataFrame(conn_data)
                 st.dataframe(df, use_container_width=True, hide_index=True)
             else:
@@ -863,9 +864,6 @@ elif page == "⚙️ 設定":
     # タブ2: システム情報
     with tab2:
         st.subheader("システム情報")
-
-        import platform
-        import sys
 
         col1, col2 = st.columns(2)
 

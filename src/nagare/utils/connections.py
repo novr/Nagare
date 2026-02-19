@@ -1331,6 +1331,24 @@ class ConnectionRegistry:
         logger.debug("Database connection updated")
 
     @classmethod
+    def get_all_connections(cls) -> dict[str, Any]:
+        """全ての読み込み済み接続を返す
+
+        Returns:
+            conn_id -> connection のコピー辞書
+        """
+        return dict(cls._all_connections)
+
+    @classmethod
+    def get_failed_connections(cls) -> dict[str, dict[str, Any]]:
+        """読み込みに失敗した接続情報を返す
+
+        Returns:
+            conn_id -> error_info のコピー辞書
+        """
+        return dict(cls._failed_connections)
+
+    @classmethod
     def get(cls, conn_id: str) -> Any:
         """conn_idを指定して接続を取得
 
