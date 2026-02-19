@@ -17,12 +17,45 @@
   - TaskInstanceとexecution_dateを提供
 """
 
+import sys
 from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
+
+# airflow はテスト環境にインストール不要。モジュールをモックして ImportError を防ぐ。
+# require_airflow マーカーが付いたテストは本物の airflow がない場合にスキップされる。
+_AIRFLOW_MOCKED = False
+if "airflow" not in sys.modules:
+    _AIRFLOW_MOCKED = True
+    _airflow_mock = MagicMock()
+    sys.modules["airflow"] = _airflow_mock
+    sys.modules["airflow.models"] = _airflow_mock.models
+    sys.modules["airflow.exceptions"] = _airflow_mock.exceptions
+    sys.modules["airflow.hooks"] = _airflow_mock.hooks
+    sys.modules["airflow.hooks.base"] = _airflow_mock.hooks.base
+    sys.modules["airflow.operators"] = _airflow_mock.operators
+    sys.modules["airflow.operators.python"] = _airflow_mock.operators.python
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers",
+        "require_airflow: requires a real airflow installation (skipped when mocked)",
+    )
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    if _AIRFLOW_MOCKED:
+        skip_marker = pytest.mark.skip(reason="Real airflow not installed")
+        for item in items:
+            if item.get_closest_marker("require_airflow"):
+                item.add_marker(skip_marker)
 
 
 class MockDatabaseClient:
@@ -469,6 +502,16 @@ class MockGitHubClient:
     def __exit__(self, *args: Any) -> None:
         """Context manager: with文での終了処理"""
         self.close()
+
+
+@pytest.fixture(autouse=True)
+def clear_streamlit_cache() -> Generator[None, None, None]:
+    """各テスト前後でStreamlitのキャッシュをクリアしてテスト間の分離を保証する"""
+    import streamlit as st
+
+    st.cache_data.clear()
+    yield
+    st.cache_data.clear()
 
 
 @pytest.fixture

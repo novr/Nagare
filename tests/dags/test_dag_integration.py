@@ -6,9 +6,12 @@ DAG全体の実行フローとタスク間のデータ連携を検証する統�
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
 
+
+@pytest.mark.require_airflow
 class TestDAGIntegration:
-    """DAG全体の統合テスト"""
+    """DAG全体の統合テスト（実際の airflow インストールが必要）"""
 
     def test_dag_structure(self) -> None:
         """DAGの構造とタスク定義が正しいことを確認"""
