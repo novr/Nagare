@@ -160,9 +160,9 @@ class TestConnectionRegistryErrorHandling:
         with patch.dict("os.environ", {}, clear=True):
             connection = ConnectionRegistry.get_database()
 
-            # デフォルト値で接続が作成される
+            # デフォルト値で接続が作成される（"postgres" はDockerコンテナ名）
             assert connection is not None
-            assert connection.host == "localhost"
+            assert connection.host == "postgres"
             assert connection.port == 5432
 
 

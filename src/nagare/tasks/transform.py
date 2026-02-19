@@ -81,11 +81,11 @@ def _transform_items_with_error_handling(
             )
             continue
         except Exception as e:
-            # その他の予期しないエラー
+            # その他の予期しないエラー（初回のみスタックトレースを出力）
             logger.error(
                 f"Unexpected error transforming {item_type} {item_desc}: "
                 f"{type(e).__name__}: {e}",
-                exc_info=True,
+                exc_info=(len(results) == 0),
             )
             continue
 
@@ -112,9 +112,7 @@ def transform_data(db: DatabaseClientProtocol, **context: Any) -> None:
     logger.info(f"Retrieved {len(all_workflow_runs)} workflow runs from temp table")
 
     if all_workflow_runs:
-        # デバッグ: 最初のアイテムのキーを表示
-        if len(all_workflow_runs) > 0:
-            logger.info(f"Sample workflow run keys: {list(all_workflow_runs[0].keys())[:10]}")
+        logger.debug(f"Sample workflow run keys: {list(all_workflow_runs[0].keys())[:10]}")
 
         transformed_runs = _transform_items_with_error_handling(
             items=all_workflow_runs,

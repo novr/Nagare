@@ -12,6 +12,7 @@ GitHub認証設定:
   後方互換: 環境変数 GITHUB_TOKEN でも動作（非推奨）
 """
 
+import logging
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -28,10 +29,20 @@ from nagare.utils.dag_helpers import (
     with_github_client,
 )
 
+logger = logging.getLogger(__name__)
+
 # Connection設定ファイルの読み込み
 connections_file = os.getenv("NAGARE_CONNECTIONS_FILE")
-if connections_file and Path(connections_file).exists():
-    ConnectionRegistry.from_file(connections_file)
+if connections_file:
+    connections_path = Path(connections_file)
+    if connections_path.exists():
+        ConnectionRegistry.from_file(connections_file)
+    else:
+        logger.warning(
+            "NAGARE_CONNECTIONS_FILE is set to '%s' but the file does not exist. "
+            "Connection registry will not be loaded.",
+            connections_file,
+        )
 
 # GitHub Connection ID（Streamlit管理画面で設定）
 # 環境変数 GITHUB_CONNECTION_ID で上書き可能

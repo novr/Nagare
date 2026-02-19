@@ -91,12 +91,12 @@ def _process_items_with_error_handling(
             })
             continue
         except Exception as e:
-            # その他の予期しないエラー
+            # その他の予期しないエラー（初回のみスタックトレースを出力）
             error_msg = (
                 f"Unexpected error while {operation_name.lower()} for {item_desc}: "
                 f"{type(e).__name__}: {e}"
             )
-            logger.error(error_msg, exc_info=True)
+            logger.error(error_msg, exc_info=(error_stats["failed"] == 0))
             error_stats["failed"] += 1
             error_stats["errors"].append({
                 "item": item_desc,
@@ -610,7 +610,7 @@ def _fetch_bitrise_builds_impl(
             logger.info(f"Fetched {len(builds)} builds from {repository_name}")
 
             # リポジトリ情報を追加（transform_dataで必要）
-            owner, repo = repository_name.split("/", 1) if "/" in repository_name else (repository_name, repository_name)
+            # owner/repo は上で解析済みの変数を再利用
             for build in builds:
                 build["repository_id"] = app["id"]
                 build["app_slug"] = app_slug
@@ -626,7 +626,8 @@ def _fetch_bitrise_builds_impl(
 
         except Exception as e:
             error_msg = f"Error fetching builds for {repository_name}: {type(e).__name__}: {e}"
-            logger.error(error_msg, exc_info=True)
+            # 初回のみスタックトレースを出力（大量失敗時のログ肥大化を防ぐ）
+            logger.error(error_msg, exc_info=(error_stats["failed"] == 0))
             error_stats["failed"] += 1
             error_stats["errors"].append({
                 "item": repository_name,
@@ -829,7 +830,8 @@ def _fetch_xcode_cloud_builds_impl(
 
         except Exception as e:
             error_msg = f"Error fetching builds for {repository_name}: {type(e).__name__}: {e}"
-            logger.error(error_msg, exc_info=True)
+            # 初回のみスタックトレースを出力（大量失敗時のログ肥大化を防ぐ）
+            logger.error(error_msg, exc_info=(error_stats["failed"] == 0))
             error_stats["failed"] += 1
             error_stats["errors"].append({
                 "item": repository_name,
