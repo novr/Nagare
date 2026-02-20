@@ -260,6 +260,7 @@ def setup_dashboard(reset: bool = False):
                         "failure_count",
                         "success_rate",
                         "avg_duration_sec",
+                        "total_sec",
                     ],
                     "metrics": [],
                     "row_limit": 10,
@@ -475,6 +476,42 @@ def setup_dashboard(reset: bool = False):
                     "chartsInScope": [x.id for x in slices if x.id != s.id],
                 },
             }
+
+        # Native Filter: リポジトリフィルター（ドロップダウン）
+        metadata["native_filter_configuration"] = [
+            {
+                "id": "NATIVE_FILTER-repository",
+                "name": "Repository",
+                "filterType": "filter_select",
+                "targets": [
+                    {
+                        "datasetId": datasets["v_pipeline_overview"].id,
+                        "column": {"name": "repository_name"},
+                    }
+                ],
+                "defaultDataMask": {
+                    "extraFormData": {},
+                    "filterState": {},
+                    "ownState": {},
+                },
+                "controlValues": {
+                    "enableEmptyFilter": False,
+                    "defaultToFirstItem": False,
+                    "multiSelect": True,
+                    "searchAllOptions": False,
+                    "inverseSelection": False,
+                },
+                "cascadeParentIds": [],
+                "scope": {
+                    "rootPath": ["ROOT_ID"],
+                    "excluded": [],
+                },
+                "isInstant": True,
+                "description": "",
+                "type": "NATIVE_FILTER",
+            }
+        ]
+
         dashboard.json_metadata = json.dumps(metadata)
 
         db.session.commit()

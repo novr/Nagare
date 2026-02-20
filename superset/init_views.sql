@@ -53,9 +53,11 @@ HAVING SUM(CASE WHEN pr.status = 'FAILURE' THEN 1 ELSE 0 END) > 0
 ORDER BY failure_count DESC;
 
 -- 4. ブランチ別成功率（過去30日）
-CREATE OR REPLACE VIEW v_branch_success_rate AS
+DROP VIEW IF EXISTS v_branch_success_rate CASCADE;
+CREATE VIEW v_branch_success_rate AS
 SELECT
-    CASE 
+    r.repository_name,
+    CASE
         WHEN pr.branch_name IN ('main', 'master', 'develop', 'development') THEN pr.branch_name
         WHEN pr.branch_name LIKE 'feature/%' THEN 'feature/*'
         WHEN pr.branch_name LIKE 'fix/%' OR pr.branch_name LIKE 'bugfix/%' THEN 'fix/*'
@@ -67,10 +69,12 @@ SELECT
     SUM(CASE WHEN pr.status = 'SUCCESS' THEN 1 ELSE 0 END) as success_count,
     ROUND((100.0 * SUM(CASE WHEN pr.status = 'SUCCESS' THEN 1 ELSE 0 END) / COUNT(*))::numeric, 1) as success_rate
 FROM pipeline_runs pr
+JOIN repositories r ON pr.repository_id = r.id
 WHERE pr.started_at >= NOW() - INTERVAL '30 days'
   AND pr.branch_name IS NOT NULL
-GROUP BY 
-    CASE 
+GROUP BY
+    r.repository_name,
+    CASE
         WHEN pr.branch_name IN ('main', 'master', 'develop', 'development') THEN pr.branch_name
         WHEN pr.branch_name LIKE 'feature/%' THEN 'feature/*'
         WHEN pr.branch_name LIKE 'fix/%' OR pr.branch_name LIKE 'bugfix/%' THEN 'fix/*'
@@ -85,63 +89,79 @@ ORDER BY total_runs DESC;
 -- ============================================================
 
 -- 5. ソース別サマリー
-CREATE OR REPLACE VIEW v_source_summary AS
+DROP VIEW IF EXISTS v_source_summary CASCADE;
+CREATE VIEW v_source_summary AS
 SELECT
+    r.repository_name,
     pr.source,
     COUNT(*) as total_runs,
     SUM(CASE WHEN pr.status = 'SUCCESS' THEN 1 ELSE 0 END) as success_count,
     SUM(CASE WHEN pr.status = 'FAILURE' THEN 1 ELSE 0 END) as failure_count,
     ROUND((100.0 * SUM(CASE WHEN pr.status = 'SUCCESS' THEN 1 ELSE 0 END) / COUNT(*))::numeric, 1) as success_rate,
-    ROUND((AVG(pr.duration_ms) / 1000.0)::numeric, 1) as avg_duration_sec
+    ROUND((AVG(pr.duration_ms) / 1000.0)::numeric, 1) as avg_duration_sec,
+    ROUND((SUM(pr.duration_ms) / 1000.0)::numeric, 1) as total_sec
 FROM pipeline_runs pr
-GROUP BY pr.source
+JOIN repositories r ON pr.repository_id = r.id
+GROUP BY r.repository_name, pr.source
 ORDER BY total_runs DESC;
 
 -- 6. ソース別日次実行数（縦積みグラフ用）
-CREATE OR REPLACE VIEW v_daily_runs_by_source AS
+DROP VIEW IF EXISTS v_daily_runs_by_source CASCADE;
+CREATE VIEW v_daily_runs_by_source AS
 SELECT
     DATE((pr.started_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Tokyo')) as run_date,
+    r.repository_name,
     pr.source,
     COUNT(*) as run_count,
     SUM(CASE WHEN pr.status = 'SUCCESS' THEN 1 ELSE 0 END) as success_count,
     SUM(CASE WHEN pr.status = 'FAILURE' THEN 1 ELSE 0 END) as failure_count
 FROM pipeline_runs pr
+JOIN repositories r ON pr.repository_id = r.id
 WHERE pr.started_at IS NOT NULL
-GROUP BY DATE((pr.started_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Tokyo')), pr.source
+GROUP BY DATE((pr.started_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Tokyo')), r.repository_name, pr.source
 ORDER BY run_date DESC, pr.source;
 
 -- 7. ソース別成功率トレンド
-CREATE OR REPLACE VIEW v_daily_success_rate_by_source AS
+DROP VIEW IF EXISTS v_daily_success_rate_by_source CASCADE;
+CREATE VIEW v_daily_success_rate_by_source AS
 SELECT
     DATE((pr.started_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Tokyo')) as run_date,
+    r.repository_name,
     pr.source,
     COUNT(*) as total_runs,
     SUM(CASE WHEN pr.status = 'SUCCESS' THEN 1 ELSE 0 END) as success_count,
     ROUND((100.0 * SUM(CASE WHEN pr.status = 'SUCCESS' THEN 1 ELSE 0 END) / COUNT(*))::numeric, 1) as success_rate
 FROM pipeline_runs pr
+JOIN repositories r ON pr.repository_id = r.id
 WHERE pr.started_at IS NOT NULL
-GROUP BY DATE((pr.started_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Tokyo')), pr.source;
+GROUP BY DATE((pr.started_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Tokyo')), r.repository_name, pr.source;
 
 -- 8. ソース別時間帯実行数（縦積みグラフ用）
-CREATE OR REPLACE VIEW v_hourly_runs_by_source AS
+DROP VIEW IF EXISTS v_hourly_runs_by_source CASCADE;
+CREATE VIEW v_hourly_runs_by_source AS
 SELECT
     EXTRACT(HOUR FROM (pr.started_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Tokyo'))::int as hour_of_day,
+    r.repository_name,
     pr.source,
     COUNT(*) as run_count
 FROM pipeline_runs pr
+JOIN repositories r ON pr.repository_id = r.id
 WHERE pr.started_at IS NOT NULL
-GROUP BY EXTRACT(HOUR FROM (pr.started_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Tokyo'))::int, pr.source;
+GROUP BY EXTRACT(HOUR FROM (pr.started_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Tokyo'))::int, r.repository_name, pr.source;
 
 -- 9. ソース別ビルド時間トレンド
-CREATE OR REPLACE VIEW v_daily_duration_by_source AS
+DROP VIEW IF EXISTS v_daily_duration_by_source CASCADE;
+CREATE VIEW v_daily_duration_by_source AS
 SELECT
     DATE((pr.started_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Tokyo')) as run_date,
+    r.repository_name,
     pr.source,
     COUNT(*) as run_count,
     ROUND((AVG(pr.duration_ms) / 1000.0)::numeric, 1) as avg_duration_sec
 FROM pipeline_runs pr
+JOIN repositories r ON pr.repository_id = r.id
 WHERE pr.started_at IS NOT NULL AND pr.duration_ms IS NOT NULL
-GROUP BY DATE((pr.started_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Tokyo')), pr.source;
+GROUP BY DATE((pr.started_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Tokyo')), r.repository_name, pr.source;
 
 -- ============================================================
 -- MTTR（Mean Time To Recovery）ビュー
@@ -182,9 +202,11 @@ GROUP BY repository_name, source
 ORDER BY avg_mttr_minutes DESC;
 
 -- 11. MTTRトレンド（日次）
-CREATE OR REPLACE VIEW v_daily_mttr AS
+DROP VIEW IF EXISTS v_daily_mttr CASCADE;
+CREATE VIEW v_daily_mttr AS
 WITH failure_recovery AS (
     SELECT
+        r.repository_name,
         pr.source,
         DATE((pr.started_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Tokyo')) as failure_date,
         pr.started_at as failure_time,
@@ -197,14 +219,16 @@ WITH failure_recovery AS (
               AND pr2.started_at > pr.started_at
         ) as recovery_time
     FROM pipeline_runs pr
+    JOIN repositories r ON pr.repository_id = r.id
     WHERE pr.status = 'FAILURE'
 )
 SELECT
     failure_date as run_date,
+    repository_name,
     source,
     COUNT(*) as failure_count,
     ROUND(AVG(EXTRACT(EPOCH FROM (recovery_time - failure_time)) / 60)::numeric, 1) as avg_mttr_minutes
 FROM failure_recovery
 WHERE recovery_time IS NOT NULL
-GROUP BY failure_date, source
+GROUP BY failure_date, repository_name, source
 ORDER BY failure_date DESC;
