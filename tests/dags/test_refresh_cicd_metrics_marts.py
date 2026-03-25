@@ -14,5 +14,6 @@ def test_refresh_metrics_dag_structure() -> None:
     assert dag.catchup is False
     assert "metrics" in dag.tags
     assert len(dag.tasks) == 1
-    assert dag.get_task("refresh_marts") is not None
+    task_ids = [t.task_id for t in dag.tasks]
+    assert any(tid.endswith("refresh_marts") for tid in task_ids)
     assert dag.default_args.get("email_on_failure") is False

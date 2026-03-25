@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
+from airflow.utils.task_group import TaskGroup
 
 from nagare.tasks.metrics_mart_refresh import run_metrics_mart_refresh
 
@@ -39,7 +40,16 @@ with DAG(
     catchup=False,
     tags=["metrics", "nagare"],
 ) as dag:
-    PythonOperator(
-        task_id="refresh_marts",
-        python_callable=_refresh_task,
-    )
+    # 増分同期は TEMP テーブルと単一トランザクション前提のため、DB 呼び出しは 1 タスクにまとめる。
+    # 処理フェーズの分割は SQL 側の _metrics_mart_* / refresh_cicd_metrics_marts を参照。
+    with TaskGroup(
+        group_id="cicd_metrics_mart_sync",
+        tooltip=(
+            "refresh_cicd_metrics_marts(FALSE) を 1 トランザクションで実行。"
+            "SQL 内: advisory xact lock → seed → full|incremental → watermark"
+        ),
+    ):
+        PythonOperator(
+            task_id="refresh_marts",
+            python_callable=_refresh_task,
+        )
