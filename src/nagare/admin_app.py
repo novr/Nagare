@@ -319,7 +319,7 @@ if page == "📊 メトリクス (L1/L2)":
                     f"{int(p50)}" if pd.notna(p50) else "N/A",
                 )
 
-            st.markdown("**トレンド（プラットフォーム別 / ALL）**")
+            st.markdown("**トレンド（プラットフォーム別 / ALL）** — 下段は左: 成功率・右: 実行数")
             daily_pf = get_l1_daily_overview_by_platform(days=trend_days)
             if daily_pf.empty:
                 st.info("プラットフォーム別トレンド用データがありません")
@@ -350,30 +350,41 @@ if page == "📊 メトリクス (L1/L2)":
                     pf = daily_pf.copy()
 
                 if not pf.empty:
+                    l1_t_left, l1_t_right = st.columns(2)
                     if l1_mode == "すべて（凡例: 各platform + ALL）":
                         sr = pf.pivot(
                             index="metric_date",
                             columns="platform",
                             values="success_rate_pct",
                         )
-                        st.caption("成功率(%)")
-                        st.line_chart(sr)
                         tr = pf.pivot(
                             index="metric_date",
                             columns="platform",
                             values="total_runs",
                         )
-                        st.caption("実行数")
-                        st.bar_chart(tr)
+                        with l1_t_left:
+                            st.markdown("**L1 成功率トレンド**")
+                            st.caption("成功率(%)")
+                            st.line_chart(sr)
+                        with l1_t_right:
+                            st.markdown("**L1 実行数トレンド**")
+                            st.caption("実行数")
+                            st.bar_chart(tr)
                     else:
-                        st.line_chart(
-                            pf.set_index("metric_date")["success_rate_pct"].rename(
-                                "成功率(%)"
+                        with l1_t_left:
+                            st.markdown("**L1 成功率トレンド**")
+                            st.line_chart(
+                                pf.set_index("metric_date")["success_rate_pct"].rename(
+                                    "成功率(%)"
+                                )
                             )
-                        )
-                        st.bar_chart(
-                            pf.set_index("metric_date")["total_runs"].rename("実行数")
-                        )
+                        with l1_t_right:
+                            st.markdown("**L1 実行数トレンド**")
+                            st.bar_chart(
+                                pf.set_index("metric_date")["total_runs"].rename(
+                                    "実行数"
+                                )
+                            )
 
         st.divider()
         st.subheader("L1 — ヘルス")

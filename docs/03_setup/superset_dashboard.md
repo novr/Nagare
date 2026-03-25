@@ -28,13 +28,17 @@ docker exec -i nagare-postgres psql -U nagare_user -d nagare -c "SELECT refresh_
 
 その後:
 
-1. Supersetにログインして **nagare** データベースへの接続を作成（下記「1.1. データベース接続の追加」参照）。接続の **表示名（Database name）** は `Nagare PostgreSQL` または `nagare` を推奨（`setup_superset_dashboard.py` がこの順で解決します。異なる場合は環境変数 `NAGARE_SUPERSET_DATABASE_NAME` をセット）。
+1. （任意）Superset に手動で接続を作る場合は下記「1.1. データベース接続の追加」。表示名は `Nagare PostgreSQL` または `nagare` を推奨。**`docker compose` の Superset コンテナ**では `.env` の `DATABASE_*` と `DATABASE_HOST=postgres`（compose で上書き）から **`setup_superset_dashboard.py` が接続を自動登録**するため、手順 1 を省略できる。
 2. ダッシュボードを自動作成:
 
 ```bash
 docker cp scripts/setup_superset_dashboard.py nagare-superset:/tmp/setup_superset_dashboard.py
+# compose の DATABASE_HOST 等を変えた直後だけ再作成が必要な場合:
+docker compose up -d superset
 docker exec nagare-superset python3 /tmp/setup_superset_dashboard.py
 ```
+
+（`docker compose up -d superset` とコメントを**同じ行**に書かないでください。シェルによっては `#` が誤って引数になり `no such service: #` になります。）
 
 自動作成されるチャート（L1/L2 向け）：
 - L1: 成功率・実行数トレンド、リポジトリヘルス、悪化リポジトリ
