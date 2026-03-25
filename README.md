@@ -16,7 +16,7 @@ Kent Beck氏の警告「指標が目標になると、それは良い指標で�
   - 組織リポジトリ、ユーザーリポジトリ、キーワード検索に対応
   - ページネーション機能（10/20/30/50件表示）
   - バッチインポート対応
-- **ダッシュボード**: リポジトリ統計と最近のパイプライン実行履歴
+- **メトリクス (L1/L2)**: 日次の全体把握とリポジトリ単位の詳細（メトリクス v2 ビュー）
 - **実行履歴の閲覧**: パイプライン実行のフィルタリングと詳細表示
 
 ### データ収集パイプライン（Airflow）
@@ -26,10 +26,11 @@ Kent Beck氏の警告「指標が目標になると、それは良い指標で�
   - 指数バックオフによる自動リトライ（502/503/504エラー）
   - 部分的失敗時の継続処理とエラー統計記録
 - **冪等性の保証**: UPSERT処理による重複データの防止
+- **メトリクスマート更新**: DAG `refresh_cicd_metrics_marts` で v2 を増分同期（`./scripts/reapply_metrics_dashboard_v2.sh` は全件 `refresh_cicd_metrics_marts(TRUE)`）
 
 ### データ可視化（Superset）
-- CI/CDメトリクスのダッシュボード作成
-- 成功率、実行時間、トレンド分析
+- CI/CDメトリクス v2 ダッシュボード（`cicd-metrics-v2`）
+- 成功率、実行時間、失敗ワークフロー、悪化リポジトリのトレンド
 
 ## 技術スタック
 
@@ -283,29 +284,10 @@ docker-compose exec -T postgres psql -U nagare_user -d nagare < sql/schema.sql
 
 ## Supersetダッシュボードのセットアップ
 
-Supersetにログイン後、以下の手順でダッシュボードを作成できます:
+メトリクス v2（`vw_l1_*` / `vw_l2_*`）。`airflow-init` で DDL・ビュー・初回マート同期まで実行。
 
-1. **データベース接続の追加**
-   - Settings → Database Connections → + Database
-   - PostgreSQLを選択
-   - 接続情報:
-     ```
-     Display Name: Nagare PostgreSQL
-     SQLAlchemy URI: postgresql://nagare_user:your_secure_password_here@postgres:5432/nagare
-     ```
-   - Test Connection → Connect
-
-2. **データセットの追加**
-   - データベースに作成済みのビューを追加:
-     - `v_pipeline_overview` - リポジトリ統計
-     - `v_daily_success_rate` - 日次成功率
-     - `v_pipeline_stats` - パイプライン統計
-     - `v_recent_pipeline_runs` - 最新実行履歴
-     - `v_job_stats` - ジョブ統計
-     - `v_pipeline_runs_by_hour` - 時間帯別パターン
-
-3. **チャートとダッシュボードの作成**
-   - 詳細は [Supersetダッシュボード設定](docs/03_setup/superset_dashboard.md) を参照
+1. [Superset ダッシュボード（v2）](docs/03_setup/superset_dashboard.md) の **クイックセットアップ**どおり `setup_superset_dashboard.py` をコンテナで実行（**DB 接続の自動登録**込み。手動接続はスクリプト失敗時のみ）。
+2. 再適用: `./scripts/reapply_metrics_dashboard_v2.sh`（必要なら `--with-superset`）
 
 ## トラブルシューティング
 
@@ -374,6 +356,7 @@ docker-compose up -d
 - [データモデル](docs/02_design/data_model.md)
 - [DAG設計](docs/02_design/dag_design.md)
 - [実装ガイド](docs/02_design/implementation_guide.md)
+- [CI/CD メトリクスダッシュボード（L1/L2）](docs/02_design/cicd_metrics_dashboard.md)
 
 **セットアップガイド**
 - [データベースセットアップ](docs/03_setup/database_setup.md)
@@ -382,6 +365,7 @@ docker-compose up -d
 
 **運用ガイド**
 - [エラーハンドリング](docs/04_operation/error_handling.md)
+- [メトリクスダッシュボード検証](docs/04_operation/metrics_dashboard_validation.md)
 
 **その他**
 - [用語集](docs/99_glossary.md)
