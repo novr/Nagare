@@ -284,20 +284,10 @@ docker-compose exec -T postgres psql -U nagare_user -d nagare < sql/schema.sql
 
 ## Supersetダッシュボードのセットアップ
 
-メトリクス v2（`vw_l1_*` / `vw_l2_*`）を前提とします。`airflow-init` で DDL・ビュー・マート同期まで実行されます。
+メトリクス v2（`vw_l1_*` / `vw_l2_*`）。`airflow-init` で DDL・ビュー・初回マート同期まで実行。
 
-1. **データベース接続の追加**（初回のみ）
-   - Settings → Database Connections → + Database → PostgreSQL
-   - `Display Name`: Nagare PostgreSQL  
-   - `SQLAlchemy URI`: `postgresql://nagare_user:<DATABASE_PASSWORD>@postgres:5432/nagare`
-   - Test Connection → Connect
-
-2. **ダッシュボードの自動作成**（推奨）
-   - [Supersetダッシュボード設定](docs/03_setup/superset_dashboard.md) のクイックセットアップに従い、`scripts/setup_superset_dashboard.py` をコンテナ内で実行
-   - 公開 URL の例: `/superset/dashboard/cicd-metrics-v2/`
-
-3. **SQL・マート・Superset の再適用**
-   - `./scripts/reapply_metrics_dashboard_v2.sh`（必要なら `--with-superset`）
+1. [Superset ダッシュボード（v2）](docs/03_setup/superset_dashboard.md) の **クイックセットアップ**どおり `setup_superset_dashboard.py` をコンテナで実行（**DB 接続の自動登録**込み。手動接続はスクリプト失敗時のみ）。
+2. 再適用: `./scripts/reapply_metrics_dashboard_v2.sh`（必要なら `--with-superset`）
 
 ## トラブルシューティング
 
@@ -366,6 +356,7 @@ docker-compose up -d
 - [データモデル](docs/02_design/data_model.md)
 - [DAG設計](docs/02_design/dag_design.md)
 - [実装ガイド](docs/02_design/implementation_guide.md)
+- [CI/CD メトリクスダッシュボード（L1/L2）](docs/02_design/cicd_metrics_dashboard.md)
 
 **セットアップガイド**
 - [データベースセットアップ](docs/03_setup/database_setup.md)
@@ -374,6 +365,7 @@ docker-compose up -d
 
 **運用ガイド**
 - [エラーハンドリング](docs/04_operation/error_handling.md)
+- [メトリクスダッシュボード検証](docs/04_operation/metrics_dashboard_validation.md)
 
 **その他**
 - [用語集](docs/99_glossary.md)

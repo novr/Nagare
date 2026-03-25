@@ -26,6 +26,7 @@
 
 - [ ] ダッシュボード `cicd-metrics-v2` が開ける
 - [ ] Native Filter「Repository」で L2 系チャートが絞り込める
+- [ ] Native Filter「L1 Platform」で L1 系（`vw_l1_daily_overview_by_platform` 由来）が期待どおり絞り込める
 
 ## 記録
 

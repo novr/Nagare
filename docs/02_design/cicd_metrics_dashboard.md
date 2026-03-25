@@ -23,8 +23,7 @@
 | KPI | デイリー失敗件数 | `FAILURE` 等の集計 |
 | KPI | 総実行数 | フィルタ内 |
 | シグナル | 実行時間 p50 / p95 | `duration_ms` ベース |
-| シグナル | 再実行率 | `is_retry` の割合（MVPはヒューリスティック） |
-| シグナル | flake 疑い率 | MVP: 0 または簡易（将来拡張） |
+| シグナル | 再実行率 | `is_retry` の割合（ヒューリスティック） |
 
 **閾値（推奨）**: 固定閾値に加え、前日比・直近7日平均からの乖離で警告（実装は集計テーブル＋ビュー）。
 
@@ -44,7 +43,7 @@
 2. KPI 4枚: repo成功率、失敗件数、p95、再実行率
 3. Top failing / Longest workflows
 4. 失敗理由内訳、ステップ失敗ヒートマップ
-5. 再実行・flake傾向、アクション候補
+5. 再実行傾向、アクション候補
 6. 実行一覧テーブル
 
 ## 検証（日次レビュー想定）
@@ -63,5 +62,5 @@
 
 ## スケールとパーティション（将来）
 
-- **増分同期**: `refresh_cicd_metrics_marts(FALSE)` は `pipeline_runs.updated_at` / `jobs.updated_at` と `metrics_mart_sync_state` のウォーターマークで差分のみ反映する。初回・修復は `refresh_cicd_metrics_marts(TRUE)`。
+- **増分同期**: `refresh_cicd_metrics_marts(FALSE)` は `pipeline_runs.updated_at` / `jobs.updated_at` と `metrics_mart_sync_state` のウォーターマークで差分のみ反映する。初回・修復は `refresh_cicd_metrics_marts(TRUE)`。同時実行は DB 側 `pg_try_advisory_xact_lock` で直列化し、取れない実行はウォーターマークを進めず return する。
 - **パーティション**: `fact_pipeline_run` を `started_at` の月次 RANGE で切る案は、保持期間が長く行数・refresh 時間が閾値を超えた段階で検討する（移行コストが大きいため MVP では未実施）。
