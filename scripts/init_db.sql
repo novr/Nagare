@@ -26,6 +26,22 @@ CREATE TABLE IF NOT EXISTS repositories (
     UNIQUE(source_repository_id, source)
 );
 
+-- tagsテーブル（リポジトリへの横串ラベル）
+CREATE TABLE IF NOT EXISTS tags (
+    id BIGSERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    slug VARCHAR(100) NOT NULL UNIQUE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- repository_tagsテーブル（リポジトリとタグの多対多）
+CREATE TABLE IF NOT EXISTS repository_tags (
+    repository_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    tag_id BIGINT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (repository_id, tag_id)
+);
+
 -- pipeline_runsテーブル
 CREATE TABLE IF NOT EXISTS pipeline_runs (
     id BIGSERIAL PRIMARY KEY,
@@ -67,6 +83,9 @@ CREATE INDEX IF NOT EXISTS idx_pipeline_runs_started_at ON pipeline_runs(started
 CREATE INDEX IF NOT EXISTS idx_pipeline_runs_status ON pipeline_runs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_run_id ON jobs(run_id);
 CREATE INDEX IF NOT EXISTS idx_repositories_active ON repositories(active);
+CREATE INDEX IF NOT EXISTS idx_repositories_project_id ON repositories(project_id);
+CREATE INDEX IF NOT EXISTS idx_repository_tags_repository_id ON repository_tags(repository_id);
+CREATE INDEX IF NOT EXISTS idx_repository_tags_tag_id ON repository_tags(tag_id);
 
 -- updated_at自動更新用のトリガー関数
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -90,6 +109,12 @@ CREATE TRIGGER update_repositories_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_tags_updated_at ON tags;
+CREATE TRIGGER update_tags_updated_at
+    BEFORE UPDATE ON tags
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
 DROP TRIGGER IF EXISTS update_pipeline_runs_updated_at ON pipeline_runs;
 CREATE TRIGGER update_pipeline_runs_updated_at
     BEFORE UPDATE ON pipeline_runs
@@ -101,6 +126,15 @@ CREATE TRIGGER update_jobs_updated_at
     BEFORE UPDATE ON jobs
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
+
+-- よく使うタグ（既存行と衝突しない）
+INSERT INTO tags (name, slug) VALUES
+    ('Mobile', 'mobile'),
+    ('Backend', 'backend'),
+    ('iOS', 'ios'),
+    ('Android', 'android'),
+    ('KMP', 'kmp')
+ON CONFLICT (slug) DO NOTHING;
 
 -- 初期データの投入例（コメントアウト）
 -- INSERT INTO repositories (source_repository_id, source, repository_name, active)

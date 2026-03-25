@@ -162,15 +162,39 @@ class TestAdminAppFunctions:
         """リポジトリ一覧の取得"""
         from nagare.admin_db import get_repositories
 
+        get_repositories.clear()
+
         # モックエンジンとコネクションの設定
         mock_engine = MagicMock()
         mock_conn = MagicMock()
         mock_result = MagicMock()
 
-        # モックデータ
+        # モックデータ（DB行: project_name, project_id, tags_display, tag_ids）
         mock_rows = [
-            (1, "owner/repo1", "github_actions", True, "2024-01-01", "2024-01-02"),
-            (2, "owner/repo2", "github_actions", False, "2024-01-01", "2024-01-02"),
+            (
+                1,
+                "owner/repo1",
+                "github_actions",
+                True,
+                "2024-01-01",
+                "2024-01-02",
+                "ProjA",
+                10,
+                "ios, mobile",
+                [1, 2],
+            ),
+            (
+                2,
+                "owner/repo2",
+                "github_actions",
+                False,
+                "2024-01-01",
+                "2024-01-02",
+                None,
+                None,
+                "",
+                None,
+            ),
         ]
         mock_result.fetchall.return_value = mock_rows
 
@@ -189,7 +213,14 @@ class TestAdminAppFunctions:
             "有効",
             "作成日時",
             "更新日時",
+            "プロジェクト",
+            "project_id",
+            "タグ",
+            "tag_ids",
         ]
+        assert df.iloc[0]["タグ"] == "ios, mobile"
+        assert df.iloc[0]["tag_ids"] == [1, 2]
+        assert df.iloc[1]["tag_ids"] == []
 
     @patch("nagare.admin_db.get_database_engine")
     def test_add_repository_new(self, mock_get_engine: MagicMock) -> None:
@@ -380,6 +411,8 @@ class TestAdminAppEdgeCases:
         """リポジトリが0件の場合"""
         from nagare.admin_db import get_repositories
 
+        get_repositories.clear()
+
         mock_engine = MagicMock()
         mock_conn = MagicMock()
         mock_result = MagicMock()
@@ -399,6 +432,10 @@ class TestAdminAppEdgeCases:
             "有効",
             "作成日時",
             "更新日時",
+            "プロジェクト",
+            "project_id",
+            "タグ",
+            "tag_ids",
         ]
 
     @patch("nagare.admin_db.get_database_engine")
@@ -466,3 +503,107 @@ class TestAdminAppEdgeCases:
         success, message = add_repository("invalid_repo_name", "bitrise")
 
         assert success is True
+
+    @patch("nagare.admin_db.get_database_engine")
+    def test_create_tag_success(self, mock_get_engine: MagicMock) -> None:
+        from nagare.admin_db import create_tag, list_tags
+
+        list_tags.clear()
+        mock_engine = MagicMock()
+        mock_conn = MagicMock()
+        mock_engine.begin.return_value.__enter__.return_value = mock_conn
+        mock_get_engine.return_value = mock_engine
+
+        ok, msg = create_tag("KMP", "kmp")
+        assert ok is True
+        assert "追加" in msg
+        mock_conn.execute.assert_called()
+
+    @patch("nagare.admin_db.get_database_engine")
+    def test_create_tag_invalid_slug(self, mock_get_engine: MagicMock) -> None:
+        from nagare.admin_db import create_tag
+
+        mock_get_engine.return_value = MagicMock()
+        ok, msg = create_tag("Bad", "!!!")
+        assert ok is False
+        assert "slug" in msg
+
+    @patch("nagare.admin_db.get_database_engine")
+    def test_create_tag_duplicate_slug(self, mock_get_engine: MagicMock) -> None:
+        from nagare.admin_db import create_tag, list_tags
+        from sqlalchemy.exc import IntegrityError
+
+        list_tags.clear()
+        mock_engine = MagicMock()
+        mock_conn = MagicMock()
+        mock_conn.execute.side_effect = IntegrityError("stmt", {}, None)
+        mock_engine.begin.return_value.__enter__.return_value = mock_conn
+        mock_get_engine.return_value = mock_engine
+
+        ok, msg = create_tag("Mobile", "mobile")
+        assert ok is False
+        assert "既に" in msg
+
+    @patch("nagare.admin_db.get_database_engine")
+    def test_set_repository_tags_dedupes(self, mock_get_engine: MagicMock) -> None:
+        from nagare.admin_db import list_tags, set_repository_tags
+
+        list_tags.clear()
+        mock_engine = MagicMock()
+        mock_conn = MagicMock()
+        mock_engine.begin.return_value.__enter__.return_value = mock_conn
+        mock_get_engine.return_value = mock_engine
+
+        ok, msg = set_repository_tags(1, [2, 3, 2])
+        assert ok is True
+        assert "更新" in msg
+        assert mock_conn.execute.call_count == 3
+
+    @patch("nagare.admin_db.get_database_engine")
+    def test_create_project_success(self, mock_get_engine: MagicMock) -> None:
+        from nagare.admin_db import create_project, list_projects
+
+        list_projects.clear()
+        mock_engine = MagicMock()
+        mock_conn = MagicMock()
+        mock_engine.begin.return_value.__enter__.return_value = mock_conn
+        mock_get_engine.return_value = mock_engine
+
+        ok, msg = create_project("  Alpha  ")
+        assert ok is True
+        assert "Alpha" in msg
+
+    @patch("nagare.admin_db.get_database_engine")
+    def test_delete_project_blocked_when_repos(self, mock_get_engine: MagicMock) -> None:
+        from nagare.admin_db import delete_project, list_projects
+
+        list_projects.clear()
+        mock_engine = MagicMock()
+        mock_conn = MagicMock()
+        mock_cnt = MagicMock()
+        mock_cnt.fetchone.return_value = (2,)
+        mock_conn.execute.return_value = mock_cnt
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+        mock_get_engine.return_value = mock_engine
+
+        ok, msg = delete_project(1)
+        assert ok is False
+        assert "紐づく" in msg
+
+    @patch("nagare.admin_db.get_database_engine")
+    def test_set_repository_project_validates(self, mock_get_engine: MagicMock) -> None:
+        from nagare.admin_db import list_projects, list_tags, set_repository_project
+
+        list_projects.clear()
+        list_tags.clear()
+        mock_engine = MagicMock()
+        mock_conn = MagicMock()
+        mock_conn.execute.side_effect = [
+            MagicMock(fetchone=MagicMock(return_value=None)),
+        ]
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+        mock_get_engine.return_value = mock_engine
+
+        ok, msg = set_repository_project(99, None)
+        assert ok is False
+        assert "見つかりません" in msg

@@ -19,8 +19,52 @@ docker exec -i nagare-postgres psql -U nagare_user -d nagare < scripts/init_db.s
 正常に完了すると、以下のテーブルが作成されます：
 - `projects` - プロジェクト管理
 - `repositories` - リポジトリ管理
+- `tags` / `repository_tags` - リポジトリへの横串タグ（多対多）
 - `pipeline_runs` - パイプライン実行履歴
 - `jobs` - ジョブ実行履歴
+
+### 既存データベースへタグ・インデックスだけ追加する場合
+
+`init_db.sql` をまるごと流さず、以下を **一度だけ** 実行してもよい（`CREATE IF NOT EXISTS` のため重複実行は安全）。
+
+```bash
+docker exec -i nagare-postgres psql -U nagare_user -d nagare <<'SQL'
+CREATE TABLE IF NOT EXISTS tags (
+    id BIGSERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    slug VARCHAR(100) NOT NULL UNIQUE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS repository_tags (
+    repository_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    tag_id BIGINT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (repository_id, tag_id)
+);
+CREATE INDEX IF NOT EXISTS idx_repositories_project_id ON repositories(project_id);
+CREATE INDEX IF NOT EXISTS idx_repository_tags_repository_id ON repository_tags(repository_id);
+CREATE INDEX IF NOT EXISTS idx_repository_tags_tag_id ON repository_tags(tag_id);
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS update_tags_updated_at ON tags;
+CREATE TRIGGER update_tags_updated_at
+    BEFORE UPDATE ON tags
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+INSERT INTO tags (name, slug) VALUES
+    ('Mobile', 'mobile'),
+    ('Backend', 'backend'),
+    ('iOS', 'ios'),
+    ('Android', 'android'),
+    ('KMP', 'kmp')
+ON CONFLICT (slug) DO NOTHING;
+SQL
+```
 
 ## 2. リポジトリの登録
 

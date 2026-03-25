@@ -20,6 +20,10 @@ from sqlalchemy import text
 from nagare.admin_db import (
     _add_repositories_batch,
     add_repository,
+    create_project,
+    create_tag,
+    delete_project,
+    delete_tag,
     fetch_repositories_unified,
     get_all_cicd_connections,
     get_connections,
@@ -27,6 +31,11 @@ from nagare.admin_db import (
     get_recent_pipeline_runs,
     get_registered_repository_names,
     get_repositories,
+    list_projects,
+    list_tags,
+    rename_project,
+    set_repository_project,
+    set_repository_tags,
     test_connection,
     toggle_repository,
 )
@@ -664,18 +673,151 @@ elif page == "📦 リポジトリ管理":
 
     st.divider()
 
+    with st.expander("🏷️ タグマスタ", expanded=False):
+        try:
+            tags_master_df = list_tags()
+            with st.form("create_tag_form"):
+                t_col1, t_col2 = st.columns(2)
+                with t_col1:
+                    new_tag_name = st.text_input("表示名", key="new_tag_name")
+                with t_col2:
+                    new_tag_slug = st.text_input(
+                        "slug",
+                        key="new_tag_slug",
+                        help="英小文字・数字・ハイフン・アンダースコア（先頭は英字または数字）",
+                    )
+                if st.form_submit_button("タグを追加"):
+                    if new_tag_name and new_tag_slug:
+                        ok_t, msg_t = create_tag(new_tag_name, new_tag_slug)
+                        if ok_t:
+                            st.success(msg_t)
+                            st.rerun()
+                        else:
+                            st.warning(msg_t)
+                    else:
+                        st.error("表示名と slug を入力してください")
+            if not tags_master_df.empty:
+                for _, trow in tags_master_df.iterrows():
+                    tc1, tc2 = st.columns([4, 1])
+                    with tc1:
+                        st.caption(f"**{trow['名前']}** (`{trow['slug']}`) — ID: {int(trow['タグID'])}")
+                    with tc2:
+                        tid = int(trow["タグID"])
+                        if st.button("削除", key=f"del_tag_{tid}"):
+                            ok_d, msg_d = delete_tag(tid)
+                            if ok_d:
+                                st.success(msg_d)
+                            else:
+                                st.warning(msg_d)
+                            st.rerun()
+            else:
+                st.caption("タグがまだありません。")
+        except Exception as e:
+            st.error(f"タグマスタ: {e}")
+
+    with st.expander("📁 プロジェクト", expanded=False):
+        try:
+            projects_df = list_projects()
+            with st.form("create_project_form"):
+                new_proj_name = st.text_input("新規プロジェクト名", key="new_proj_name")
+                if st.form_submit_button("プロジェクトを追加"):
+                    if new_proj_name.strip():
+                        ok_p, msg_p = create_project(new_proj_name)
+                        if ok_p:
+                            st.success(msg_p)
+                            st.rerun()
+                        else:
+                            st.warning(msg_p)
+                    else:
+                        st.error("プロジェクト名を入力してください")
+            if not projects_df.empty:
+                for _, prow in projects_df.iterrows():
+                    pid = int(prow["プロジェクトID"])
+                    pc1, pc2, pc3 = st.columns([3, 1, 1])
+                    with pc1:
+                        st.caption(f"**{prow['プロジェクト名']}** (ID: {pid})")
+                    with pc2:
+                        if st.button("削除", key=f"del_proj_{pid}"):
+                            ok_dp, msg_dp = delete_project(pid)
+                            if ok_dp:
+                                st.success(msg_dp)
+                            else:
+                                st.warning(msg_dp)
+                            st.rerun()
+                    with pc3:
+                        with st.expander("名前変更", expanded=False):
+                            np = st.text_input("新しい名前", key=f"rename_proj_{pid}")
+                            if st.button("保存", key=f"save_rename_{pid}"):
+                                if np.strip():
+                                    ok_r, msg_r = rename_project(pid, np)
+                                    if ok_r:
+                                        st.success(msg_r)
+                                        st.rerun()
+                                    else:
+                                        st.warning(msg_r)
+                                else:
+                                    st.error("名前を入力してください")
+            else:
+                st.caption("プロジェクトがまだありません。")
+        except Exception as e:
+            st.error(f"プロジェクト: {e}")
+
     # リポジトリ一覧
     st.subheader("登録済みリポジトリ")
 
     try:
         repos_df = get_repositories()
+        tags_master_df = list_tags()
+        projects_df = list_projects()
+
+        tag_id_to_name: dict[int, str] = {}
+        if not tags_master_df.empty:
+            for _, tr in tags_master_df.iterrows():
+                tag_id_to_name[int(tr["タグID"])] = str(tr["名前"])
+
+        all_tag_ids = list(tag_id_to_name.keys())
+
+        def row_tag_ids(r) -> list[int]:
+            raw = r["tag_ids"]
+            if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+                return []
+            if isinstance(raw, list):
+                return [int(x) for x in raw]
+            return [int(x) for x in list(raw)]
 
         if not repos_df.empty:
             # フィルタ
-            col1, col2 = st.columns([1, 3])
-            with col1:
+            f1, f2, f3, f4 = st.columns([1, 1, 2, 1])
+            with f1:
                 status_filter = st.selectbox(
-                    "ステータスフィルタ", ["すべて", "有効のみ", "無効のみ"]
+                    "ステータス", ["すべて", "有効のみ", "無効のみ"], key="repo_status_f"
+                )
+            with f2:
+                proj_filter_opts = ["すべて", "未所属"]
+                if not projects_df.empty:
+                    proj_filter_opts += [
+                        str(x) for x in projects_df["プロジェクト名"].tolist()
+                    ]
+                project_filter = st.selectbox("プロジェクト", proj_filter_opts, key="repo_proj_f")
+            with f3:
+                if all_tag_ids:
+                    tag_filter_pick = st.multiselect(
+                        "タグで絞り込み",
+                        options=all_tag_ids,
+                        default=[],
+                        format_func=lambda i: tag_id_to_name.get(int(i), str(i)),
+                        key="repo_tags_f",
+                    )
+                else:
+                    tag_filter_pick = []
+                    st.caption("タグマスタにタグがありません")
+            with f4:
+                tag_match = st.radio(
+                    "タグ条件",
+                    ["いずれか一致 (OR)", "すべて一致 (AND)"],
+                    horizontal=True,
+                    key="repo_tag_match",
+                    disabled=not all_tag_ids,
                 )
 
             if status_filter == "有効のみ":
@@ -683,17 +825,49 @@ elif page == "📦 リポジトリ管理":
             elif status_filter == "無効のみ":
                 repos_df = repos_df[~repos_df["有効"]]
 
-            st.caption(f"全{len(repos_df)}件")
+            if project_filter == "未所属":
+                repos_df = repos_df[repos_df["project_id"].isna()]
+            elif project_filter != "すべて":
+                match_pid = projects_df.loc[
+                    projects_df["プロジェクト名"] == project_filter, "プロジェクトID"
+                ]
+                if not match_pid.empty:
+                    pid_val = int(match_pid.iloc[0])
+                    repos_df = repos_df[repos_df["project_id"] == pid_val]
+
+            if tag_filter_pick:
+                want = [int(x) for x in tag_filter_pick]
+                use_and = tag_match.startswith("すべて")
+
+                def _tag_mask(r) -> bool:
+                    have = set(row_tag_ids(r))
+                    if use_and:
+                        return all(t in have for t in want)
+                    return any(t in have for t in want)
+
+                repos_df = repos_df[repos_df.apply(_tag_mask, axis=1)]
+
+            st.caption(f"表示 {len(repos_df)} 件")
+
+            proj_options: list[tuple[str, int | None]] = [("— 未所属 —", None)]
+            if not projects_df.empty:
+                for _, pr in projects_df.iterrows():
+                    proj_options.append((str(pr["プロジェクト名"]), int(pr["プロジェクトID"])))
 
             # リポジトリ一覧表示と操作
             for _idx, row in repos_df.iterrows():
                 with st.container():
+                    rid = int(row["ID"])
                     col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
 
                     with col1:
                         status_icon = "✅" if row["有効"] else "⚪"
                         st.markdown(f"**{status_icon} {row['リポジトリ名']}**")
-                        st.caption(f"ID: {row['ID']} | ソース: {row['ソース']}")
+                        st.caption(f"ID: {rid} | ソース: {row['ソース']}")
+                        if row["プロジェクト"] or row["タグ"]:
+                            st.caption(
+                                f"プロジェクト: {row['プロジェクト'] or '—'} | タグ: {row['タグ'] or '—'}"
+                            )
 
                     with col2:
                         st.caption(f"作成: {row['作成日時'].strftime('%Y-%m-%d %H:%M')}")
@@ -703,23 +877,68 @@ elif page == "📦 リポジトリ管理":
 
                     with col4:
                         if row["有効"]:
-                            if st.button("無効化", key=f"disable_{row['ID']}"):
+                            if st.button("無効化", key=f"disable_{rid}"):
                                 try:
-                                    success, message = toggle_repository(
-                                        row["ID"], False
-                                    )
+                                    success, message = toggle_repository(rid, False)
                                     st.success(message)
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"エラー: {e}")
                         else:
-                            if st.button("有効化", key=f"enable_{row['ID']}"):
+                            if st.button("有効化", key=f"enable_{rid}"):
                                 try:
-                                    success, message = toggle_repository(row["ID"], True)
+                                    success, message = toggle_repository(rid, True)
                                     st.success(message)
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"エラー: {e}")
+
+                    cur_pid = row["project_id"]
+                    if pd.isna(cur_pid):
+                        cur_pid = None
+                    else:
+                        cur_pid = int(cur_pid)
+                    cur_indices = [i for i, (_, p) in enumerate(proj_options) if p == cur_pid]
+                    proj_index = cur_indices[0] if cur_indices else 0
+
+                    with st.form(key=f"repo_assoc_{rid}"):
+                        fc1, fc2 = st.columns(2)
+                        with fc1:
+                            sel_proj_i = st.selectbox(
+                                "プロジェクト",
+                                range(len(proj_options)),
+                                index=proj_index,
+                                format_func=lambda i: proj_options[i][0],
+                                key=f"sel_proj_{rid}",
+                            )
+                        with fc2:
+                            cur_tags = row_tag_ids(row)
+                            if all_tag_ids:
+                                sel_tag_ids = st.multiselect(
+                                    "タグ",
+                                    options=all_tag_ids,
+                                    default=cur_tags,
+                                    format_func=lambda i: tag_id_to_name.get(int(i), str(i)),
+                                    key=f"sel_tags_{rid}",
+                                )
+                            else:
+                                sel_tag_ids = []
+                                st.caption("タグ未登録（上のタグマスタから追加）")
+                        if st.form_submit_button("プロジェクト・タグを保存"):
+                            new_p = proj_options[sel_proj_i][1]
+                            ok_a, msg_a = set_repository_project(rid, new_p)
+                            if not ok_a:
+                                st.warning(msg_a)
+                            ok_b, msg_b = set_repository_tags(
+                                rid, [int(x) for x in sel_tag_ids]
+                            )
+                            if not ok_b:
+                                st.warning(msg_b)
+                            if ok_a and ok_b:
+                                st.success("保存しました")
+                                st.rerun()
+                            elif ok_a or ok_b:
+                                st.rerun()
 
                     st.divider()
         else:
