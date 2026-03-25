@@ -178,9 +178,8 @@ services:
       SUPERSET_ADMIN_EMAIL: ${SUPERSET_ADMIN_EMAIL:-admin@example.com}
       SUPERSET_ADMIN_FIRSTNAME: ${SUPERSET_ADMIN_FIRSTNAME:-Admin}
       SUPERSET_ADMIN_LASTNAME: ${SUPERSET_ADMIN_LASTNAME:-User}
-      # setup_superset_dashboard.py が Nagare アプリ DB を自動登録するときの接続先（.env の localhost を上書き）
+      # .env の DATABASE_HOST=localhost だとコンテナから nagare DB に届かないため上書き（ポートはサービス内 5432 固定）
       DATABASE_HOST: postgres
-      # コンテナ間は postgres サービスの 5432（ホスト側の DATABASE_PORT マッピングとは別）
       DATABASE_PORT: "5432"
     ports:
       - "${SUPERSET_PORT:-8088}:8088"

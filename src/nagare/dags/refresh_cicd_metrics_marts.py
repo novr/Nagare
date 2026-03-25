@@ -1,9 +1,3 @@
-"""メトリクスマート v2 の日次（または随時）リフレッシュ DAG。
-
-collect_* DAG で取り込んだ pipeline_runs / jobs を
-fact_pipeline_run / agg_daily_repo_metrics 等へ同期する。
-"""
-
 from __future__ import annotations
 
 import logging
@@ -40,8 +34,7 @@ with DAG(
     catchup=False,
     tags=["metrics", "nagare"],
 ) as dag:
-    # 増分同期は TEMP テーブルと単一トランザクション前提のため、DB 呼び出しは 1 タスクにまとめる。
-    # 処理フェーズの分割は SQL 側の _metrics_mart_* / refresh_cicd_metrics_marts を参照。
+    # 増分は TEMP + 単一トランザクションのためタスク分割できない（フェーズは SQL の _metrics_mart_*）
     with TaskGroup(
         group_id="cicd_metrics_mart_sync",
         tooltip=(

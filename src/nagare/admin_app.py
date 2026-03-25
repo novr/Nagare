@@ -319,7 +319,7 @@ if page == "📊 メトリクス (L1/L2)":
                     f"{int(p50)}" if pd.notna(p50) else "N/A",
                 )
 
-            st.markdown("**トレンド（プラットフォーム別 / ALL）** — 下段は左: 成功率・右: 実行数")
+            st.markdown("**トレンド（プラットフォーム別 / ALL）**")
             daily_pf = get_l1_daily_overview_by_platform(days=trend_days)
             if daily_pf.empty:
                 st.info("プラットフォーム別トレンド用データがありません")

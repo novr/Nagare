@@ -1,16 +1,9 @@
 #!/usr/bin/env python3
 """Superset CI/CD メトリクス v2 ダッシュボード自動セットアップ
 
-使用方法:
     docker cp scripts/setup_superset_dashboard.py nagare-superset:/tmp/setup_superset_dashboard.py
     docker exec nagare-superset python3 /tmp/setup_superset_dashboard.py
     docker exec nagare-superset python3 /tmp/setup_superset_dashboard.py --reset
-
-前提:
-    - nagare DB に metrics v2 のビューが作成済み
-    - Superset に PostgreSQL (nagare) 接続が無い場合、環境変数から自動登録する
-      （`NAGARE_APP_SQLALCHEMY_URI` または DATABASE_USER / DATABASE_PASSWORD / DATABASE_NAME。
-      Docker Compose では `env_file: .env` で足りる。ホスト省略時は postgres:5432）
 """
 
 from __future__ import annotations
@@ -54,7 +47,6 @@ def _nid(prefix: str) -> str:
 
 
 def _nagare_sqlalchemy_uri_from_env() -> str | None:
-    """Compose / .env から Nagare アプリ DB の SQLAlchemy URI を組み立てる。"""
     uri = (os.environ.get("NAGARE_APP_SQLALCHEMY_URI") or "").strip()
     if uri:
         return uri
@@ -73,7 +65,6 @@ def _nagare_sqlalchemy_uri_from_env() -> str | None:
 
 
 def _get_or_create_nagare_database(db, database_cls: type[Any]) -> Any:
-    """表示名で既存を検索し、無ければ URI から Database 行を作成する。"""
     env_db = os.environ.get("NAGARE_SUPERSET_DATABASE_NAME")
     candidates = [c for c in (env_db, "Nagare PostgreSQL", "nagare") if c]
     database = None
@@ -107,7 +98,7 @@ def _get_or_create_nagare_database(db, database_cls: type[Any]) -> Any:
 
 
 def _build_cicd_metrics_position_json(slices_by_name: Mapping[str, Any]) -> str:
-    """Superset 3.x 用 position_json（L1 トレンド→ヘルス→L2 2列→L2 3列）。"""
+    # Dashboard v2 のネスト JSON（3.1 系）。CHART/COLUMN の parents 連鎖が崩れると UI が壊れる。
     root = "ROOT_ID"
     grid = "GRID_ID"
 
@@ -121,7 +112,6 @@ def _build_cicd_metrics_position_json(slices_by_name: Mapping[str, Any]) -> str:
     grid_rows: list[str] = []
 
     def append_row_with_charts(pairs: list[tuple[str, int]]) -> None:
-        """pairs: (slice_title, width_12)."""
         row_id = _nid("ROW")
         grid_rows.append(row_id)
         chart_ids: list[str] = []
@@ -150,16 +140,13 @@ def _build_cicd_metrics_position_json(slices_by_name: Mapping[str, Any]) -> str:
             "meta": {"background": "BACKGROUND_TRANSPARENT"},
         }
 
-    # L1 トレンド（2列）
     append_row_with_charts(
         [("L1成功率トレンド", 6), ("L1実行数トレンド", 6)]
     )
-    # L1 ヘルス（2列）
     append_row_with_charts(
         [("L1リポジトリヘルス", 6), ("L1悪化リポジトリ", 6)]
     )
 
-    # L2: トレンド | ワークフロー（右は COLUMN で2チャート縦積み）
     row_l2 = _nid("ROW")
     grid_rows.append(row_l2)
     col_left = _nid("COLUMN")
@@ -233,7 +220,6 @@ def _build_cicd_metrics_position_json(slices_by_name: Mapping[str, Any]) -> str:
         "meta": {"background": "BACKGROUND_TRANSPARENT"},
     }
 
-    # L2 失敗 | 再実行 | アクション（3列）
     append_row_with_charts(
         [
             ("L2失敗理由内訳", 4),
@@ -279,7 +265,7 @@ def setup_dashboard(reset: bool = False) -> None:
             table = SqlaTable(
                 table_name=view_name, database_id=database.id, schema="public"
             )
-            # flush 中に SqlaTable が Database を遅延ロードすると SAWarning になるため明示代入
+            # flush 内で SqlaTable が Database を遅延ロードすると SAWarning になる
             table.database = database
             db.session.add(table)
             db.session.commit()
@@ -602,9 +588,7 @@ def setup_dashboard(reset: bool = False) -> None:
         slices_by_name = {s.slice_name: s for s in slices}
         try:
             dashboard.position_json = _build_cicd_metrics_position_json(slices_by_name)
-            print(
-                "position_json 適用: L1=成功率トレンド|実行数トレンド, L1ヘルス, L2 2列/3列"
-            )
+            print("position_json を適用しました")
         except KeyError as missing:
             print(f"WARN: position_json をスキップ（チャート未定義: {missing})")
 
@@ -696,7 +680,6 @@ def setup_dashboard(reset: bool = False) -> None:
         print("完了")
         print("=" * 60)
         print(f"\nダッシュボードURL:\n  http://localhost:8088/superset/dashboard/{dashboard.slug}/")
-        print("\nレイアウトは position_json で更新済み。手動調整は Superset 編集画面から。")
 
 
 if __name__ == "__main__":

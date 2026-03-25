@@ -1,11 +1,6 @@
--- メトリクスマートの同期（repositories / pipeline_runs / jobs → v2 スキーマ）
--- 冪等: 何度実行してもよい。
--- 増分: SELECT refresh_cicd_metrics_marts(); または refresh_cicd_metrics_marts(FALSE);
--- 全件: SELECT refresh_cicd_metrics_marts(TRUE);  （初回・修復・docker init 用）
--- 同時実行: refresh_cicd_metrics_marts 先頭で pg_try_advisory_xact_lock（クラス 873592201 / キー 20250324）。
---   取得できない場合は NOTICE のみで return（ウォーターマークは進めない）。
-
--- 既存 DB: flake 列を削除（新規スキーマでは無い）
+-- 増分: refresh_cicd_metrics_marts(FALSE)、全件: (TRUE)（初回・修復・init）
+-- 同時実行: pg_try_advisory_xact_lock(873592201,20250324)。未取得は NOTICE のみ return（ウォーターマーク不更新）
+-- レガシー列のみ除去（新規 DDL には無い）
 ALTER TABLE agg_daily_repo_metrics DROP COLUMN IF EXISTS flake_suspect_rate;
 
 CREATE TABLE IF NOT EXISTS metrics_mart_sync_state (
@@ -17,10 +12,6 @@ CREATE TABLE IF NOT EXISTS metrics_mart_sync_state (
 
 INSERT INTO metrics_mart_sync_state (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
 
--- ---------------------------------------------------------------------------
--- 同期関数（refresh_cicd_metrics_marts エントリ + 内部 _metrics_mart_* 分割）
--- 多重実行: pg_try_advisory_xact_lock（トランザクション終了で解放）。取得できなければ NOTICE のみで return。
--- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION _metrics_mart_seed_reference_dims()
 RETURNS void
 LANGUAGE plpgsql
