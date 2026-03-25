@@ -156,7 +156,6 @@ SELECT
     a.p95_duration_ms,
     a.retry_runs,
     a.retry_rate AS retry_rate_pct,
-    a.flake_suspect_rate AS flake_suspect_rate_pct,
     a.computed_at
 FROM agg_daily_repo_metrics AS a
 INNER JOIN dim_repo AS d ON d.repo_id = a.repo_id;
@@ -253,7 +252,7 @@ GROUP BY
     s.step_name;
 
 -- ---------------------------------------------------------------------------
--- L2: 再実行・flake 傾向（日次）
+-- L2: 再実行率（日次）
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE VIEW vw_l2_retry_flake_trend AS
 SELECT
@@ -264,8 +263,7 @@ SELECT
     ROUND(
         100.0 * SUM(CASE WHEN f.is_retry THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0),
         2
-    ) AS retry_rate_pct,
-    0::numeric(6, 2) AS flake_suspect_rate_pct
+    ) AS retry_rate_pct
 FROM fact_pipeline_run AS f
 INNER JOIN dim_repo AS d ON d.repo_id = f.repo_id
 WHERE f.started_at >= NOW() - INTERVAL '90 days'

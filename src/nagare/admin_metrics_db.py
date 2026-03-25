@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
@@ -12,8 +13,8 @@ from nagare.admin_db import get_database_engine
 
 
 def _jst_today() -> date:
-    """テスト容易性のため UTC 基準の今日（UI は日付フィルタで補正）。"""
-    return date.today()
+    """集約ビュー（JST 日付）と揃えた「今日」。"""
+    return datetime.now(ZoneInfo("Asia/Tokyo")).date()
 
 
 @st.cache_data(ttl=60)
@@ -106,7 +107,7 @@ def get_l2_repo_trend(repo_full_name: str, days: int = 30) -> pd.DataFrame:
         """
         SELECT metric_date, total_runs, success_runs, failed_runs,
                success_rate_pct, p50_duration_ms, p95_duration_ms,
-               retry_runs, retry_rate_pct, flake_suspect_rate_pct, computed_at
+               retry_runs, retry_rate_pct, computed_at
         FROM vw_l2_repo_trend
         WHERE repo_full_name = :repo AND metric_date >= :start
         ORDER BY metric_date ASC
@@ -188,7 +189,7 @@ def get_l2_retry_flake_trend(repo_full_name: str, days: int = 90) -> pd.DataFram
     start = _jst_today() - timedelta(days=days)
     q = text(
         """
-        SELECT run_date, total_runs, retry_runs, retry_rate_pct, flake_suspect_rate_pct
+        SELECT run_date, total_runs, retry_runs, retry_rate_pct
         FROM vw_l2_retry_flake_trend
         WHERE repo_full_name = :repo AND run_date >= :start
         ORDER BY run_date ASC

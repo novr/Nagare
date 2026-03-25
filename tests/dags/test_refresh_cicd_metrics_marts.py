@@ -15,3 +15,4 @@ def test_refresh_metrics_dag_structure() -> None:
     assert "metrics" in dag.tags
     assert len(dag.tasks) == 1
     assert dag.get_task("refresh_marts") is not None
+    assert dag.default_args.get("email_on_failure") is False

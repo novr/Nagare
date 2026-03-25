@@ -1,6 +1,6 @@
 """CI/CD メトリクスマート（v2）のリフレッシュタスク。
 
-PostgreSQL の refresh_cicd_metrics_marts() を実行する。
+PostgreSQL の refresh_cicd_metrics_marts(FALSE)（増分）を実行する。
 スキーマ・関数定義は scripts/*.sql で適用する。
 """
 
@@ -20,5 +20,5 @@ def run_metrics_mart_refresh() -> None:
     db_conn = ConnectionRegistry.get_database()
     engine = create_engine(db_conn.url, pool_pre_ping=True)
     with engine.begin() as conn:
-        conn.execute(text("SELECT refresh_cicd_metrics_marts()"))
-    logger.info("refresh_cicd_metrics_marts() completed")
+        conn.execute(text("SELECT refresh_cicd_metrics_marts(FALSE)"))
+    logger.info("refresh_cicd_metrics_marts(FALSE) completed")

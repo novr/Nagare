@@ -96,9 +96,20 @@ CREATE TABLE IF NOT EXISTS agg_daily_repo_metrics (
     p95_duration_ms BIGINT,
     retry_runs INT NOT NULL DEFAULT 0,
     retry_rate NUMERIC(6, 2),
-    flake_suspect_rate NUMERIC(6, 2),
     computed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (metric_date, repo_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_agg_daily_repo_metrics_date ON agg_daily_repo_metrics (metric_date DESC);
+
+-- ---------------------------------------------------------------------------
+-- 増分 refresh 用ウォーターマーク（1 行のみ id=1）
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS metrics_mart_sync_state (
+    id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    last_pipeline_updated_at TIMESTAMPTZ,
+    last_job_updated_at TIMESTAMPTZ,
+    row_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO metrics_mart_sync_state (id) VALUES (1) ON CONFLICT (id) DO NOTHING;

@@ -5,7 +5,7 @@
 ## 事前条件
 
 - [ ] `scripts/metrics_dashboard_v2_schema.sql` / `*_refresh.sql` / `*_views.sql` が適用済み
-- [ ] `SELECT refresh_cicd_metrics_marts();` または DAG `refresh_cicd_metrics_marts` が成功している
+- [ ] DAG `refresh_cicd_metrics_marts`（増分）または `SELECT refresh_cicd_metrics_marts();` が成功している（初回・修復時は `TRUE`）
 - [ ] `pipeline_runs` に対象期間のデータがある
 
 ## L1（全体把握）

@@ -7,7 +7,6 @@ fact_pipeline_run / agg_daily_repo_metrics 等へ同期する。
 from __future__ import annotations
 
 import logging
-import os
 from datetime import datetime, timedelta
 
 from airflow import DAG
@@ -20,8 +19,7 @@ logger = logging.getLogger(__name__)
 default_args = {
     "owner": "nagare",
     "depends_on_past": False,
-    "email": os.getenv("AIRFLOW_ALERT_EMAIL", "admin@example.com"),
-    "email_on_failure": True,
+    "email_on_failure": False,
     "email_on_retry": False,
     "retries": 2,
     "retry_delay": timedelta(minutes=3),

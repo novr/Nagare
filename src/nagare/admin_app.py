@@ -296,7 +296,7 @@ if page == "📊 メトリクス (L1/L2)":
 
         trend_days = st.slider("トレンド表示日数", min_value=7, max_value=90, value=30, step=1)
 
-        st.subheader("L1 — 全体把握")
+        st.subheader("L1 — トレンド")
         daily = get_l1_daily_overview(days=trend_days)
         if daily.empty:
             st.warning(
@@ -376,14 +376,14 @@ if page == "📊 メトリクス (L1/L2)":
                         )
 
         st.divider()
-        st.subheader("L1 — リポジトリヘルス（直近7日）")
+        st.subheader("L1 — ヘルス")
         health = get_l1_repo_health()
         if not health.empty:
             st.dataframe(health, use_container_width=True, hide_index=True)
         else:
             st.info("ヘルスデータなし")
 
-        st.subheader("L1 — 悪化フラグ付きリポジトリ")
+        st.markdown("**悪化フラグ付きリポジトリ**")
         det = get_l1_repo_deterioration()
         if not det.empty:
             st.dataframe(det, use_container_width=True, hide_index=True)
@@ -398,10 +398,9 @@ if page == "📊 メトリクス (L1/L2)":
         else:
             selected_repo = st.selectbox("リポジトリを選択", repos, key="metrics_repo_l2")
             if selected_repo:
-                ttab1, ttab2, ttab3, ttab4 = st.tabs(
-                    ["トレンド", "ワークフロー", "ステップ/理由", "アクション候補"]
-                )
-                with ttab1:
+                l2c1, l2c2 = st.columns(2)
+                with l2c1:
+                    st.markdown("**L2 トレンド**")
                     tr = get_l2_repo_trend(selected_repo, days=trend_days)
                     if not tr.empty:
                         st.line_chart(
@@ -414,42 +413,54 @@ if page == "📊 メトリクス (L1/L2)":
                                 }
                             )
                         )
-                        st.dataframe(tr, use_container_width=True, hide_index=True)
+                        with st.expander("日次データ（表）", expanded=False):
+                            st.dataframe(tr, use_container_width=True, hide_index=True)
                     else:
                         st.info("このリポジトリの日次トレンドがありません")
-                with ttab2:
-                    st.markdown("**失敗の多いワークフロー**")
+                with l2c2:
+                    st.markdown("**L2 ワークフロー**")
+                    st.caption("失敗の多いワークフロー")
                     st.dataframe(
                         get_l2_workflow_fail_top(selected_repo),
                         use_container_width=True,
                         hide_index=True,
                     )
-                    st.markdown("**実行時間の長いワークフロー**")
+                    st.caption("実行時間の長いワークフロー")
                     st.dataframe(
                         get_l2_workflow_duration_top(selected_repo),
                         use_container_width=True,
                         hide_index=True,
                     )
-                with ttab3:
-                    st.markdown("**失敗理由内訳**")
+
+                l2b1, l2b2, l2b3 = st.columns(3)
+                with l2b1:
+                    st.markdown("**L2 失敗**")
+                    st.caption("失敗理由内訳")
                     st.dataframe(
                         get_l2_failure_reason_breakdown(selected_repo),
                         use_container_width=True,
                         hide_index=True,
                     )
-                    st.markdown("**ステップ失敗**")
+                    st.caption("ステップ失敗")
                     st.dataframe(
                         get_l2_step_failure_heatmap(selected_repo),
                         use_container_width=True,
                         hide_index=True,
                     )
-                    st.markdown("**再実行率**")
-                    st.dataframe(
-                        get_l2_retry_flake_trend(selected_repo),
-                        use_container_width=True,
-                        hide_index=True,
-                    )
-                with ttab4:
+                with l2b2:
+                    st.markdown("**L2 再実行**")
+                    rtry = get_l2_retry_flake_trend(selected_repo)
+                    if not rtry.empty:
+                        st.line_chart(
+                            rtry.set_index("run_date")["retry_rate_pct"].rename(
+                                "再実行率(%)"
+                            )
+                        )
+                        st.dataframe(rtry, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("再実行トレンドデータがありません")
+                with l2b3:
+                    st.markdown("**L2 アクション**")
                     st.dataframe(
                         get_l2_action_candidates(selected_repo),
                         use_container_width=True,

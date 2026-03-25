@@ -37,10 +37,6 @@ if ! docker ps --format '{{.Names}}' | grep -qx "$POSTGRES_CONTAINER"; then
   exit 1
 fi
 
-echo "==> Dropping legacy Superset views (if any)..."
-docker exec -i "$POSTGRES_CONTAINER" psql -U "$DATABASE_USER" -d "$DATABASE_NAME" -v ON_ERROR_STOP=1 \
-  <"$ROOT/scripts/metrics_dashboard_drop_legacy_views.sql"
-
 echo "==> Applying metrics v2 SQL (schema, refresh function, views)..."
 for f in metrics_dashboard_v2_schema.sql metrics_dashboard_v2_refresh.sql metrics_dashboard_v2_views.sql; do
   echo "    ... $f"
@@ -48,9 +44,9 @@ for f in metrics_dashboard_v2_schema.sql metrics_dashboard_v2_refresh.sql metric
     <"$ROOT/scripts/$f"
 done
 
-echo "==> Running refresh_cicd_metrics_marts()..."
+echo "==> Running refresh_cicd_metrics_marts(TRUE) (full)..."
 docker exec -i "$POSTGRES_CONTAINER" psql -U "$DATABASE_USER" -d "$DATABASE_NAME" -v ON_ERROR_STOP=1 \
-  -c "SELECT refresh_cicd_metrics_marts();"
+  -c "SELECT refresh_cicd_metrics_marts(TRUE);"
 
 if [[ "$WITH_SUPERSET" == true ]]; then
   if ! docker ps --format '{{.Names}}' | grep -qx "$SUPERSET_CONTAINER"; then

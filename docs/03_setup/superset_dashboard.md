@@ -13,19 +13,22 @@ Supersetを使用して、GitHub Actionsから収集したデータを可視化�
 
 ## クイックセットアップ（自動・メトリクス v2）
 
-`docker compose` の `airflow-init` で、旧 Superset 用ビューの削除（`scripts/metrics_dashboard_drop_legacy_views.sql`）のあとメトリクス v2 の SQL が適用されます（`scripts/metrics_dashboard_v2_*.sql`）。手動で適用する場合:
+`docker compose` の `airflow-init` でメトリクス v2 の SQL が適用され、初回は **`refresh_cicd_metrics_marts(TRUE)`**（全件同期）が実行されます（`scripts/metrics_dashboard_v2_*.sql`）。手動で適用する場合:
 
 ```bash
-docker exec -i nagare-postgres psql -U nagare_user -d nagare < scripts/metrics_dashboard_drop_legacy_views.sql
 docker exec -i nagare-postgres psql -U nagare_user -d nagare < scripts/metrics_dashboard_v2_schema.sql
 docker exec -i nagare-postgres psql -U nagare_user -d nagare < scripts/metrics_dashboard_v2_refresh.sql
 docker exec -i nagare-postgres psql -U nagare_user -d nagare < scripts/metrics_dashboard_v2_views.sql
-docker exec -i nagare-postgres psql -U nagare_user -d nagare -c "SELECT refresh_cicd_metrics_marts();"
+docker exec -i nagare-postgres psql -U nagare_user -d nagare -c "SELECT refresh_cicd_metrics_marts(TRUE);"
 ```
+
+増分のみ（通常運用・Airflow DAG と同じ）: `SELECT refresh_cicd_metrics_marts();` または `SELECT refresh_cicd_metrics_marts(FALSE);`。バックフィルや不整合修復時は `TRUE`。
+
+旧 `v_*` ビューが DB に残っている場合のみ、任意で手動 `DROP VIEW`（自動実行はしません）。
 
 その後:
 
-1. Supersetにログインして **nagare** データベースへの接続を作成（下記「1.1. データベース接続の追加」参照）
+1. Supersetにログインして **nagare** データベースへの接続を作成（下記「1.1. データベース接続の追加」参照）。接続の **表示名（Database name）** は `Nagare PostgreSQL` または `nagare` を推奨（`setup_superset_dashboard.py` がこの順で解決します。異なる場合は環境変数 `NAGARE_SUPERSET_DATABASE_NAME` をセット）。
 2. ダッシュボードを自動作成:
 
 ```bash
@@ -39,7 +42,7 @@ docker exec nagare-superset python3 /tmp/setup_superset_dashboard.py
 
 ダッシュボードURL: http://localhost:8088/superset/dashboard/cicd-metrics-v2/
 
-データ更新は Airflow DAG `refresh_cicd_metrics_marts`（毎時）または `SELECT refresh_cicd_metrics_marts();` で行います。
+データ更新は Airflow DAG `refresh_cicd_metrics_marts`（毎時・増分）または `SELECT refresh_cicd_metrics_marts();` で行います。
 
 L1 の成功率・実行数トレンドは **`vw_l1_daily_overview_by_platform`** 由来で、系列は `github_actions` / `bitrise` / `xcode_cloud` 等と **`ALL`（全体合計）** です。フィルタ **「L1 Platform (ALL / 個別)」** で絞り込み、空欄ですべて表示できます。
 

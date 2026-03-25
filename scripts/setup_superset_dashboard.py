@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 
 MANAGED_CHARTS = [
@@ -54,9 +55,23 @@ def setup_dashboard(reset: bool = False) -> None:
         from superset.models.dashboard import Dashboard
         from superset.models.slice import Slice
 
-        database = db.session.query(Database).first()
+        env_db = os.environ.get("NAGARE_SUPERSET_DATABASE_NAME")
+        candidates = [c for c in (env_db, "Nagare PostgreSQL", "nagare") if c]
+        database = None
+        for name in candidates:
+            database = (
+                db.session.query(Database)
+                .filter(Database.database_name == name)
+                .one_or_none()
+            )
+            if database:
+                break
         if not database:
-            print("ERROR: データベース接続が見つかりません")
+            print(
+                "ERROR: Nagare 用 Database が見つかりません。"
+                " Superset の接続表示名を NAGARE_SUPERSET_DATABASE_NAME に合わせるか、"
+                " 'Nagare PostgreSQL' / 'nagare' で登録してください。"
+            )
             sys.exit(1)
 
         print(f"Using Database: {database.database_name} (ID: {database.id})")
@@ -78,8 +93,16 @@ def setup_dashboard(reset: bool = False) -> None:
             db.session.commit()
             print(f"CREATED: {view_name} (ID: {table.id})")
 
-        print("\n=== Syncing dataset columns ===")
-        for table in db.session.query(SqlaTable).all():
+        print("\n=== Syncing dataset columns (v2 views only) ===")
+        v2_tables = (
+            db.session.query(SqlaTable)
+            .filter(
+                SqlaTable.database_id == database.id,
+                SqlaTable.table_name.in_(VIEW_DATASETS),
+            )
+            .all()
+        )
+        for table in v2_tables:
             try:
                 table.fetch_metadata()
                 print(f"Synced: {table.table_name}")
@@ -87,7 +110,12 @@ def setup_dashboard(reset: bool = False) -> None:
                 print(f"Error syncing {table.table_name}: {e}")
         db.session.commit()
 
-        datasets = {t.table_name: t for t in db.session.query(SqlaTable).all()}
+        datasets = {
+            t.table_name: t
+            for t in db.session.query(SqlaTable).filter(
+                SqlaTable.database_id == database.id
+            )
+        }
 
         def _ds(name: str) -> SqlaTable | None:
             t = datasets.get(name)

@@ -60,3 +60,8 @@
 - リフレッシュ: [scripts/metrics_dashboard_v2_refresh.sql](../../scripts/metrics_dashboard_v2_refresh.sql)
 - ビュー: [scripts/metrics_dashboard_v2_views.sql](../../scripts/metrics_dashboard_v2_views.sql)
 - DAG: `src/nagare/dags/refresh_cicd_metrics_marts.py`
+
+## スケールとパーティション（将来）
+
+- **増分同期**: `refresh_cicd_metrics_marts(FALSE)` は `pipeline_runs.updated_at` / `jobs.updated_at` と `metrics_mart_sync_state` のウォーターマークで差分のみ反映する。初回・修復は `refresh_cicd_metrics_marts(TRUE)`。
+- **パーティション**: `fact_pipeline_run` を `started_at` の月次 RANGE で切る案は、保持期間が長く行数・refresh 時間が閾値を超えた段階で検討する（移行コストが大きいため MVP では未実施）。

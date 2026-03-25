@@ -26,7 +26,7 @@ Kent Beck氏の警告「指標が目標になると、それは良い指標で�
   - 指数バックオフによる自動リトライ（502/503/504エラー）
   - 部分的失敗時の継続処理とエラー統計記録
 - **冪等性の保証**: UPSERT処理による重複データの防止
-- **メトリクスマート更新**: DAG `refresh_cicd_metrics_marts` で v2 集計テーブルを同期
+- **メトリクスマート更新**: DAG `refresh_cicd_metrics_marts` で v2 を増分同期（`./scripts/reapply_metrics_dashboard_v2.sh` は全件 `refresh_cicd_metrics_marts(TRUE)`）
 
 ### データ可視化（Superset）
 - CI/CDメトリクス v2 ダッシュボード（`cicd-metrics-v2`）

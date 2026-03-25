@@ -28,3 +28,5 @@ def test_run_metrics_mart_refresh_calls_sql() -> None:
             run_metrics_mart_refresh()
 
     mock_conn.execute.assert_called_once()
+    sql_text = str(mock_conn.execute.call_args[0][0]).lower()
+    assert "refresh_cicd_metrics_marts(false)" in sql_text
