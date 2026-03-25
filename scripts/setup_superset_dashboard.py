@@ -1,45 +1,49 @@
 #!/usr/bin/env python3
-"""Superset ダッシュボード自動セットアップスクリプト
-
-このスクリプトはSupersetにCI/CDパフォーマンスダッシュボードを自動作成します。
-冪等性: 何度実行しても同じ結果になります。
+"""Superset CI/CD メトリクス v2 ダッシュボード自動セットアップ
 
 使用方法:
-    docker exec nagare-superset python3 /app/scripts/setup_superset_dashboard.py
-    docker exec nagare-superset python3 /app/scripts/setup_superset_dashboard.py --reset
+    docker cp scripts/setup_superset_dashboard.py nagare-superset:/tmp/setup_superset_dashboard.py
+    docker exec nagare-superset python3 /tmp/setup_superset_dashboard.py
+    docker exec nagare-superset python3 /tmp/setup_superset_dashboard.py --reset
 
-オプション:
-    --reset: 既存のチャートを削除してから再作成
-
-前提条件:
-    - PostgreSQLデータベースが起動していること
-    - Supersetが起動していること
-    - superset/init_views.sql が実行済みであること
-    - PostgreSQLデータベース接続がSupersetに登録されていること
+前提:
+    - nagare DB に metrics v2 のビューが作成済み
+    - Superset に PostgreSQL (nagare) 接続が登録済み
 """
+
+from __future__ import annotations
 
 import json
 import sys
 
-
-# このスクリプトで管理するチャート名のリスト
 MANAGED_CHARTS = [
-    "全体成功率",
-    "最新実行履歴",
-    "失敗が多いパイプライン Top10",
-    "ブランチ別成功率",
-    "ソースサマリー",
-    "日次実行数",
-    "成功率トレンド",
-    "時間帯別実行数",
-    "ビルド時間トレンド",
-    "MTTRサマリー",
-    "MTTRトレンド",
+    "L1成功率トレンド",
+    "L1実行数トレンド",
+    "L1リポジトリヘルス",
+    "L1悪化リポジトリ",
+    "L2リポジトリトレンド",
+    "L2失敗ワークフローTop",
+    "L2実行時間ワークフロー",
+    "L2失敗理由内訳",
+    "L2再実行率",
+    "L2アクション候補",
+]
+
+VIEW_DATASETS = [
+    "vw_l1_daily_overview",
+    "vw_l1_daily_overview_by_platform",
+    "vw_l1_repo_health",
+    "vw_l1_repo_deterioration",
+    "vw_l2_repo_trend",
+    "vw_l2_workflow_fail_top",
+    "vw_l2_workflow_duration_top",
+    "vw_l2_failure_reason_breakdown",
+    "vw_l2_retry_flake_trend",
+    "vw_l2_action_candidates",
 ]
 
 
-def setup_dashboard(reset: bool = False):
-    """ダッシュボードをセットアップする"""
+def setup_dashboard(reset: bool = False) -> None:
     from superset.app import create_app
 
     app = create_app()
@@ -50,48 +54,23 @@ def setup_dashboard(reset: bool = False):
         from superset.models.dashboard import Dashboard
         from superset.models.slice import Slice
 
-        # データベースを取得
         database = db.session.query(Database).first()
         if not database:
             print("ERROR: データベース接続が見つかりません")
-            print("Supersetで先にPostgreSQLデータベース接続を作成してください")
             sys.exit(1)
 
         print(f"Using Database: {database.database_name} (ID: {database.id})")
 
-        # ============================================================
-        # Step 1: データセット登録
-        # ============================================================
         print("\n=== Step 1: データセット登録 ===")
-
-        views = [
-            # 基本ビュー
-            "v_pipeline_overview",
-            "v_recent_pipeline_runs",
-            "v_failing_jobs",
-            "v_branch_success_rate",
-            # ソース別ビュー
-            "v_source_summary",
-            "v_daily_runs_by_source",
-            "v_daily_success_rate_by_source",
-            "v_hourly_runs_by_source",
-            "v_daily_duration_by_source",
-            # MTTRビュー
-            "v_mttr",
-            "v_daily_mttr",
-        ]
-
-        for view_name in views:
+        for view_name in VIEW_DATASETS:
             existing = (
                 db.session.query(SqlaTable)
                 .filter_by(table_name=view_name, database_id=database.id)
                 .first()
             )
-
             if existing:
                 print(f"SKIP: {view_name} (already exists, ID: {existing.id})")
                 continue
-
             table = SqlaTable(
                 table_name=view_name, database_id=database.id, schema="public"
             )
@@ -99,7 +78,6 @@ def setup_dashboard(reset: bool = False):
             db.session.commit()
             print(f"CREATED: {view_name} (ID: {table.id})")
 
-        # データセットのカラムを同期
         print("\n=== Syncing dataset columns ===")
         for table in db.session.query(SqlaTable).all():
             try:
@@ -107,39 +85,46 @@ def setup_dashboard(reset: bool = False):
                 print(f"Synced: {table.table_name}")
             except Exception as e:
                 print(f"Error syncing {table.table_name}: {e}")
-
         db.session.commit()
 
-        # データセットIDマッピング
         datasets = {t.table_name: t for t in db.session.query(SqlaTable).all()}
 
-        # ============================================================
-        # Step 2: ダッシュボード作成
-        # ============================================================
-        print("\n=== Step 2: ダッシュボード作成 ===")
+        def _ds(name: str) -> SqlaTable | None:
+            t = datasets.get(name)
+            if t is None:
+                print(f"WARN: dataset not found: {name}")
+            return t
 
+        print("\n=== Step 2: ダッシュボード ===")
         dashboard = (
-            db.session.query(Dashboard).filter_by(slug="cicd-performance").first()
+            db.session.query(Dashboard).filter_by(slug="cicd-metrics-v2").first()
         )
         if not dashboard:
             dashboard = Dashboard(
-                dashboard_title="CI/CD パフォーマンスダッシュボード",
-                slug="cicd-performance",
+                dashboard_title="CI/CD メトリクス (v2)",
+                slug="cicd-metrics-v2",
                 published=True,
             )
             db.session.add(dashboard)
             db.session.commit()
-            print(
-                f"CREATED Dashboard: {dashboard.dashboard_title} (ID: {dashboard.id})"
-            )
+            print(f"CREATED Dashboard: {dashboard.dashboard_title} (ID: {dashboard.id})")
         else:
             print(f"EXISTS Dashboard: {dashboard.dashboard_title} (ID: {dashboard.id})")
 
-        # ============================================================
-        # Step 2.5: リセットモードの場合、既存チャートを削除
-        # ============================================================
         if reset:
-            print("\n=== Reset Mode: 既存チャートを削除 ===")
+            print("\n=== Reset: レガシーダッシュボード削除 ===")
+            for legacy_slug in ("cicd-performance",):
+                old_dash = (
+                    db.session.query(Dashboard)
+                    .filter_by(slug=legacy_slug)
+                    .first()
+                )
+                if old_dash:
+                    db.session.delete(old_dash)
+                    print(f"DELETED legacy dashboard slug={legacy_slug} (id={old_dash.id})")
+            db.session.commit()
+
+            print("\n=== Reset: 既存チャート削除 ===")
             for chart_name in MANAGED_CHARTS:
                 existing = (
                     db.session.query(Slice).filter_by(slice_name=chart_name).first()
@@ -149,305 +134,239 @@ def setup_dashboard(reset: bool = False):
                     print(f"DELETED: {chart_name}")
             db.session.commit()
 
-        # ============================================================
-        # Step 3: チャート作成/更新
-        # ============================================================
-        print("\n=== Step 3: チャート作成/更新 ===")
-
-        charts_config = [
-            # === 基本指標 ===
+        print("\n=== Step 3: チャート作成 ===")
+        charts_config: list[dict[str, object]] = [
             {
-                "slice_name": "全体成功率",
-                "viz_type": "big_number_total",
-                "datasource": datasets["v_pipeline_overview"],
+                "slice_name": "L1成功率トレンド",
+                "viz_type": "echarts_timeseries_line",
+                "datasource": _ds("vw_l1_daily_overview_by_platform"),
                 "params": {
-                    "viz_type": "big_number_total",
-                    "metric": {
-                        "expressionType": "SIMPLE",
-                        "column": {
-                            "column_name": "overall_success_rate",
-                            "type": "NUMERIC",
-                        },
-                        "aggregate": "AVG",
-                        "label": "Success Rate",
-                    },
-                    "subheader": "% 全リポジトリ平均",
-                    "y_axis_format": ".1f",
-                },
-            },
-            {
-                "slice_name": "最新実行履歴",
-                "viz_type": "table",
-                "datasource": datasets["v_recent_pipeline_runs"],
-                "params": {
-                    "viz_type": "table",
-                    "query_mode": "aggregate",
-                    "groupby": [
-                        "source",
-                        "repository_name",
-                        "pipeline_name",
-                        "status",
-                        "branch_name",
-                        "started_at",
-                        "duration_sec",
-                    ],
-                    "metrics": [],
-                    "percent_metrics": [],
-                    "row_limit": 50,
-                    "include_time": False,
-                    "order_desc": True,
-                    "show_cell_bars": False,
-                    "table_timestamp_format": "smart_date",
-                },
-            },
-            {
-                "slice_name": "失敗が多いパイプライン Top10",
-                "viz_type": "table",
-                "datasource": datasets["v_failing_jobs"],
-                "params": {
-                    "viz_type": "table",
-                    "query_mode": "aggregate",
-                    "groupby": [
-                        "repository_name",
-                        "pipeline_name",
-                        "failure_count",
-                        "failure_rate",
-                        "total_runs",
-                    ],
-                    "metrics": [],
-                    "row_limit": 10,
-                    "order_desc": True,
-                    "show_cell_bars": True,
-                },
-            },
-            {
-                "slice_name": "ブランチ別成功率",
-                "viz_type": "dist_bar",
-                "datasource": datasets["v_branch_success_rate"],
-                "params": {
-                    "viz_type": "dist_bar",
+                    "viz_type": "echarts_timeseries_line",
+                    "x_axis": "metric_date",
+                    "time_grain_sqla": "P1D",
                     "metrics": [
                         {
                             "expressionType": "SIMPLE",
                             "column": {
-                                "column_name": "success_rate",
+                                "column_name": "success_rate_pct",
                                 "type": "NUMERIC",
                             },
                             "aggregate": "AVG",
-                            "label": "AVG(success_rate)",
+                            "label": "成功率(%)",
                         }
                     ],
-                    "groupby": ["branch_type"],
-                    "columns": [],
-                    "row_limit": 20,
-                    "color_scheme": "supersetColors",
-                    "show_legend": False,
-                    "y_axis_format": ",.1f",
-                },
-            },
-            # === ソース別指標（GitHub / Bitrise / Xcode Cloud） ===
-            {
-                "slice_name": "ソースサマリー",
-                "viz_type": "table",
-                "datasource": datasets["v_source_summary"],
-                "params": {
-                    "viz_type": "table",
-                    "query_mode": "aggregate",
-                    "groupby": [
-                        "source",
-                        "total_runs",
-                        "success_count",
-                        "failure_count",
-                        "success_rate",
-                        "avg_duration_sec",
-                        "total_sec",
-                    ],
-                    "metrics": [],
-                    "row_limit": 10,
-                    "order_desc": True,
-                    "show_cell_bars": True,
+                    "groupby": ["platform"],
+                    "row_limit": 10000,
+                    "show_legend": True,
+                    "rich_tooltip": True,
                 },
             },
             {
-                "slice_name": "日次実行数",
+                "slice_name": "L1実行数トレンド",
                 "viz_type": "echarts_timeseries_bar",
-                "datasource": datasets["v_daily_runs_by_source"],
+                "datasource": _ds("vw_l1_daily_overview_by_platform"),
                 "params": {
                     "viz_type": "echarts_timeseries_bar",
+                    "x_axis": "metric_date",
+                    "time_grain_sqla": "P1D",
+                    "metrics": [
+                        {
+                            "expressionType": "SIMPLE",
+                            "column": {"column_name": "total_runs", "type": "BIGINT"},
+                            "aggregate": "SUM",
+                            "label": "実行数",
+                        }
+                    ],
+                    "groupby": ["platform"],
+                    "row_limit": 10000,
+                    "stack": "Stack",
+                    "show_legend": True,
+                },
+            },
+            {
+                "slice_name": "L1リポジトリヘルス",
+                "viz_type": "table",
+                "datasource": _ds("vw_l1_repo_health"),
+                "params": {
+                    "viz_type": "table",
+                    "query_mode": "raw",
+                    "all_columns": [
+                        "repo_full_name",
+                        "platform",
+                        "total_runs_7d",
+                        "success_rate_7d_pct",
+                        "avg_p95_ms_7d",
+                    ],
+                    "row_limit": 1000,
+                },
+            },
+            {
+                "slice_name": "L1悪化リポジトリ",
+                "viz_type": "table",
+                "datasource": _ds("vw_l1_repo_deterioration"),
+                "params": {
+                    "viz_type": "table",
+                    "query_mode": "raw",
+                    "all_columns": [
+                        "repo_full_name",
+                        "deterioration_flag",
+                        "success_rate_yesterday",
+                        "success_rate_delta_1d",
+                        "failed_runs_yesterday",
+                        "p95_ms_yesterday",
+                    ],
+                    "row_limit": 500,
+                },
+            },
+            {
+                "slice_name": "L2リポジトリトレンド",
+                "viz_type": "echarts_timeseries_line",
+                "datasource": _ds("vw_l2_repo_trend"),
+                "params": {
+                    "viz_type": "echarts_timeseries_line",
+                    "x_axis": "metric_date",
+                    "time_grain_sqla": "P1D",
+                    "metrics": [
+                        {
+                            "expressionType": "SIMPLE",
+                            "column": {
+                                "column_name": "success_rate_pct",
+                                "type": "NUMERIC",
+                            },
+                            "aggregate": "AVG",
+                            "label": "成功率",
+                        }
+                    ],
+                    "groupby": ["repo_full_name"],
+                    "row_limit": 10000,
+                    "show_legend": True,
+                },
+            },
+            {
+                "slice_name": "L2失敗ワークフローTop",
+                "viz_type": "table",
+                "datasource": _ds("vw_l2_workflow_fail_top"),
+                "params": {
+                    "viz_type": "table",
+                    "query_mode": "raw",
+                    "all_columns": [
+                        "repo_full_name",
+                        "workflow_name",
+                        "failure_count",
+                        "failure_rate_pct",
+                        "last_failure_at",
+                    ],
+                    "row_limit": 500,
+                },
+            },
+            {
+                "slice_name": "L2実行時間ワークフロー",
+                "viz_type": "table",
+                "datasource": _ds("vw_l2_workflow_duration_top"),
+                "params": {
+                    "viz_type": "table",
+                    "query_mode": "raw",
+                    "all_columns": [
+                        "repo_full_name",
+                        "workflow_name",
+                        "p50_duration_ms",
+                        "p95_duration_ms",
+                        "total_runs",
+                    ],
+                    "row_limit": 500,
+                },
+            },
+            {
+                "slice_name": "L2失敗理由内訳",
+                "viz_type": "echarts_timeseries_bar",
+                "datasource": _ds("vw_l2_failure_reason_breakdown"),
+                "params": {
+                    "viz_type": "echarts_timeseries_bar",
+                    "x_axis": "fail_date",
+                    "time_grain_sqla": "P1D",
+                    "metrics": [
+                        {
+                            "expressionType": "SIMPLE",
+                            "column": {"column_name": "failure_runs", "type": "BIGINT"},
+                            "aggregate": "SUM",
+                            "label": "失敗実行数",
+                        }
+                    ],
+                    "groupby": ["reason_category"],
+                    "row_limit": 10000,
+                    "stack": "Stack",
+                    "show_legend": True,
+                },
+            },
+            {
+                "slice_name": "L2再実行率",
+                "viz_type": "echarts_timeseries_line",
+                "datasource": _ds("vw_l2_retry_flake_trend"),
+                "params": {
+                    "viz_type": "echarts_timeseries_line",
                     "x_axis": "run_date",
                     "time_grain_sqla": "P1D",
                     "metrics": [
                         {
                             "expressionType": "SIMPLE",
-                            "column": {"column_name": "run_count", "type": "BIGINT"},
-                            "aggregate": "SUM",
-                            "label": "SUM(run_count)",
-                        }
-                    ],
-                    "groupby": ["source"],
-                    "row_limit": 10000,
-                    "stack": "Stack",
-                    "only_total": False,
-                    "color_scheme": "supersetColors",
-                    "show_legend": True,
-                    "legendType": "scroll",
-                    "legendOrientation": "top",
-                    "rich_tooltip": True,
-                    "tooltipTimeFormat": "smart_date",
-                    "x_axis_time_format": "smart_date",
-                },
-            },
-            {
-                "slice_name": "成功率トレンド",
-                "viz_type": "echarts_timeseries_line",
-                "datasource": datasets["v_daily_success_rate_by_source"],
-                "params": {
-                    "viz_type": "echarts_timeseries_line",
-                    "x_axis": "run_date",
-                    "metrics": [
-                        {
-                            "expressionType": "SIMPLE",
                             "column": {
-                                "column_name": "success_rate",
+                                "column_name": "retry_rate_pct",
                                 "type": "NUMERIC",
                             },
                             "aggregate": "AVG",
-                            "label": "AVG(success_rate)",
+                            "label": "再実行率%",
                         }
                     ],
-                    "groupby": ["source"],
+                    "groupby": ["repo_full_name"],
                     "row_limit": 10000,
-                    "color_scheme": "supersetColors",
                     "show_legend": True,
-                    "rich_tooltip": True,
                 },
             },
             {
-                "slice_name": "時間帯別実行数",
-                "viz_type": "echarts_timeseries_bar",
-                "datasource": datasets["v_hourly_runs_by_source"],
-                "params": {
-                    "viz_type": "echarts_timeseries_bar",
-                    "x_axis": "hour_of_day",
-                    "x_axis_sort": "hour_of_day",
-                    "x_axis_sort_asc": True,
-                    "metrics": [
-                        {
-                            "expressionType": "SIMPLE",
-                            "column": {"column_name": "run_count", "type": "BIGINT"},
-                            "aggregate": "SUM",
-                            "label": "SUM(run_count)",
-                        }
-                    ],
-                    "groupby": ["source"],
-                    "row_limit": 100,
-                    "stack": "Stack",
-                    "color_scheme": "supersetColors",
-                    "show_legend": True,
-                    "rich_tooltip": True,
-                },
-            },
-            {
-                "slice_name": "ビルド時間トレンド",
-                "viz_type": "echarts_timeseries_line",
-                "datasource": datasets["v_daily_duration_by_source"],
-                "params": {
-                    "viz_type": "echarts_timeseries_line",
-                    "x_axis": "run_date",
-                    "metrics": [
-                        {
-                            "expressionType": "SIMPLE",
-                            "column": {
-                                "column_name": "avg_duration_sec",
-                                "type": "NUMERIC",
-                            },
-                            "aggregate": "AVG",
-                            "label": "AVG(avg_duration_sec)",
-                        }
-                    ],
-                    "groupby": ["source"],
-                    "row_limit": 10000,
-                    "color_scheme": "supersetColors",
-                    "show_legend": True,
-                    "rich_tooltip": True,
-                    "y_axis_format": ",.0f",
-                },
-            },
-            # === MTTR指標 ===
-            {
-                "slice_name": "MTTRサマリー",
+                "slice_name": "L2アクション候補",
                 "viz_type": "table",
-                "datasource": datasets["v_mttr"],
+                "datasource": _ds("vw_l2_action_candidates"),
                 "params": {
                     "viz_type": "table",
-                    "query_mode": "aggregate",
-                    "groupby": [
-                        "repository_name",
-                        "source",
+                    "query_mode": "raw",
+                    "all_columns": [
+                        "repo_full_name",
+                        "target_workflow",
                         "failure_count",
-                        "recovered_count",
-                        "avg_mttr_minutes",
-                        "min_mttr_minutes",
-                        "max_mttr_minutes",
+                        "failure_rate_pct",
+                        "priority_rank",
+                        "suggested_action",
                     ],
-                    "metrics": [],
-                    "row_limit": 20,
-                    "order_desc": True,
-                    "show_cell_bars": True,
-                },
-            },
-            {
-                "slice_name": "MTTRトレンド",
-                "viz_type": "echarts_timeseries_line",
-                "datasource": datasets["v_daily_mttr"],
-                "params": {
-                    "viz_type": "echarts_timeseries_line",
-                    "x_axis": "run_date",
-                    "metrics": [
-                        {
-                            "expressionType": "SIMPLE",
-                            "column": {
-                                "column_name": "avg_mttr_minutes",
-                                "type": "NUMERIC",
-                            },
-                            "aggregate": "AVG",
-                            "label": "AVG(avg_mttr_minutes)",
-                        }
-                    ],
-                    "groupby": ["source"],
-                    "row_limit": 10000,
-                    "color_scheme": "supersetColors",
-                    "show_legend": True,
-                    "rich_tooltip": True,
-                    "y_axis_format": ",.0f",
+                    "row_limit": 200,
                 },
             },
         ]
 
-        slices = []
+        slices: list[Slice] = []
         for chart in charts_config:
             ds = chart["datasource"]
-            params = chart["params"].copy()
+            if ds is None:
+                print(f"SKIP missing dataset for {chart['slice_name']}")
+                continue
+            params = chart["params"].copy()  # type: ignore[union-attr]
             params["datasource"] = f"{ds.id}__table"
 
             existing = (
                 db.session.query(Slice).filter_by(slice_name=chart["slice_name"]).first()
             )
             if existing:
-                # 既存チャートを更新（冪等性）
-                existing.viz_type = chart["viz_type"]
+                existing.viz_type = str(chart["viz_type"])
                 existing.datasource_id = ds.id
                 existing.datasource_type = "table"
                 existing.params = json.dumps(params)
                 db.session.commit()
                 slices.append(existing)
-                print(f'UPDATED Chart: {chart["slice_name"]} (ID: {existing.id})')
+                print(f"UPDATED Chart: {chart['slice_name']} (ID: {existing.id})")
                 continue
 
-            # 新規チャートを作成
             slice_obj = Slice(
-                slice_name=chart["slice_name"],
-                viz_type=chart["viz_type"],
+                slice_name=str(chart["slice_name"]),
+                viz_type=str(chart["viz_type"]),
                 datasource_id=ds.id,
                 datasource_type="table",
                 params=json.dumps(params),
@@ -455,16 +374,11 @@ def setup_dashboard(reset: bool = False):
             db.session.add(slice_obj)
             db.session.commit()
             slices.append(slice_obj)
-            print(f'CREATED Chart: {chart["slice_name"]} (ID: {slice_obj.id})')
+            print(f"CREATED Chart: {chart['slice_name']} (ID: {slice_obj.id})")
 
-        # ============================================================
-        # Step 4: ダッシュボードにチャートを関連付け
-        # ============================================================
-        print("\n=== Step 4: ダッシュボードにチャートを関連付け ===")
-
+        print("\n=== Step 4: ダッシュボードに関連付け ===")
         dashboard.slices = slices
 
-        # クロスフィルターを有効化
         metadata = json.loads(dashboard.json_metadata) if dashboard.json_metadata else {}
         metadata["cross_filters_enabled"] = True
         metadata["chart_configuration"] = {}
@@ -477,60 +391,87 @@ def setup_dashboard(reset: bool = False):
                 },
             }
 
-        # Native Filter: リポジトリフィルター（ドロップダウン）
-        metadata["native_filter_configuration"] = [
-            {
-                "id": "NATIVE_FILTER-repository",
-                "name": "Repository",
-                "filterType": "filter_select",
-                "targets": [
-                    {
-                        "datasetId": datasets["v_pipeline_overview"].id,
-                        "column": {"name": "repository_name"},
-                    }
-                ],
-                "defaultDataMask": {
-                    "extraFormData": {},
-                    "filterState": {},
-                    "ownState": {},
-                },
-                "controlValues": {
-                    "enableEmptyFilter": False,
-                    "defaultToFirstItem": False,
-                    "multiSelect": True,
-                    "searchAllOptions": False,
-                    "inverseSelection": False,
-                },
-                "cascadeParentIds": [],
-                "scope": {
-                    "rootPath": ["ROOT_ID"],
-                    "excluded": [],
-                },
-                "isInstant": True,
-                "description": "",
-                "type": "NATIVE_FILTER",
-            }
-        ]
+        ds_trend = _ds("vw_l2_repo_trend")
+        ds_l1_pf = _ds("vw_l1_daily_overview_by_platform")
+        native_filters: list[dict[str, object]] = []
+        if ds_trend:
+            native_filters.append(
+                {
+                    "id": "NATIVE_FILTER-repo",
+                    "name": "Repository",
+                    "filterType": "filter_select",
+                    "targets": [
+                        {
+                            "datasetId": ds_trend.id,
+                            "column": {"name": "repo_full_name"},
+                        }
+                    ],
+                    "defaultDataMask": {
+                        "extraFormData": {},
+                        "filterState": {},
+                        "ownState": {},
+                    },
+                    "controlValues": {
+                        "enableEmptyFilter": True,
+                        "defaultToFirstItem": False,
+                        "multiSelect": True,
+                        "searchAllOptions": True,
+                        "inverseSelection": False,
+                    },
+                    "cascadeParentIds": [],
+                    "scope": {"rootPath": ["ROOT_ID"], "excluded": []},
+                    "isInstant": True,
+                    "description": "L2 系チャート用",
+                    "type": "NATIVE_FILTER",
+                }
+            )
+        if ds_l1_pf:
+            native_filters.append(
+                {
+                    "id": "NATIVE_FILTER-l1-platform",
+                    "name": "L1 Platform (ALL / 個別)",
+                    "filterType": "filter_select",
+                    "targets": [
+                        {
+                            "datasetId": ds_l1_pf.id,
+                            "column": {"name": "platform"},
+                        }
+                    ],
+                    "defaultDataMask": {
+                        "extraFormData": {},
+                        "filterState": {},
+                        "ownState": {},
+                    },
+                    "controlValues": {
+                        "enableEmptyFilter": True,
+                        "defaultToFirstItem": False,
+                        "multiSelect": True,
+                        "searchAllOptions": False,
+                        "inverseSelection": False,
+                    },
+                    "cascadeParentIds": [],
+                    "scope": {"rootPath": ["ROOT_ID"], "excluded": []},
+                    "isInstant": True,
+                    "description": "空欄ですべて表示。ALL または bitrise 等を選択で絞り込み",
+                    "type": "NATIVE_FILTER",
+                }
+            )
+        if native_filters:
+            metadata["native_filter_configuration"] = native_filters
 
         dashboard.json_metadata = json.dumps(metadata)
-
         db.session.commit()
         print(f"Dashboard updated with {len(slices)} charts")
-        print("Cross-filtering enabled")
 
-        # ============================================================
-        # 完了
-        # ============================================================
         print("\n" + "=" * 60)
-        print("✅ セットアップ完了!")
+        print("完了")
         print("=" * 60)
-        print(f"\nダッシュボードURL:")
-        print(f"  http://localhost:8088/superset/dashboard/{dashboard.slug}/")
-        print("\n注意: チャートのレイアウトはダッシュボード編集画面で調整してください")
+        print(f"\nダッシュボードURL:\n  http://localhost:8088/superset/dashboard/{dashboard.slug}/")
+        print("\n注意: レイアウトは Superset 編集画面で調整してください")
 
 
 if __name__ == "__main__":
     reset_mode = "--reset" in sys.argv
     if reset_mode:
-        print("🔄 Reset mode enabled: 既存チャートを削除して再作成します")
+        print("Reset mode: 既存チャートを削除して再作成します")
     setup_dashboard(reset=reset_mode)

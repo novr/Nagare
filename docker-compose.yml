@@ -127,6 +127,15 @@ services:
         echo "Initializing application database schema..."
         PGPASSWORD=${DATABASE_PASSWORD} psql -h postgres -U ${DATABASE_USER} -d ${DATABASE_NAME} -f /opt/airflow/scripts/init_db.sql
 
+        echo "Dropping legacy Superset helper views (if any)..."
+        PGPASSWORD=${DATABASE_PASSWORD} psql -h postgres -U ${DATABASE_USER} -d ${DATABASE_NAME} -f /opt/airflow/scripts/metrics_dashboard_drop_legacy_views.sql
+
+        echo "Applying CI/CD metrics v2 schema and views..."
+        PGPASSWORD=${DATABASE_PASSWORD} psql -h postgres -U ${DATABASE_USER} -d ${DATABASE_NAME} -f /opt/airflow/scripts/metrics_dashboard_v2_schema.sql
+        PGPASSWORD=${DATABASE_PASSWORD} psql -h postgres -U ${DATABASE_USER} -d ${DATABASE_NAME} -f /opt/airflow/scripts/metrics_dashboard_v2_refresh.sql
+        PGPASSWORD=${DATABASE_PASSWORD} psql -h postgres -U ${DATABASE_USER} -d ${DATABASE_NAME} -f /opt/airflow/scripts/metrics_dashboard_v2_views.sql
+        PGPASSWORD=${DATABASE_PASSWORD} psql -h postgres -U ${DATABASE_USER} -d ${DATABASE_NAME} -c "SELECT refresh_cicd_metrics_marts();"
+
         # Airflowデータベースのマイグレーション
         echo "Running Airflow database migration..."
         airflow db migrate

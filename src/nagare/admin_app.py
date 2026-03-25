@@ -27,9 +27,23 @@ from nagare.admin_db import (
     get_recent_pipeline_runs,
     get_registered_repository_names,
     get_repositories,
-    get_statistics,
     test_connection,
     toggle_repository,
+)
+from nagare.admin_metrics_db import (
+    get_l1_daily_overview,
+    get_l1_daily_overview_by_platform,
+    get_l1_repo_deterioration,
+    get_l1_repo_health,
+    get_l2_action_candidates,
+    get_l2_failure_reason_breakdown,
+    get_l2_repo_trend,
+    get_l2_retry_flake_trend,
+    get_l2_step_failure_heatmap,
+    get_l2_workflow_duration_top,
+    get_l2_workflow_fail_top,
+    get_metrics_last_refresh,
+    list_repo_names_for_metrics,
 )
 from nagare.constants import PipelineStatus, Platform, SourceType
 from nagare.utils.connections import ConnectionRegistry
@@ -264,71 +278,190 @@ with st.sidebar:
     st.header("ナビゲーション")
     page = st.radio(
         "ページ選択",
-        ["📊 ダッシュボード", "📦 リポジトリ管理", "📈 実行履歴", "⚙️ 設定"],
+        ["📊 メトリクス (L1/L2)", "📦 リポジトリ管理", "📈 実行履歴", "⚙️ 設定"],
         label_visibility="collapsed",
     )
 
     st.divider()
     st.caption("Powered by Streamlit")
 
-# ダッシュボード
-if page == "📊 ダッシュボード":
-    st.header("📊 ダッシュボード")
+# メトリクス（L1 / L2）
+if page == "📊 メトリクス (L1/L2)":
+    st.header("📊 CI/CD メトリクス（日次レビュー向け）")
 
     try:
-        stats = get_statistics()
+        last_refresh = get_metrics_last_refresh()
+        if last_refresh:
+            st.caption(f"集約の最終更新（参考）: {last_refresh}")
 
-        # メトリクス表示
-        col1, col2, col3 = st.columns(3)
+        trend_days = st.slider("トレンド表示日数", min_value=7, max_value=90, value=30, step=1)
 
-        with col1:
-            st.metric(
-                "登録リポジトリ",
-                stats["repositories"]["total"],
-                delta=f"有効: {stats['repositories']['active']}",
-            )
-
-        with col2:
-            st.metric(
-                "パイプライン実行（24h）",
-                stats["pipeline_runs"]["total"],
-                delta=f"成功: {stats['pipeline_runs']['success']}",
-            )
-
-        with col3:
-            avg_duration = stats["pipeline_runs"]["avg_duration_sec"]
-            st.metric(
-                "平均実行時間（24h）",
-                f"{avg_duration:.1f}秒" if avg_duration > 0 else "N/A",
-            )
-
-        st.divider()
-
-        # 最近の実行履歴
-        st.subheader("最近のパイプライン実行")
-        recent_runs = get_recent_pipeline_runs(20)
-
-        if not recent_runs.empty:
-            # ステータスに色を付ける
-            def highlight_status(row):
-                status = row["ステータス"].upper() if isinstance(row["ステータス"], str) else ""
-                if status == PipelineStatus.SUCCESS:
-                    return ["background-color: #d4edda"] * len(row)
-                elif status == PipelineStatus.FAILURE:
-                    return ["background-color: #f8d7da"] * len(row)
-                else:
-                    return [""] * len(row)
-
-            st.dataframe(
-                recent_runs.style.apply(highlight_status, axis=1),
-                use_container_width=True,
-                hide_index=True,
+        st.subheader("L1 — 全体把握")
+        daily = get_l1_daily_overview(days=trend_days)
+        if daily.empty:
+            st.warning(
+                "メトリクスデータがありません。`refresh_cicd_metrics_marts` DAG または "
+                "`SELECT refresh_cicd_metrics_marts();` を実行し、パイプライン実行を取り込んでください。"
             )
         else:
-            st.info("まだパイプライン実行履歴がありません")
+            last_row = daily.iloc[-1]
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                st.metric("総実行数（最終日）", int(last_row["total_runs"]))
+            with c2:
+                st.metric("成功率（最終日）", f"{last_row['success_rate_pct']}%")
+            with c3:
+                st.metric("失敗数（最終日）", int(last_row["failed_runs"]))
+            with c4:
+                p50 = last_row["avg_p50_duration_ms"]
+                st.metric(
+                    "平均p50相当(ms)",
+                    f"{int(p50)}" if pd.notna(p50) else "N/A",
+                )
+
+            st.markdown("**トレンド（プラットフォーム別 / ALL）**")
+            daily_pf = get_l1_daily_overview_by_platform(days=trend_days)
+            if daily_pf.empty:
+                st.info("プラットフォーム別トレンド用データがありません")
+            else:
+                l1_mode = st.radio(
+                    "表示モード",
+                    [
+                        "すべて（凡例: 各platform + ALL）",
+                        "ALL（全体合計）のみ",
+                        "1プラットフォームのみ",
+                    ],
+                    horizontal=True,
+                    key="l1_platform_trend_mode",
+                )
+                if l1_mode == "ALL（全体合計）のみ":
+                    pf = daily_pf[daily_pf["platform"] == "ALL"].copy()
+                elif l1_mode == "1プラットフォームのみ":
+                    choices = sorted(
+                        x for x in daily_pf["platform"].unique() if x != "ALL"
+                    )
+                    if not choices:
+                        st.info("platform 行がありません")
+                        pf = daily_pf.iloc[0:0]
+                    else:
+                        one = st.selectbox("プラットフォーム", choices, key="l1_one_platform")
+                        pf = daily_pf[daily_pf["platform"] == one].copy()
+                else:
+                    pf = daily_pf.copy()
+
+                if not pf.empty:
+                    if l1_mode == "すべて（凡例: 各platform + ALL）":
+                        sr = pf.pivot(
+                            index="metric_date",
+                            columns="platform",
+                            values="success_rate_pct",
+                        )
+                        st.caption("成功率(%)")
+                        st.line_chart(sr)
+                        tr = pf.pivot(
+                            index="metric_date",
+                            columns="platform",
+                            values="total_runs",
+                        )
+                        st.caption("実行数")
+                        st.bar_chart(tr)
+                    else:
+                        st.line_chart(
+                            pf.set_index("metric_date")["success_rate_pct"].rename(
+                                "成功率(%)"
+                            )
+                        )
+                        st.bar_chart(
+                            pf.set_index("metric_date")["total_runs"].rename("実行数")
+                        )
+
+        st.divider()
+        st.subheader("L1 — リポジトリヘルス（直近7日）")
+        health = get_l1_repo_health()
+        if not health.empty:
+            st.dataframe(health, use_container_width=True, hide_index=True)
+        else:
+            st.info("ヘルスデータなし")
+
+        st.subheader("L1 — 悪化フラグ付きリポジトリ")
+        det = get_l1_repo_deterioration()
+        if not det.empty:
+            st.dataframe(det, use_container_width=True, hide_index=True)
+        else:
+            st.info("悪化ビューに行がありません（昨日の集計がない可能性）")
+
+        st.divider()
+        st.subheader("L2 — リポジトリ詳細")
+        repos = list_repo_names_for_metrics()
+        if not repos:
+            st.info("dim_repo にデータがありません（同期未実行の可能性）")
+        else:
+            selected_repo = st.selectbox("リポジトリを選択", repos, key="metrics_repo_l2")
+            if selected_repo:
+                ttab1, ttab2, ttab3, ttab4 = st.tabs(
+                    ["トレンド", "ワークフロー", "ステップ/理由", "アクション候補"]
+                )
+                with ttab1:
+                    tr = get_l2_repo_trend(selected_repo, days=trend_days)
+                    if not tr.empty:
+                        st.line_chart(
+                            tr.set_index("metric_date")[
+                                ["success_rate_pct", "p95_duration_ms"]
+                            ].rename(
+                                columns={
+                                    "success_rate_pct": "成功率(%)",
+                                    "p95_duration_ms": "p95(ms)",
+                                }
+                            )
+                        )
+                        st.dataframe(tr, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("このリポジトリの日次トレンドがありません")
+                with ttab2:
+                    st.markdown("**失敗の多いワークフロー**")
+                    st.dataframe(
+                        get_l2_workflow_fail_top(selected_repo),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                    st.markdown("**実行時間の長いワークフロー**")
+                    st.dataframe(
+                        get_l2_workflow_duration_top(selected_repo),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                with ttab3:
+                    st.markdown("**失敗理由内訳**")
+                    st.dataframe(
+                        get_l2_failure_reason_breakdown(selected_repo),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                    st.markdown("**ステップ失敗**")
+                    st.dataframe(
+                        get_l2_step_failure_heatmap(selected_repo),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                    st.markdown("**再実行率**")
+                    st.dataframe(
+                        get_l2_retry_flake_trend(selected_repo),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                with ttab4:
+                    st.dataframe(
+                        get_l2_action_candidates(selected_repo),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
 
     except Exception as e:
-        st.error(f"データ取得エラー: {e}")
+        st.error(f"メトリクス取得エラー: {e}")
+        st.info(
+            "初回は `docker compose` の airflow-init で metrics v2 SQL が適用されているか、"
+            "Superset 手順書の SQL 適用を確認してください。"
+        )
 
 # リポジトリ管理
 elif page == "📦 リポジトリ管理":

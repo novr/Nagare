@@ -11,31 +11,53 @@ Supersetを使用して、GitHub Actionsから収集したデータを可視化�
 - ユーザー名: `admin`
 - パスワード: `.env`の`SUPERSET_ADMIN_PASSWORD`
 
-## クイックセットアップ（自動）
+## クイックセットアップ（自動・メトリクス v2）
 
-以下のコマンドでダッシュボードを自動作成できます：
+`docker compose` の `airflow-init` で、旧 Superset 用ビューの削除（`scripts/metrics_dashboard_drop_legacy_views.sql`）のあとメトリクス v2 の SQL が適用されます（`scripts/metrics_dashboard_v2_*.sql`）。手動で適用する場合:
 
 ```bash
-# 1. SQLビューを作成
-docker exec -i nagare-postgres psql -U nagare_user -d nagare < superset/init_views.sql
-
-# 2. Supersetにログインしてデータベース接続を作成（下記「1.1. データベース接続の追加」参照）
-
-# 3. ダッシュボードを自動作成
-docker cp scripts/setup_superset_dashboard.py nagare-superset:/app/scripts/
-docker exec nagare-superset python3 /app/scripts/setup_superset_dashboard.py
+docker exec -i nagare-postgres psql -U nagare_user -d nagare < scripts/metrics_dashboard_drop_legacy_views.sql
+docker exec -i nagare-postgres psql -U nagare_user -d nagare < scripts/metrics_dashboard_v2_schema.sql
+docker exec -i nagare-postgres psql -U nagare_user -d nagare < scripts/metrics_dashboard_v2_refresh.sql
+docker exec -i nagare-postgres psql -U nagare_user -d nagare < scripts/metrics_dashboard_v2_views.sql
+docker exec -i nagare-postgres psql -U nagare_user -d nagare -c "SELECT refresh_cicd_metrics_marts();"
 ```
 
-自動作成されるチャート：
-- **全体成功率**: Big Number（全リポジトリの平均成功率）
-- **日次成功率トレンド**: 折れ線グラフ
-- **リポジトリ別実行数**: 円グラフ
-- **時間帯別実行数**: 棒グラフ（JST）
-- **最新実行履歴**: テーブル
+その後:
 
-ダッシュボードURL: http://localhost:8088/superset/dashboard/cicd-performance/
+1. Supersetにログインして **nagare** データベースへの接続を作成（下記「1.1. データベース接続の追加」参照）
+2. ダッシュボードを自動作成:
 
----
+```bash
+docker cp scripts/setup_superset_dashboard.py nagare-superset:/tmp/setup_superset_dashboard.py
+docker exec nagare-superset python3 /tmp/setup_superset_dashboard.py
+```
+
+自動作成されるチャート（L1/L2 向け）：
+- L1: 成功率・実行数トレンド、リポジトリヘルス、悪化リポジトリ
+- L2: リポジトリトレンド、失敗/実行時間ワークフロー、失敗理由、再実行率、アクション候補
+
+ダッシュボードURL: http://localhost:8088/superset/dashboard/cicd-metrics-v2/
+
+データ更新は Airflow DAG `refresh_cicd_metrics_marts`（毎時）または `SELECT refresh_cicd_metrics_marts();` で行います。
+
+L1 の成功率・実行数トレンドは **`vw_l1_daily_overview_by_platform`** 由来で、系列は `github_actions` / `bitrise` / `xcode_cloud` 等と **`ALL`（全体合計）** です。フィルタ **「L1 Platform (ALL / 個別)」** で絞り込み、空欄ですべて表示できます。
+
+## メトリクス v2 の再セットアップ
+
+DB の DDL / ビュー / マート同期だけやり直す場合（コンテナ起動後）:
+
+```bash
+./scripts/reapply_metrics_dashboard_v2.sh
+```
+
+Superset の管理チャートも削除して作り直す場合:
+
+```bash
+./scripts/reapply_metrics_dashboard_v2.sh --with-superset
+```
+
+前提: `.env` を用意し `docker compose up -d` で `nagare-postgres` が動いていること。
 
 ## 手動セットアップ
 
