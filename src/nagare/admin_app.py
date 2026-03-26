@@ -41,6 +41,8 @@ from nagare.admin_db import (
 from nagare.admin_metrics_db import (
     get_l1_daily_overview,
     get_l1_daily_overview_by_platform,
+    get_l1_daily_overview_by_project,
+    get_l1_daily_overview_by_tag,
     get_l1_repo_deterioration,
     get_l1_repo_health,
     get_l2_action_candidates,
@@ -51,6 +53,8 @@ from nagare.admin_metrics_db import (
     get_l2_workflow_duration_top,
     get_l2_workflow_fail_top,
     get_metrics_last_refresh,
+    list_metrics_project_labels,
+    list_metrics_tag_slugs,
     list_repo_names_for_metrics,
 )
 from nagare.constants import PipelineStatus, Platform, SourceType
@@ -327,49 +331,110 @@ if page == "📊 メトリクス (L1/L2)":
                     f"{int(p50)}" if pd.notna(p50) else "N/A",
                 )
 
-            st.markdown("**トレンド（プラットフォーム別 / ALL）**")
-            daily_pf = get_l1_daily_overview_by_platform(days=trend_days)
+            l1_axis = st.radio(
+                "L1 集約軸",
+                ["プラットフォーム", "プロジェクト", "タグ"],
+                horizontal=True,
+                key="l1_slice_axis",
+                help="タグ別は 1 リポジトリが複数タグのとき実行数が重複計上されます（スライス比較用）。",
+            )
+            if l1_axis == "プラットフォーム":
+                daily_pf = get_l1_daily_overview_by_platform(days=trend_days)
+                dim_col = "platform"
+                one_label = "1項目のみ"
+            elif l1_axis == "プロジェクト":
+                daily_pf = get_l1_daily_overview_by_project(days=trend_days)
+                dim_col = "project_name"
+                one_label = "1プロジェクトのみ"
+            else:
+                daily_pf = get_l1_daily_overview_by_tag(days=trend_days)
+                dim_col = "tag_slug"
+                one_label = "1タグのみ"
+
+            st.markdown("**トレンド（集約軸別 / ALL）**")
             if daily_pf.empty:
-                st.info("プラットフォーム別トレンド用データがありません")
+                st.info("この集約軸のトレンド用データがありません")
             else:
                 l1_mode = st.radio(
                     "表示モード",
                     [
-                        "すべて（凡例: 各platform + ALL）",
+                        "すべて（凡例: 各系列 + ALL）",
                         "ALL（全体合計）のみ",
-                        "1プラットフォームのみ",
+                        one_label,
                     ],
                     horizontal=True,
                     key="l1_platform_trend_mode",
                 )
+                all_token = "ALL"
                 if l1_mode == "ALL（全体合計）のみ":
-                    pf = daily_pf[daily_pf["platform"] == "ALL"].copy()
-                elif l1_mode == "1プラットフォームのみ":
+                    pf = daily_pf[daily_pf[dim_col] == all_token].copy()
+                elif l1_mode == one_label:
                     choices = sorted(
-                        x for x in daily_pf["platform"].unique() if x != "ALL"
+                        x for x in daily_pf[dim_col].unique() if x != all_token
                     )
                     if not choices:
-                        st.info("platform 行がありません")
+                        st.info("系列行がありません")
                         pf = daily_pf.iloc[0:0]
                     else:
-                        one = st.selectbox("プラットフォーム", choices, key="l1_one_platform")
-                        pf = daily_pf[daily_pf["platform"] == one].copy()
+                        if l1_axis == "タグ":
+                            slug_to_name = {
+                                str(r["tag_slug"]): str(r["tag_name"])
+                                for _, r in daily_pf.drop_duplicates(
+                                    subset=["tag_slug"]
+                                ).iterrows()
+                            }
+
+                            def _tag_choice_label(s: str) -> str:
+                                if s == all_token:
+                                    return "全体"
+                                return f"{slug_to_name.get(s, s)} ({s})"
+
+                            one = st.selectbox(
+                                "タグ",
+                                choices,
+                                format_func=_tag_choice_label,
+                                key="l1_one_tag",
+                            )
+                        else:
+                            one = st.selectbox(
+                                dim_col.replace("_", " "),
+                                choices,
+                                key="l1_one_dim",
+                            )
+                        pf = daily_pf[daily_pf[dim_col] == one].copy()
                 else:
                     pf = daily_pf.copy()
 
                 if not pf.empty:
                     l1_t_left, l1_t_right = st.columns(2)
-                    if l1_mode == "すべて（凡例: 各platform + ALL）":
-                        sr = pf.pivot(
-                            index="metric_date",
-                            columns="platform",
-                            values="success_rate_pct",
-                        )
-                        tr = pf.pivot(
-                            index="metric_date",
-                            columns="platform",
-                            values="total_runs",
-                        )
+                    if l1_mode == "すべて（凡例: 各系列 + ALL）":
+                        if l1_axis == "タグ":
+                            disp = pf.assign(
+                                _lbl=pf["tag_slug"].astype(str)
+                                + " — "
+                                + pf["tag_name"].astype(str)
+                            )
+                            sr = disp.pivot(
+                                index="metric_date",
+                                columns="_lbl",
+                                values="success_rate_pct",
+                            )
+                            tr = disp.pivot(
+                                index="metric_date",
+                                columns="_lbl",
+                                values="total_runs",
+                            )
+                        else:
+                            sr = pf.pivot(
+                                index="metric_date",
+                                columns=dim_col,
+                                values="success_rate_pct",
+                            )
+                            tr = pf.pivot(
+                                index="metric_date",
+                                columns=dim_col,
+                                values="total_runs",
+                            )
                         with l1_t_left:
                             st.markdown("**L1 成功率トレンド**")
                             st.caption("成功率(%)")
@@ -411,9 +476,49 @@ if page == "📊 メトリクス (L1/L2)":
 
         st.divider()
         st.subheader("L2 — リポジトリ詳細")
-        repos = list_repo_names_for_metrics()
+        m_proj_opts = list_metrics_project_labels()
+        m_tag_opts = list_metrics_tag_slugs()
+        fl_p, fl_t, fl_m = st.columns([2, 2, 2])
+        with fl_p:
+            l2_proj_pick = st.selectbox(
+                "プロジェクトで絞り込み",
+                ["（フィルタなし）"] + m_proj_opts,
+                key="l2_filter_project",
+            )
+        with fl_t:
+            l2_tag_pick = st.multiselect(
+                "タグで絞り込み",
+                options=[s for s, _ in m_tag_opts],
+                default=[],
+                format_func=lambda s: next(
+                    (n for x, n in m_tag_opts if x == s), s
+                ),
+                key="l2_filter_tags",
+            )
+        with fl_m:
+            l2_tag_match = st.radio(
+                "タグ条件",
+                ["いずれか (OR)", "すべて (AND)"],
+                horizontal=True,
+                key="l2_tag_match",
+                disabled=not l2_tag_pick,
+            )
+        proj_f = (
+            None
+            if l2_proj_pick == "（フィルタなし）"
+            else str(l2_proj_pick)
+        )
+        use_and = l2_tag_match.startswith("すべて")
+        repos = list_repo_names_for_metrics(
+            project_label=proj_f,
+            tag_slugs=list(l2_tag_pick) if l2_tag_pick else None,
+            tag_match_all=use_and,
+        )
         if not repos:
-            st.info("dim_repo にデータがありません（同期未実行の可能性）")
+            st.info(
+                "条件に合うリポジトリがありません（フィルタを緩めるか、"
+                "dim_repo 同期・リポジトリのプロジェクト/タグ割当を確認してください）"
+            )
         else:
             selected_repo = st.selectbox("リポジトリを選択", repos, key="metrics_repo_l2")
             if selected_repo:

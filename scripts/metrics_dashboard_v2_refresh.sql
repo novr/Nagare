@@ -1,7 +1,13 @@
 -- 増分: refresh_cicd_metrics_marts(FALSE)、全件: (TRUE)（初回・修復・init）
 -- 同時実行: pg_try_advisory_xact_lock(873592201,20250324)。未取得は NOTICE のみ return（ウォーターマーク不更新）
 -- レガシー列のみ除去（新規 DDL には無い）
-ALTER TABLE agg_daily_repo_metrics DROP COLUMN IF EXISTS flake_suspect_rate;
+-- 旧ビューがこの列を参照していると DROP に失敗するため CASCADE（直後の *_views.sql で再作成）
+ALTER TABLE agg_daily_repo_metrics DROP COLUMN IF EXISTS flake_suspect_rate CASCADE;
+
+-- dim_repo: 管理画面のプロジェクト / タグ（repository_tags）をメトリクス側に同期
+ALTER TABLE dim_repo ADD COLUMN IF NOT EXISTS project_id BIGINT;
+ALTER TABLE dim_repo ADD COLUMN IF NOT EXISTS project_name VARCHAR(255);
+ALTER TABLE dim_repo ADD COLUMN IF NOT EXISTS tag_slugs TEXT NOT NULL DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS metrics_mart_sync_state (
     id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
@@ -35,18 +41,42 @@ BEGIN
         GREATEST((SELECT COALESCE(MAX(reason_id), 1) FROM dim_failure_reason), 1)
     );
 
-    INSERT INTO dim_repo (repo_id, repo_full_name, platform, is_active, updated_at)
+    INSERT INTO dim_repo (
+        repo_id,
+        repo_full_name,
+        platform,
+        is_active,
+        project_id,
+        project_name,
+        tag_slugs,
+        updated_at
+    )
     SELECT
         r.id,
         r.repository_name,
         r.source,
         r.active,
+        r.project_id,
+        p.project_name,
+        COALESCE(
+            (
+                SELECT string_agg(t.slug, ',' ORDER BY t.slug)
+                FROM repository_tags AS rt
+                INNER JOIN tags AS t ON t.id = rt.tag_id
+                WHERE rt.repository_id = r.id
+            ),
+            ''
+        ),
         NOW()
     FROM repositories AS r
+    LEFT JOIN projects AS p ON p.id = r.project_id
     ON CONFLICT (repo_id) DO UPDATE SET
         repo_full_name = EXCLUDED.repo_full_name,
         platform = EXCLUDED.platform,
         is_active = EXCLUDED.is_active,
+        project_id = EXCLUDED.project_id,
+        project_name = EXCLUDED.project_name,
+        tag_slugs = EXCLUDED.tag_slugs,
         updated_at = NOW();
 END;
 $seed$;

@@ -67,11 +67,47 @@ def get_l1_daily_overview_by_platform(days: int = 30) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=60)
+def get_l1_daily_overview_by_project(days: int = 30) -> pd.DataFrame:
+    """プロジェクト別行 + project_name='ALL' の合計行。"""
+    engine = get_database_engine()
+    start = _jst_today() - timedelta(days=days)
+    q = text(
+        """
+        SELECT metric_date, project_name, total_runs, success_runs, failed_runs,
+               success_rate_pct, avg_p50_duration_ms, last_computed_at
+        FROM vw_l1_daily_overview_by_project
+        WHERE metric_date >= :start
+        ORDER BY metric_date ASC, project_name ASC
+        """
+    )
+    with engine.connect() as conn:
+        return pd.read_sql_query(q, conn, params={"start": start})
+
+
+@st.cache_data(ttl=60)
+def get_l1_daily_overview_by_tag(days: int = 30) -> pd.DataFrame:
+    """タグ別行（複数タグで実行数は重複しうる）+ tag_slug='ALL' の合計行。"""
+    engine = get_database_engine()
+    start = _jst_today() - timedelta(days=days)
+    q = text(
+        """
+        SELECT metric_date, tag_slug, tag_name, total_runs, success_runs, failed_runs,
+               success_rate_pct, avg_p50_duration_ms, last_computed_at
+        FROM vw_l1_daily_overview_by_tag
+        WHERE metric_date >= :start
+        ORDER BY metric_date ASC, tag_slug ASC
+        """
+    )
+    with engine.connect() as conn:
+        return pd.read_sql_query(q, conn, params={"start": start})
+
+
+@st.cache_data(ttl=60)
 def get_l1_repo_health() -> pd.DataFrame:
     engine = get_database_engine()
     q = text(
         """
-        SELECT repo_full_name, platform, is_active, total_runs_7d,
+        SELECT repo_full_name, platform, is_active, project_name, tag_slugs, total_runs_7d,
                success_rate_7d_pct, avg_p95_ms_7d, last_computed_at
         FROM vw_l1_repo_health
         ORDER BY success_rate_7d_pct ASC NULLS LAST, total_runs_7d DESC
@@ -90,7 +126,8 @@ def get_l1_repo_deterioration() -> pd.DataFrame:
                success_rate_day_before, success_rate_delta_1d,
                avg_success_rate_7d, success_rate_vs_7d_avg,
                p95_ms_yesterday, p95_ms_day_before, failed_runs_yesterday,
-               total_runs_yesterday, deterioration_flag, last_computed_at
+               total_runs_yesterday, deterioration_flag, last_computed_at,
+               project_name, tag_slugs
         FROM vw_l1_repo_deterioration
         ORDER BY deterioration_flag DESC, failed_runs_yesterday DESC NULLS LAST
         """
@@ -218,15 +255,80 @@ def get_l2_action_candidates(repo_full_name: str) -> pd.DataFrame:
         return pd.read_sql_query(q, conn, params={"repo": repo_full_name})
 
 
+def _tag_slugs_set(raw: object) -> set[str]:
+    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+        return set()
+    s = str(raw).strip()
+    if not s:
+        return set()
+    return {x.strip() for x in s.split(",") if x.strip()}
+
+
 @st.cache_data(ttl=120)
-def list_repo_names_for_metrics() -> list[str]:
+def list_metrics_project_labels() -> list[str]:
+    """プロジェクト名の一覧（未所属は '(未所属)' と表示）。"""
     engine = get_database_engine()
     q = text(
         """
-        SELECT DISTINCT repo_full_name FROM dim_repo WHERE is_active = TRUE
+        SELECT DISTINCT COALESCE(project_name, '(未所属)') AS pl
+        FROM dim_repo
+        WHERE is_active = TRUE
+        ORDER BY pl
+        """
+    )
+    with engine.connect() as conn:
+        return [str(r[0]) for r in conn.execute(q).fetchall()]
+
+
+@st.cache_data(ttl=120)
+def list_metrics_tag_slugs() -> list[tuple[str, str]]:
+    """(slug, name) タグマスタ順。"""
+    engine = get_database_engine()
+    q = text(
+        """
+        SELECT slug, name FROM tags ORDER BY slug
+        """
+    )
+    with engine.connect() as conn:
+        return [(str(r[0]), str(r[1])) for r in conn.execute(q).fetchall()]
+
+
+@st.cache_data(ttl=120)
+def list_repo_names_for_metrics(
+    project_label: str | None = None,
+    tag_slugs: list[str] | None = None,
+    tag_match_all: bool = True,
+) -> list[str]:
+    """L2 用リポジトリ名。project_label は '(未所属)' または projects.project_name と一致する文字列。"""
+    engine = get_database_engine()
+    q = text(
+        """
+        SELECT repo_full_name, project_name, tag_slugs
+        FROM dim_repo
+        WHERE is_active = TRUE
         ORDER BY repo_full_name
         """
     )
     with engine.connect() as conn:
         rows = conn.execute(q).fetchall()
-        return [r[0] for r in rows]
+
+    want_tags = [t.strip() for t in (tag_slugs or []) if t and str(t).strip()]
+    names: list[str] = []
+    for rname, pname, tgslugs in rows:
+        if project_label:
+            unassigned = pname is None or (isinstance(pname, str) and pname.strip() == "")
+            if project_label == "(未所属)":
+                if not unassigned:
+                    continue
+            else:
+                if unassigned or str(pname) != project_label:
+                    continue
+        if want_tags:
+            have = _tag_slugs_set(tgslugs)
+            if tag_match_all:
+                if not set(want_tags).issubset(have):
+                    continue
+            elif not (set(want_tags) & have):
+                continue
+        names.append(str(rname))
+    return names

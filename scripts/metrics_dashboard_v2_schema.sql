@@ -10,6 +10,9 @@ CREATE TABLE IF NOT EXISTS dim_repo (
     repo_full_name VARCHAR(512) NOT NULL,
     platform VARCHAR(50) NOT NULL,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    project_id BIGINT,
+    project_name VARCHAR(255),
+    tag_slugs TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
