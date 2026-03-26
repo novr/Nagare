@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""Streamlit管理画面
-
-リポジトリの追加・削除・有効化/無効化、データ収集状況の確認を行うWeb UI。
+"""Streamlit 管理画面（リポジトリ運用・CI/CD メトリクス L1/L2）。
 
 Usage:
     streamlit run src/nagare/admin_app.py --server.port 8501
@@ -20,6 +18,10 @@ from sqlalchemy import text
 from nagare.admin_db import (
     _add_repositories_batch,
     add_repository,
+    create_project,
+    create_tag,
+    delete_project,
+    delete_tag,
     fetch_repositories_unified,
     get_all_cicd_connections,
     get_connections,
@@ -27,12 +29,18 @@ from nagare.admin_db import (
     get_recent_pipeline_runs,
     get_registered_repository_names,
     get_repositories,
+    list_projects,
+    list_tags,
+    rename_project,
+    update_repository_grouping,
     test_connection,
     toggle_repository,
 )
 from nagare.admin_metrics_db import (
     get_l1_daily_overview,
     get_l1_daily_overview_by_platform,
+    get_l1_daily_overview_by_project,
+    get_l1_daily_overview_by_tag,
     get_l1_repo_deterioration,
     get_l1_repo_health,
     get_l2_action_candidates,
@@ -43,6 +51,8 @@ from nagare.admin_metrics_db import (
     get_l2_workflow_duration_top,
     get_l2_workflow_fail_top,
     get_metrics_last_refresh,
+    list_metrics_project_labels,
+    list_metrics_tag_slugs,
     list_repo_names_for_metrics,
 )
 from nagare.constants import PipelineStatus, Platform, SourceType
@@ -285,7 +295,6 @@ with st.sidebar:
     st.divider()
     st.caption("Powered by Streamlit")
 
-# メトリクス（L1 / L2）
 if page == "📊 メトリクス (L1/L2)":
     st.header("📊 CI/CD メトリクス（日次レビュー向け）")
 
@@ -319,49 +328,110 @@ if page == "📊 メトリクス (L1/L2)":
                     f"{int(p50)}" if pd.notna(p50) else "N/A",
                 )
 
-            st.markdown("**トレンド（プラットフォーム別 / ALL）**")
-            daily_pf = get_l1_daily_overview_by_platform(days=trend_days)
+            l1_axis = st.radio(
+                "L1 集約軸",
+                ["プラットフォーム", "プロジェクト", "タグ"],
+                horizontal=True,
+                key="l1_slice_axis",
+                help="タグ別は 1 リポジトリが複数タグのとき実行数が重複計上されます（スライス比較用）。",
+            )
+            if l1_axis == "プラットフォーム":
+                daily_pf = get_l1_daily_overview_by_platform(days=trend_days)
+                dim_col = "platform"
+                one_label = "1項目のみ"
+            elif l1_axis == "プロジェクト":
+                daily_pf = get_l1_daily_overview_by_project(days=trend_days)
+                dim_col = "project_name"
+                one_label = "1プロジェクトのみ"
+            else:
+                daily_pf = get_l1_daily_overview_by_tag(days=trend_days)
+                dim_col = "tag_slug"
+                one_label = "1タグのみ"
+
+            st.markdown("**トレンド（集約軸別 / ALL）**")
             if daily_pf.empty:
-                st.info("プラットフォーム別トレンド用データがありません")
+                st.info("この集約軸のトレンド用データがありません")
             else:
                 l1_mode = st.radio(
                     "表示モード",
                     [
-                        "すべて（凡例: 各platform + ALL）",
+                        "すべて（凡例: 各系列 + ALL）",
                         "ALL（全体合計）のみ",
-                        "1プラットフォームのみ",
+                        one_label,
                     ],
                     horizontal=True,
                     key="l1_platform_trend_mode",
                 )
+                all_token = "ALL"
                 if l1_mode == "ALL（全体合計）のみ":
-                    pf = daily_pf[daily_pf["platform"] == "ALL"].copy()
-                elif l1_mode == "1プラットフォームのみ":
+                    pf = daily_pf[daily_pf[dim_col] == all_token].copy()
+                elif l1_mode == one_label:
                     choices = sorted(
-                        x for x in daily_pf["platform"].unique() if x != "ALL"
+                        x for x in daily_pf[dim_col].unique() if x != all_token
                     )
                     if not choices:
-                        st.info("platform 行がありません")
+                        st.info("系列行がありません")
                         pf = daily_pf.iloc[0:0]
                     else:
-                        one = st.selectbox("プラットフォーム", choices, key="l1_one_platform")
-                        pf = daily_pf[daily_pf["platform"] == one].copy()
+                        if l1_axis == "タグ":
+                            slug_to_name = {
+                                str(r["tag_slug"]): str(r["tag_name"])
+                                for _, r in daily_pf.drop_duplicates(
+                                    subset=["tag_slug"]
+                                ).iterrows()
+                            }
+
+                            def _tag_choice_label(s: str) -> str:
+                                if s == all_token:
+                                    return "全体"
+                                return f"{slug_to_name.get(s, s)} ({s})"
+
+                            one = st.selectbox(
+                                "タグ",
+                                choices,
+                                format_func=_tag_choice_label,
+                                key="l1_one_tag",
+                            )
+                        else:
+                            one = st.selectbox(
+                                dim_col.replace("_", " "),
+                                choices,
+                                key="l1_one_dim",
+                            )
+                        pf = daily_pf[daily_pf[dim_col] == one].copy()
                 else:
                     pf = daily_pf.copy()
 
                 if not pf.empty:
                     l1_t_left, l1_t_right = st.columns(2)
-                    if l1_mode == "すべて（凡例: 各platform + ALL）":
-                        sr = pf.pivot(
-                            index="metric_date",
-                            columns="platform",
-                            values="success_rate_pct",
-                        )
-                        tr = pf.pivot(
-                            index="metric_date",
-                            columns="platform",
-                            values="total_runs",
-                        )
+                    if l1_mode == "すべて（凡例: 各系列 + ALL）":
+                        if l1_axis == "タグ":
+                            disp = pf.assign(
+                                _lbl=pf["tag_slug"].astype(str)
+                                + " — "
+                                + pf["tag_name"].astype(str)
+                            )
+                            sr = disp.pivot(
+                                index="metric_date",
+                                columns="_lbl",
+                                values="success_rate_pct",
+                            )
+                            tr = disp.pivot(
+                                index="metric_date",
+                                columns="_lbl",
+                                values="total_runs",
+                            )
+                        else:
+                            sr = pf.pivot(
+                                index="metric_date",
+                                columns=dim_col,
+                                values="success_rate_pct",
+                            )
+                            tr = pf.pivot(
+                                index="metric_date",
+                                columns=dim_col,
+                                values="total_runs",
+                            )
                         with l1_t_left:
                             st.markdown("**L1 成功率トレンド**")
                             st.caption("成功率(%)")
@@ -403,9 +473,49 @@ if page == "📊 メトリクス (L1/L2)":
 
         st.divider()
         st.subheader("L2 — リポジトリ詳細")
-        repos = list_repo_names_for_metrics()
+        m_proj_opts = list_metrics_project_labels()
+        m_tag_opts = list_metrics_tag_slugs()
+        fl_p, fl_t, fl_m = st.columns([2, 2, 2])
+        with fl_p:
+            l2_proj_pick = st.selectbox(
+                "プロジェクトで絞り込み",
+                ["（フィルタなし）"] + m_proj_opts,
+                key="l2_filter_project",
+            )
+        with fl_t:
+            l2_tag_pick = st.multiselect(
+                "タグで絞り込み",
+                options=[s for s, _ in m_tag_opts],
+                default=[],
+                format_func=lambda s: next(
+                    (n for x, n in m_tag_opts if x == s), s
+                ),
+                key="l2_filter_tags",
+            )
+        with fl_m:
+            l2_tag_match = st.radio(
+                "タグ条件",
+                ["いずれか (OR)", "すべて (AND)"],
+                horizontal=True,
+                key="l2_tag_match",
+                disabled=not l2_tag_pick,
+            )
+        proj_f = (
+            None
+            if l2_proj_pick == "（フィルタなし）"
+            else str(l2_proj_pick)
+        )
+        use_and = l2_tag_match.startswith("すべて")
+        repos = list_repo_names_for_metrics(
+            project_label=proj_f,
+            tag_slugs=list(l2_tag_pick) if l2_tag_pick else None,
+            tag_match_all=use_and,
+        )
         if not repos:
-            st.info("dim_repo にデータがありません（同期未実行の可能性）")
+            st.info(
+                "条件に合うリポジトリがありません（フィルタを緩めるか、"
+                "dim_repo 同期・リポジトリのプロジェクト/タグ割当を確認してください）"
+            )
         else:
             selected_repo = st.selectbox("リポジトリを選択", repos, key="metrics_repo_l2")
             if selected_repo:
@@ -485,7 +595,6 @@ if page == "📊 メトリクス (L1/L2)":
             "Superset 手順書の SQL 適用を確認してください。"
         )
 
-# リポジトリ管理
 elif page == "📦 リポジトリ管理":
     st.header("📦 リポジトリ管理")
 
@@ -664,18 +773,151 @@ elif page == "📦 リポジトリ管理":
 
     st.divider()
 
+    with st.expander("🏷️ タグマスタ", expanded=False):
+        try:
+            tags_master_df = list_tags()
+            with st.form("create_tag_form"):
+                t_col1, t_col2 = st.columns(2)
+                with t_col1:
+                    new_tag_name = st.text_input("表示名", key="new_tag_name")
+                with t_col2:
+                    new_tag_slug = st.text_input(
+                        "slug",
+                        key="new_tag_slug",
+                        help="英小文字・数字・ハイフン・アンダースコア（先頭は英字または数字）",
+                    )
+                if st.form_submit_button("タグを追加"):
+                    if new_tag_name and new_tag_slug:
+                        ok_t, msg_t = create_tag(new_tag_name, new_tag_slug)
+                        if ok_t:
+                            st.success(msg_t)
+                            st.rerun()
+                        else:
+                            st.warning(msg_t)
+                    else:
+                        st.error("表示名と slug を入力してください")
+            if not tags_master_df.empty:
+                for _, trow in tags_master_df.iterrows():
+                    tc1, tc2 = st.columns([4, 1])
+                    with tc1:
+                        st.caption(f"**{trow['名前']}** (`{trow['slug']}`) — ID: {int(trow['タグID'])}")
+                    with tc2:
+                        tid = int(trow["タグID"])
+                        if st.button("削除", key=f"del_tag_{tid}"):
+                            ok_d, msg_d = delete_tag(tid)
+                            if ok_d:
+                                st.success(msg_d)
+                            else:
+                                st.warning(msg_d)
+                            st.rerun()
+            else:
+                st.caption("タグがまだありません。")
+        except Exception as e:
+            st.error(f"タグマスタ: {e}")
+
+    with st.expander("📁 プロジェクト", expanded=False):
+        try:
+            projects_df = list_projects()
+            with st.form("create_project_form"):
+                new_proj_name = st.text_input("新規プロジェクト名", key="new_proj_name")
+                if st.form_submit_button("プロジェクトを追加"):
+                    if new_proj_name.strip():
+                        ok_p, msg_p = create_project(new_proj_name)
+                        if ok_p:
+                            st.success(msg_p)
+                            st.rerun()
+                        else:
+                            st.warning(msg_p)
+                    else:
+                        st.error("プロジェクト名を入力してください")
+            if not projects_df.empty:
+                for _, prow in projects_df.iterrows():
+                    pid = int(prow["プロジェクトID"])
+                    pc1, pc2, pc3 = st.columns([3, 1, 1])
+                    with pc1:
+                        st.caption(f"**{prow['プロジェクト名']}** (ID: {pid})")
+                    with pc2:
+                        if st.button("削除", key=f"del_proj_{pid}"):
+                            ok_dp, msg_dp = delete_project(pid)
+                            if ok_dp:
+                                st.success(msg_dp)
+                            else:
+                                st.warning(msg_dp)
+                            st.rerun()
+                    with pc3:
+                        with st.expander("名前変更", expanded=False):
+                            np = st.text_input("新しい名前", key=f"rename_proj_{pid}")
+                            if st.button("保存", key=f"save_rename_{pid}"):
+                                if np.strip():
+                                    ok_r, msg_r = rename_project(pid, np)
+                                    if ok_r:
+                                        st.success(msg_r)
+                                        st.rerun()
+                                    else:
+                                        st.warning(msg_r)
+                                else:
+                                    st.error("名前を入力してください")
+            else:
+                st.caption("プロジェクトがまだありません。")
+        except Exception as e:
+            st.error(f"プロジェクト: {e}")
+
     # リポジトリ一覧
     st.subheader("登録済みリポジトリ")
 
     try:
         repos_df = get_repositories()
+        tags_master_df = list_tags()
+        projects_df = list_projects()
+
+        tag_id_to_name: dict[int, str] = {}
+        if not tags_master_df.empty:
+            for _, tr in tags_master_df.iterrows():
+                tag_id_to_name[int(tr["タグID"])] = str(tr["名前"])
+
+        all_tag_ids = list(tag_id_to_name.keys())
+
+        def row_tag_ids(r) -> list[int]:
+            raw = r["tag_ids"]
+            if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+                return []
+            if isinstance(raw, list):
+                return [int(x) for x in raw]
+            return [int(x) for x in list(raw)]
 
         if not repos_df.empty:
             # フィルタ
-            col1, col2 = st.columns([1, 3])
-            with col1:
+            f1, f2, f3, f4 = st.columns([1, 1, 2, 1])
+            with f1:
                 status_filter = st.selectbox(
-                    "ステータスフィルタ", ["すべて", "有効のみ", "無効のみ"]
+                    "ステータス", ["すべて", "有効のみ", "無効のみ"], key="repo_status_f"
+                )
+            with f2:
+                proj_filter_opts = ["すべて", "未所属"]
+                if not projects_df.empty:
+                    proj_filter_opts += [
+                        str(x) for x in projects_df["プロジェクト名"].tolist()
+                    ]
+                project_filter = st.selectbox("プロジェクト", proj_filter_opts, key="repo_proj_f")
+            with f3:
+                if all_tag_ids:
+                    tag_filter_pick = st.multiselect(
+                        "タグで絞り込み",
+                        options=all_tag_ids,
+                        default=[],
+                        format_func=lambda i: tag_id_to_name.get(int(i), str(i)),
+                        key="repo_tags_f",
+                    )
+                else:
+                    tag_filter_pick = []
+                    st.caption("タグマスタにタグがありません")
+            with f4:
+                tag_match = st.radio(
+                    "タグ条件",
+                    ["いずれか一致 (OR)", "すべて一致 (AND)"],
+                    horizontal=True,
+                    key="repo_tag_match",
+                    disabled=not all_tag_ids,
                 )
 
             if status_filter == "有効のみ":
@@ -683,17 +925,49 @@ elif page == "📦 リポジトリ管理":
             elif status_filter == "無効のみ":
                 repos_df = repos_df[~repos_df["有効"]]
 
-            st.caption(f"全{len(repos_df)}件")
+            if project_filter == "未所属":
+                repos_df = repos_df[repos_df["project_id"].isna()]
+            elif project_filter != "すべて":
+                match_pid = projects_df.loc[
+                    projects_df["プロジェクト名"] == project_filter, "プロジェクトID"
+                ]
+                if not match_pid.empty:
+                    pid_val = int(match_pid.iloc[0])
+                    repos_df = repos_df[repos_df["project_id"] == pid_val]
+
+            if tag_filter_pick:
+                want = [int(x) for x in tag_filter_pick]
+                use_and = tag_match.startswith("すべて")
+
+                def _tag_mask(r) -> bool:
+                    have = set(row_tag_ids(r))
+                    if use_and:
+                        return all(t in have for t in want)
+                    return any(t in have for t in want)
+
+                repos_df = repos_df[repos_df.apply(_tag_mask, axis=1)]
+
+            st.caption(f"表示 {len(repos_df)} 件")
+
+            proj_options: list[tuple[str, int | None]] = [("— 未所属 —", None)]
+            if not projects_df.empty:
+                for _, pr in projects_df.iterrows():
+                    proj_options.append((str(pr["プロジェクト名"]), int(pr["プロジェクトID"])))
 
             # リポジトリ一覧表示と操作
             for _idx, row in repos_df.iterrows():
                 with st.container():
+                    rid = int(row["ID"])
                     col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
 
                     with col1:
                         status_icon = "✅" if row["有効"] else "⚪"
                         st.markdown(f"**{status_icon} {row['リポジトリ名']}**")
-                        st.caption(f"ID: {row['ID']} | ソース: {row['ソース']}")
+                        st.caption(f"ID: {rid} | ソース: {row['ソース']}")
+                        if row["プロジェクト"] or row["タグ"]:
+                            st.caption(
+                                f"プロジェクト: {row['プロジェクト'] or '—'} | タグ: {row['タグ'] or '—'}"
+                            )
 
                     with col2:
                         st.caption(f"作成: {row['作成日時'].strftime('%Y-%m-%d %H:%M')}")
@@ -703,23 +977,63 @@ elif page == "📦 リポジトリ管理":
 
                     with col4:
                         if row["有効"]:
-                            if st.button("無効化", key=f"disable_{row['ID']}"):
+                            if st.button("無効化", key=f"disable_{rid}"):
                                 try:
-                                    success, message = toggle_repository(
-                                        row["ID"], False
-                                    )
+                                    success, message = toggle_repository(rid, False)
                                     st.success(message)
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"エラー: {e}")
                         else:
-                            if st.button("有効化", key=f"enable_{row['ID']}"):
+                            if st.button("有効化", key=f"enable_{rid}"):
                                 try:
-                                    success, message = toggle_repository(row["ID"], True)
+                                    success, message = toggle_repository(rid, True)
                                     st.success(message)
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"エラー: {e}")
+
+                    cur_pid = row["project_id"]
+                    if pd.isna(cur_pid):
+                        cur_pid = None
+                    else:
+                        cur_pid = int(cur_pid)
+                    cur_indices = [i for i, (_, p) in enumerate(proj_options) if p == cur_pid]
+                    proj_index = cur_indices[0] if cur_indices else 0
+
+                    with st.form(key=f"repo_assoc_{rid}"):
+                        fc1, fc2 = st.columns(2)
+                        with fc1:
+                            sel_proj_i = st.selectbox(
+                                "プロジェクト",
+                                range(len(proj_options)),
+                                index=proj_index,
+                                format_func=lambda i: proj_options[i][0],
+                                key=f"sel_proj_{rid}",
+                            )
+                        with fc2:
+                            cur_tags = row_tag_ids(row)
+                            if all_tag_ids:
+                                sel_tag_ids = st.multiselect(
+                                    "タグ",
+                                    options=all_tag_ids,
+                                    default=cur_tags,
+                                    format_func=lambda i: tag_id_to_name.get(int(i), str(i)),
+                                    key=f"sel_tags_{rid}",
+                                )
+                            else:
+                                sel_tag_ids = []
+                                st.caption("タグ未登録（上のタグマスタから追加）")
+                        if st.form_submit_button("プロジェクト・タグを保存"):
+                            new_p = proj_options[sel_proj_i][1]
+                            ok_g, msg_g = update_repository_grouping(
+                                rid, new_p, [int(x) for x in sel_tag_ids]
+                            )
+                            if ok_g:
+                                st.success(msg_g)
+                                st.rerun()
+                            else:
+                                st.warning(msg_g)
 
                     st.divider()
         else:

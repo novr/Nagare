@@ -21,9 +21,14 @@ docker exec nagare-superset python3 /tmp/setup_superset_dashboard.py
 
 スクリプトは **Dataset 作成・カラム同期・チャート・`position_json`** まで行う。増分データ更新は DAG `refresh_cicd_metrics_marts` または `SELECT refresh_cicd_metrics_marts();`（修復時は `TRUE`）。
 
-**L1**: 系列は `vw_l1_daily_overview_by_platform` の `platform`（`github_actions` / `bitrise` / `ALL` 等）。Native Filter **「L1 Platform (ALL / 個別)」** で絞り込み。L2 系は **「Repository」** フィルタ。
+**読み方**
 
-`--reset` で既存管理チャートの再作成など（詳細はスクリプト先頭の用法）。
+- **縦の順**: L1 タブ（2 チャート）→ L1 ヘルス・悪化 → L2（共通・`vw_l2_*`）。
+- **Native Filter**（初期は空欄）: **Repository** → L2。**L1 Platform** / **L1 Tag** → 各 L1 タブ用。**Project** → L2 系＋ L1 プロジェクト別。タグ凡例が多いときは 1〜3 件程度の選択を推奨。
+
+`--reset` は管理対象スライス削除＋再作成。詳細は `scripts/setup_superset_dashboard.py` 先頭。
+
+設計の全体像: [cicd_metrics_dashboard.md](../02_design/cicd_metrics_dashboard.md)。
 
 ## 再適用
 
@@ -44,6 +49,7 @@ docker exec nagare-superset python3 /tmp/setup_superset_dashboard.py
 | `Nagare 用 Database が見つかりません` | コンテナに `DATABASE_USER` / `DATABASE_PASSWORD` / `DATABASE_NAME` が渡っているか（`env_file: .env`） |
 | `no such service: #` | `docker compose up -d superset` と **同じ行に `#` コメントを付けない**（シェルによって `#` が引数になる） |
 | チャートが空 | マート更新・`pipeline_runs` の有無、設計ドキュメントの検証チェックリスト |
+| レイアウトが変わらない / ログの `GRID 行数` が 4 以外 | ホストの **`docker cp scripts/setup_superset_dashboard.py nagare-superset:/tmp/...` をやり直してから** スクリプト再実行（`/tmp` が古いままだと position_json が旧レイアウトのまま） |
 
 接続・ネットワークの切り分け: `docker ps`、`docker network inspect nagare-network`、コンテナから `postgres` への到達。
 

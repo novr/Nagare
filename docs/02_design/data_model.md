@@ -65,3 +65,28 @@
 | `project_name` | `VARCHAR(255)` | プロジェクト名。 |
 | `created_at` | `TIMESTAMP` | このレコードが作成された日時。 |
 | `updated_at` | `TIMESTAMP` | このレコードが更新された日時。 |
+
+## 5. `tags` テーブル
+
+リポジトリに複数付与できる論理ラベル（横串）。例: `mobile`, `backend`, `ios`, `kmp` など。
+
+| 汎用項目名 | データ型 | 説明 |
+| :--- | :--- | :--- |
+| `id` | `BIGINT` | 主キー。 |
+| `name` | `VARCHAR(255)` | 表示名。 |
+| `slug` | `VARCHAR(100)` | システム用の一意キー（フィルタ・API用）。 |
+| `created_at` | `TIMESTAMP` | 作成日時。 |
+| `updated_at` | `TIMESTAMP` | 更新日時。 |
+
+## 6. `repository_tags` テーブル
+
+`repositories` と `tags` の多対多を表す。
+
+| 汎用項目名 | データ型 | 説明 |
+| :--- | :--- | :--- |
+| `repository_id` | `BIGINT` | `repositories.id` への外部キー。 |
+| `tag_id` | `BIGINT` | `tags.id` への外部キー。 |
+
+主キーは `(repository_id, tag_id)`。リポジトリ削除時は `ON DELETE CASCADE` で割当も削除する。
+
+**備考**: CI 収集 DAG が利用する `DatabaseClient.get_repositories()` は `project_id` およびタグを参照しない。論理グループは主に管理画面・運用メタデータとして用い、収集対象のフィルタには現状使われない。
