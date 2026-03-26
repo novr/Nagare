@@ -21,15 +21,14 @@ docker exec nagare-superset python3 /tmp/setup_superset_dashboard.py
 
 スクリプトは **Dataset 作成・カラム同期・チャート・`position_json`** まで行う。増分データ更新は DAG `refresh_cicd_metrics_marts` または `SELECT refresh_cicd_metrics_marts();`（修復時は `TRUE`）。
 
-**L1 / L2 の読み方（可読性）**
+**読み方**
 
-1. **上からの並び**: **タブ**（L1 の成功率・実行数のみ）→ **L1リポジトリヘルス / L1悪化リポジトリ** → **L2**（リポジトリトレンド・ワークフロー系・失敗理由・再実行・アクション）。タブで切り替わるのは L1 の2枚だけ。
-2. **L2** はタブの外に **1ブロック**（全タブ共通の同じスライス・リポジトリ粒度 `vw_l2_*`）。
-3. Native Filter は **初期は空欄（＝絞りなし）**。**L1 Platform** / **L1 Tag** は対応する L1 タブ用。**Project** は L2（リポジトリ系）と L1 プロジェクト別に効く。**L1 Tag** は凡例が増えやすいので **1〜3 個程度**の選択を推奨。
-4. **L1 Platform** はタブ「プラットフォーム別」の L1 のみ。タブ「All」の L1 は `platform` 列が無いため **対象外**。
-5. L2 の凡例が多いときは **Repository** で絞り込み。
+- **縦の順**: L1 タブ（2 チャート）→ L1 ヘルス・悪化 → L2（共通・`vw_l2_*`）。
+- **Native Filter**（初期は空欄）: **Repository** → L2。**L1 Platform** / **L1 Tag** → 各 L1 タブ用。**Project** → L2 系＋ L1 プロジェクト別。タグ凡例が多いときは 1〜3 件程度の選択を推奨。
 
-`--reset` で既存管理チャートの再作成など（詳細はスクリプト先頭の用法）。
+`--reset` は管理対象スライス削除＋再作成。詳細は `scripts/setup_superset_dashboard.py` 先頭。
+
+設計の全体像: [cicd_metrics_dashboard.md](../02_design/cicd_metrics_dashboard.md)。
 
 ## 再適用
 

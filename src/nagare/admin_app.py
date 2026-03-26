@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""Streamlit管理画面
-
-リポジトリの追加・削除・有効化/無効化、データ収集状況の確認を行うWeb UI。
+"""Streamlit 管理画面（リポジトリ運用・CI/CD メトリクス L1/L2）。
 
 Usage:
     streamlit run src/nagare/admin_app.py --server.port 8501
@@ -297,7 +295,6 @@ with st.sidebar:
     st.divider()
     st.caption("Powered by Streamlit")
 
-# メトリクス（L1 / L2）
 if page == "📊 メトリクス (L1/L2)":
     st.header("📊 CI/CD メトリクス（日次レビュー向け）")
 
@@ -598,7 +595,6 @@ if page == "📊 メトリクス (L1/L2)":
             "Superset 手順書の SQL 適用を確認してください。"
         )
 
-# リポジトリ管理
 elif page == "📦 リポジトリ管理":
     st.header("📦 リポジトリ管理")
 

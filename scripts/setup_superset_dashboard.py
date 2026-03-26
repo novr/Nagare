@@ -1,16 +1,10 @@
 #!/usr/bin/env python3
-"""Superset CI/CD メトリクス v2 ダッシュボード自動セットアップ
+"""Superset CI/CD メトリクス v2（slug: cicd-metrics-v2）の Dataset・チャート・position_json を投入する。
 
     docker cp scripts/setup_superset_dashboard.py nagare-superset:/tmp/setup_superset_dashboard.py
-    docker exec nagare-superset python3 /tmp/setup_superset_dashboard.py
-    docker exec nagare-superset python3 /tmp/setup_superset_dashboard.py --reset
+    docker exec nagare-superset python3 /tmp/setup_superset_dashboard.py [--reset]
 
-    レイアウト変更が反映されないときは、**必ずホストから docker cp し直した最新スクリプト**で実行すること
-    （/tmp に古いファイルが残っていると DB の position_json が更新されない）。
-
-    L1 のみタブで軸を切替（All / プラットフォーム別 / プロジェクト別 / タグ別）。
-    L2 はタブ外の1ブロック（L1リポジトリヘルス・悪化の下）、リポジトリ粒度。
-    Native Filter は defaultToFirstItem=False（初期は空欄＝絞りなし）。
+    レイアウトが古いままのときはホストから docker cp し直してから再実行すること。
 """
 
 from __future__ import annotations
@@ -41,7 +35,6 @@ MANAGED_CHARTS = [
     "L2アクション候補",
 ]
 
-# --reset 時のみ削除（旧ダッシュボードのタブ連動 L2 残骸）
 _RESET_DELETE_SLICE_NAMES = [
     "L2リポジトリトレンド(プラットフォーム別)",
     "L2失敗ワークフローTop(プラットフォーム別)",
@@ -78,7 +71,6 @@ VIEW_DATASETS = [
     "vw_l2_action_candidates",
 ]
 
-# (タブ表示名, L1チャート width)。L2 は全タブで同一のリポジトリ粒度スライスを参照。
 MAIN_TAB_SPECS: list[tuple[str, list[tuple[str, int]]]] = [
     ("All", [("L1成功率トレンド", 6), ("L1実行数トレンド", 6)]),
     (
@@ -158,7 +150,6 @@ def _get_or_create_nagare_database(db, database_cls: type[Any]) -> Any:
 
 
 def _build_cicd_metrics_position_json(slices_by_name: Mapping[str, Any]) -> str:
-    # Dashboard v2 のネスト JSON（3.1 系）。CHART/COLUMN の parents 連鎖が崩れると UI が壊れる。
     root = "ROOT_ID"
     grid = "GRID_ID"
 
@@ -200,7 +191,6 @@ def _build_cicd_metrics_position_json(slices_by_name: Mapping[str, Any]) -> str:
             "meta": {"background": "BACKGROUND_TRANSPARENT"},
         }
 
-    # L1 のみタブで切替。L2 はタブの外に1ブロック（リポジトリヘルス／悪化の下）。
     row_main_tabs = _nid("ROW")
     grid_rows.append(row_main_tabs)
     tabs_id = _nid("TABS")
@@ -428,7 +418,6 @@ def setup_dashboard(reset: bool = False) -> None:
             table = SqlaTable(
                 table_name=view_name, database_id=database.id, schema="public"
             )
-            # flush 内で SqlaTable が Database を遅延ロードすると SAWarning になる
             table.database = database
             db.session.add(table)
             db.session.commit()
@@ -909,10 +898,7 @@ def setup_dashboard(reset: bool = False) -> None:
             dashboard.position_json = pj_str
             flag_modified(dashboard, "position_json")
             grid_n = len(json.loads(pj_str).get("GRID_ID", {}).get("children", []))
-            print(
-                f"position_json を適用しました（GRID 直下 {grid_n} 行・想定 4＝"
-                "タブ / ヘルス / L2ワークフロー / L2分析）"
-            )
+            print(f"position_json 適用（GRID {grid_n} 行、想定 4）")
         except KeyError as missing:
             print(f"WARN: position_json をスキップ（チャート未定義: {missing})")
 
@@ -1099,9 +1085,8 @@ def setup_dashboard(reset: bool = False) -> None:
             print(f"DB 再読込: position_json の GRID 行数 = {grid_n_reload}")
             if grid_n_reload != 4:
                 print(
-                    "WARN: GRID 行数が 4 以外です。コンテナ内のスクリプトが古い可能性があります。"
-                    " ホストから `docker cp scripts/setup_superset_dashboard.py "
-                    "nagare-superset:/tmp/setup_superset_dashboard.py` を実行してから再実行してください。"
+                    "WARN: GRID 行数が 4 以外。`docker cp ... setup_superset_dashboard.py` "
+                    "で最新をコンテナに入れてから再実行してください。"
                 )
         except (json.JSONDecodeError, TypeError):
             pass

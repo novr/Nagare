@@ -1,4 +1,4 @@
-"""Streamlit メトリクス画面用の DB クエリ（v2 ビュー）。"""
+"""管理画面メトリクス用クエリ（`vw_l1_*` / `vw_l2_*`）。"""
 
 from __future__ import annotations
 
@@ -13,13 +13,11 @@ from nagare.admin_db import get_database_engine
 
 
 def _jst_today() -> date:
-    """集約ビュー（JST 日付）と揃えた「今日」。"""
     return datetime.now(ZoneInfo("Asia/Tokyo")).date()
 
 
 @st.cache_data(ttl=60)
 def get_metrics_last_refresh() -> str | None:
-    """集約テーブルの最終計算時刻（代表値）。"""
     engine = get_database_engine()
     q = text(
         """
@@ -50,7 +48,6 @@ def get_l1_daily_overview(days: int = 30) -> pd.DataFrame:
 
 @st.cache_data(ttl=60)
 def get_l1_daily_overview_by_platform(days: int = 30) -> pd.DataFrame:
-    """プラットフォーム別行 + platform='ALL' の合計行。"""
     engine = get_database_engine()
     start = _jst_today() - timedelta(days=days)
     q = text(
@@ -68,7 +65,6 @@ def get_l1_daily_overview_by_platform(days: int = 30) -> pd.DataFrame:
 
 @st.cache_data(ttl=60)
 def get_l1_daily_overview_by_project(days: int = 30) -> pd.DataFrame:
-    """プロジェクト別行 + project_name='ALL' の合計行。"""
     engine = get_database_engine()
     start = _jst_today() - timedelta(days=days)
     q = text(
@@ -86,7 +82,6 @@ def get_l1_daily_overview_by_project(days: int = 30) -> pd.DataFrame:
 
 @st.cache_data(ttl=60)
 def get_l1_daily_overview_by_tag(days: int = 30) -> pd.DataFrame:
-    """タグ別行（複数タグで実行数は重複しうる）+ tag_slug='ALL' の合計行。"""
     engine = get_database_engine()
     start = _jst_today() - timedelta(days=days)
     q = text(
@@ -266,7 +261,6 @@ def _tag_slugs_set(raw: object) -> set[str]:
 
 @st.cache_data(ttl=120)
 def list_metrics_project_labels() -> list[str]:
-    """プロジェクト名の一覧（未所属は '(未所属)' と表示）。"""
     engine = get_database_engine()
     q = text(
         """
@@ -282,7 +276,6 @@ def list_metrics_project_labels() -> list[str]:
 
 @st.cache_data(ttl=120)
 def list_metrics_tag_slugs() -> list[tuple[str, str]]:
-    """(slug, name) タグマスタ順。"""
     engine = get_database_engine()
     q = text(
         """
@@ -299,7 +292,7 @@ def list_repo_names_for_metrics(
     tag_slugs: list[str] | None = None,
     tag_match_all: bool = True,
 ) -> list[str]:
-    """L2 用リポジトリ名。project_label は '(未所属)' または projects.project_name と一致する文字列。"""
+    """`dim_repo` をプロジェクト／タグで絞った `repo_full_name` 一覧（L2 選択用）。"""
     engine = get_database_engine()
     q = text(
         """
