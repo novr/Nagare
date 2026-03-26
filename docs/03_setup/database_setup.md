@@ -27,6 +27,8 @@ docker exec -i nagare-postgres psql -U nagare_user -d nagare < scripts/init_db.s
 
 `init_db.sql` をまるごと流さず、以下を **一度だけ** 実行してもよい（`CREATE IF NOT EXISTS` のため重複実行は安全）。
 
+トリガー定義の `EXECUTE FUNCTION` は **PostgreSQL 14 以降**の記法である。PostgreSQL 13 以前では `EXECUTE PROCEDURE update_updated_at_column();` に読み替えること。
+
 ```bash
 docker exec -i nagare-postgres psql -U nagare_user -d nagare <<'SQL'
 CREATE TABLE IF NOT EXISTS tags (

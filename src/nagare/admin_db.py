@@ -1043,6 +1043,9 @@ def toggle_repository(repo_id: int, active: bool):
 
 def create_tag(name: str, slug: str) -> tuple[bool, str]:
     """タグを1件追加する。slug は正規化される。"""
+    display_name = name.strip()
+    if not display_name:
+        return False, "表示名を入力してください"
     try:
         norm = _normalize_tag_slug(slug)
     except ValueError as e:
@@ -1057,16 +1060,19 @@ def create_tag(name: str, slug: str) -> tuple[bool, str]:
                     VALUES (:name, :slug)
                     """
                 ),
-                {"name": name.strip(), "slug": norm},
+                {"name": display_name, "slug": norm},
             )
     except IntegrityError:
         return False, f"slug '{norm}' は既に登録されています"
     _invalidate_repository_admin_cache()
-    return True, f"タグ '{name}' (slug: {norm}) を追加しました"
+    return True, f"タグ '{display_name}' (slug: {norm}) を追加しました"
 
 
 def delete_tag(tag_id: int) -> tuple[bool, str]:
-    """タグを削除する（割当は CASCADE で削除）。"""
+    """タグを削除する。
+
+    repository_tags.tag_id の ON DELETE CASCADE により、紐づく割当行も削除される。
+    """
     engine = get_database_engine()
     with engine.begin() as conn:
         result = conn.execute(text("DELETE FROM tags WHERE id = :id RETURNING id"), {"id": tag_id})
@@ -1214,6 +1220,68 @@ def set_repository_project(repo_id: int, project_id: int | None) -> tuple[bool, 
         )
     _invalidate_repository_admin_cache()
     return True, f"リポジトリ (ID: {repo_id}) のプロジェクトを更新しました"
+
+
+def update_repository_grouping(
+    repo_id: int, project_id: int | None, tag_ids: list[int]
+) -> tuple[bool, str]:
+    """リポジトリの project_id とタグ割当を同一トランザクションで更新する。
+
+    管理画面の「プロジェクト・タグを保存」から利用する。片方だけ成功する状態を防ぐ。
+    """
+    seen: set[int] = set()
+    ordered: list[int] = []
+    for tid in tag_ids:
+        if tid not in seen:
+            seen.add(tid)
+            ordered.append(tid)
+
+    engine = get_database_engine()
+    with engine.connect() as conn:
+        if not conn.execute(
+            text("SELECT 1 FROM repositories WHERE id = :rid"),
+            {"rid": repo_id},
+        ).fetchone():
+            return False, "リポジトリが見つかりません"
+        if project_id is not None and not conn.execute(
+            text("SELECT 1 FROM projects WHERE id = :id"),
+            {"id": project_id},
+        ).fetchone():
+            return False, "指定したプロジェクトが存在しません"
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    UPDATE repositories
+                    SET project_id = :pid, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = :rid
+                    """
+                ),
+                {"pid": project_id, "rid": repo_id},
+            )
+            conn.execute(
+                text("DELETE FROM repository_tags WHERE repository_id = :rid"),
+                {"rid": repo_id},
+            )
+            for tid in ordered:
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO repository_tags (repository_id, tag_id)
+                        VALUES (:rid, :tid)
+                        """
+                    ),
+                    {"rid": repo_id, "tid": tid},
+                )
+    except IntegrityError:
+        return (
+            False,
+            "保存に失敗しました（タグIDが無効、または参照整合性エラーの可能性があります）",
+        )
+    _invalidate_repository_admin_cache()
+    return True, "プロジェクトとタグを保存しました"
 
 
 @st.cache_data(ttl=30)

@@ -88,3 +88,5 @@
 | `tag_id` | `BIGINT` | `tags.id` への外部キー。 |
 
 主キーは `(repository_id, tag_id)`。リポジトリ削除時は `ON DELETE CASCADE` で割当も削除する。
+
+**備考**: CI 収集 DAG が利用する `DatabaseClient.get_repositories()` は `project_id` およびタグを参照しない。論理グループは主に管理画面・運用メタデータとして用い、収集対象のフィルタには現状使われない。

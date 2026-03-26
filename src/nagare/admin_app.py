@@ -34,8 +34,7 @@ from nagare.admin_db import (
     list_projects,
     list_tags,
     rename_project,
-    set_repository_project,
-    set_repository_tags,
+    update_repository_grouping,
     test_connection,
     toggle_repository,
 )
@@ -926,19 +925,14 @@ elif page == "📦 リポジトリ管理":
                                 st.caption("タグ未登録（上のタグマスタから追加）")
                         if st.form_submit_button("プロジェクト・タグを保存"):
                             new_p = proj_options[sel_proj_i][1]
-                            ok_a, msg_a = set_repository_project(rid, new_p)
-                            if not ok_a:
-                                st.warning(msg_a)
-                            ok_b, msg_b = set_repository_tags(
-                                rid, [int(x) for x in sel_tag_ids]
+                            ok_g, msg_g = update_repository_grouping(
+                                rid, new_p, [int(x) for x in sel_tag_ids]
                             )
-                            if not ok_b:
-                                st.warning(msg_b)
-                            if ok_a and ok_b:
-                                st.success("保存しました")
+                            if ok_g:
+                                st.success(msg_g)
                                 st.rerun()
-                            elif ok_a or ok_b:
-                                st.rerun()
+                            else:
+                                st.warning(msg_g)
 
                     st.divider()
         else:

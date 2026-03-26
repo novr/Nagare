@@ -529,6 +529,15 @@ class TestAdminAppEdgeCases:
         assert "slug" in msg
 
     @patch("nagare.admin_db.get_database_engine")
+    def test_create_tag_empty_name(self, mock_get_engine: MagicMock) -> None:
+        from nagare.admin_db import create_tag
+
+        mock_get_engine.return_value = MagicMock()
+        ok, msg = create_tag("   ", "mobile")
+        assert ok is False
+        assert "表示名" in msg
+
+    @patch("nagare.admin_db.get_database_engine")
     def test_create_tag_duplicate_slug(self, mock_get_engine: MagicMock) -> None:
         from nagare.admin_db import create_tag, list_tags
         from sqlalchemy.exc import IntegrityError
@@ -607,3 +616,45 @@ class TestAdminAppEdgeCases:
         ok, msg = set_repository_project(99, None)
         assert ok is False
         assert "見つかりません" in msg
+
+    @patch("nagare.admin_db.get_database_engine")
+    def test_update_repository_grouping_success(self, mock_get_engine: MagicMock) -> None:
+        from nagare.admin_db import list_projects, list_tags, update_repository_grouping
+
+        list_tags.clear()
+        list_projects.clear()
+        mock_engine = MagicMock()
+
+        res_repo = MagicMock()
+        res_repo.fetchone.return_value = (1,)
+        res_proj = MagicMock()
+        res_proj.fetchone.return_value = (1,)
+        mock_ro = MagicMock()
+        mock_ro.execute.side_effect = [res_repo, res_proj]
+        mock_engine.connect.return_value.__enter__.return_value = mock_ro
+
+        mock_tx = MagicMock()
+        mock_engine.begin.return_value.__enter__.return_value = mock_tx
+        mock_get_engine.return_value = mock_engine
+
+        ok, msg = update_repository_grouping(5, 10, [2, 3, 2])
+        assert ok is True
+        assert "保存" in msg
+        assert mock_tx.execute.call_count == 4
+
+    @patch("nagare.admin_db.get_database_engine")
+    def test_update_repository_grouping_unknown_repo(self, mock_get_engine: MagicMock) -> None:
+        from nagare.admin_db import list_tags, update_repository_grouping
+
+        list_tags.clear()
+        mock_engine = MagicMock()
+        res_repo = MagicMock()
+        res_repo.fetchone.return_value = None
+        mock_ro = MagicMock()
+        mock_ro.execute.return_value = res_repo
+        mock_engine.connect.return_value.__enter__.return_value = mock_ro
+        mock_get_engine.return_value = mock_engine
+
+        ok, msg = update_repository_grouping(99, None, [])
+        assert ok is False
+        assert "リポジトリ" in msg
