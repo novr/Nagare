@@ -1108,12 +1108,24 @@ elif page == "⚙️ 設定":
             st.markdown("### GitHub接続設定")
             try:
                 failed = ConnectionRegistry.get_failed_connections()
-                if "github" in failed:
+                failed_github = {
+                    cid: info
+                    for cid, info in failed.items()
+                    if info.get("conn_type") == "github"
+                }
+                if failed_github:
+                    ids = ", ".join(f"`{k}`" for k in failed_github)
                     st.warning(
-                        "`connections.yml` の **github** 接続の読み込みに失敗しています。"
-                        " この場合、`get_github()` は `.env` の **GITHUB_TOKEN** にフォールバックします。"
+                        f"`connections.yml` の GitHub 接続（{ids}）の読み込みに失敗しています。"
+                        " ファイル由来の接続が使えないとき、`ConnectionRegistry.get_github()` は"
+                        " **環境変数**から `GitHubConnection.from_env()` により接続を組み立てます"
+                        "（`GITHUB_TOKEN` または `GITHUB_APP_*`）。"
                     )
-                    st.caption(f"エラー: {failed['github'].get('error', '')}")
+                    err_lines = "\n".join(
+                        f"{cid}: {info.get('error', '')}"
+                        for cid, info in failed_github.items()
+                    )
+                    st.caption(err_lines)
 
                 github_conn = ConnectionRegistry.get_github()
 
