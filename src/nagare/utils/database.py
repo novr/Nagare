@@ -74,7 +74,7 @@ class DatabaseClient:
             pool_size=connection.pool_size,
             max_overflow=connection.max_overflow,
         )
-        self.session_factory = sessionmaker(bind=self.engine)
+        self.session_factory = sessionmaker(self.engine)
         logger.info(
             f"Connected to PostgreSQL: {connection.host}:{connection.port}"
             f"/{connection.database}"
