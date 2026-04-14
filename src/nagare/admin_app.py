@@ -56,7 +56,11 @@ from nagare.admin_metrics_db import (
     list_repo_names_for_metrics,
 )
 from nagare.constants import PipelineStatus, Platform, SourceType
-from nagare.utils.connections import ConnectionRegistry
+from nagare.utils.connections import (
+    ConnectionRegistry,
+    GitHubAppAuth,
+    GitHubTokenAuth,
+)
 
 # Connection設定ファイルの読み込み
 connection_load_error = None
@@ -1103,17 +1107,46 @@ elif page == "⚙️ 設定":
             # GitHub接続設定
             st.markdown("### GitHub接続設定")
             try:
+                failed = ConnectionRegistry.get_failed_connections()
+                if "github" in failed:
+                    st.warning(
+                        "`connections.yml` の **github** 接続の読み込みに失敗しています。"
+                        " この場合、`get_github()` は `.env` の **GITHUB_TOKEN** にフォールバックします。"
+                    )
+                    st.caption(f"エラー: {failed['github'].get('error', '')}")
+
                 github_conn = ConnectionRegistry.get_github()
 
                 col1, col2 = st.columns([1, 3])
                 with col1:
-                    st.metric("認証方式", "Token" if github_conn.token else "GitHub App")
-                with col2:
-                    if github_conn.token:
-                        masked_token = github_conn.token[:8] + "..." + github_conn.token[-4:] if len(github_conn.token) > 12 else "***"
-                        st.code(f"Token: {masked_token}", language="text")
+                    if isinstance(github_conn, GitHubTokenAuth):
+                        st.metric("認証方式", "Personal Access Token")
+                    elif isinstance(github_conn, GitHubAppAuth):
+                        st.metric("認証方式", "GitHub App")
                     else:
-                        st.code(f"App ID: {github_conn.app_id}\nInstallation ID: {github_conn.installation_id}", language="text")
+                        st.metric("認証方式", type(github_conn).__name__)
+                with col2:
+                    if isinstance(github_conn, GitHubTokenAuth):
+                        tok = github_conn.token
+                        if tok:
+                            masked = (
+                                tok[:8] + "..." + tok[-4:]
+                                if len(tok) > 12
+                                else "***"
+                            )
+                            st.code(f"Token: {masked}", language="text")
+                        else:
+                            st.caption("トークンが空です")
+                    elif isinstance(github_conn, GitHubAppAuth):
+                        st.code(
+                            f"App ID: {github_conn.app_id}\n"
+                            f"Installation ID: {github_conn.installation_id}",
+                            language="text",
+                        )
+                        if github_conn.private_key or github_conn.private_key_path:
+                            st.caption("✅ Private Key loaded")
+                    else:
+                        st.code(str(github_conn), language="text")
 
             except Exception as e:
                 st.error(f"GitHub設定の読み込みエラー: {e}")
