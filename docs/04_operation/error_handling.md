@@ -279,12 +279,7 @@ http://localhost:8501 → **📈 実行履歴**
 
 ### 1. Rate Limit対策
 
-```bash
-# Personal Access Tokenを使用（Rate Limit: 5,000/hour）
-GITHUB_TOKEN=ghp_your_token
-
-# 大量のリポジトリを監視する場合はGitHub Appを推奨
-```
+PAT はユーザ単位の上限が効きやすい。リポジトリ数・ポーリングが増えたら GitHub App（Installation 単位）へ切り替える（`.env` / `connections.yml` は README の GitHub 節を参照）。
 
 ### 2. リポジトリ数の調整
 

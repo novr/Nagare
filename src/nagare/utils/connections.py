@@ -39,6 +39,17 @@ from nagare.constants import Platform
 logger = logging.getLogger(__name__)
 
 
+def _github_auth_preference_from_env() -> str:
+    """無効な値は token に落とす（既存デプロイの既定挙動を変えないため）。"""
+    raw = (os.getenv("GITHUB_AUTH_PREFERENCE") or "token").strip().lower()
+    return raw if raw in ("token", "app") else "token"
+
+
+def _github_app_auth_material_present(auth: "GitHubAppAuth") -> bool:
+    """鍵のない App は PAT 優先のフォールバック対象にするため。"""
+    return bool(auth.private_key or auth.private_key_path)
+
+
 # ============================================================================
 # 1. Connection Protocol（共通インターフェース）
 # ============================================================================
@@ -253,50 +264,58 @@ class GitHubConnectionBase(BaseConnection, ABC):
 
     @classmethod
     def from_env(cls) -> "GitHubConnectionBase":
-        """環境変数から適切なサブクラスを生成
+        """環境変数から GitHub 接続を生成する。
 
-        以下の環境変数を読み取り、Token認証かApp認証かを自動判定：
-        - GITHUB_TOKEN: Personal Access Token（Token認証）
-        - GITHUB_APP_ID + GITHUB_APP_INSTALLATION_ID: GitHub App認証
-        - GITHUB_API_URL: ベースURL（デフォルト: https://api.github.com）
-
-        Token認証を優先し、なければApp認証を試す。
-
-        Returns:
-            GitHubConnectionBase: GitHubTokenAuth または GitHubAppAuth
-
-        Raises:
-            ValueError: いずれの認証情報も設定されていない場合
+        既定は PAT 優先（後方互換）。``GITHUB_AUTH_PREFERENCE=app`` は、CI 等に
+        ``GITHUB_TOKEN`` が残っていても Installation トークンを使いたいとき用。
+        ``GITHUB_TOKEN`` の前後空白は誤設定を減らすため無視する。
         """
-        token = os.getenv("GITHUB_TOKEN")
         base_url = os.getenv("GITHUB_API_URL", "https://api.github.com")
+        token = (os.getenv("GITHUB_TOKEN") or "").strip()
+        preference = _github_auth_preference_from_env()
 
-        # Token認証を優先
-        if token:
-            return GitHubTokenAuth(token=token, _base_url=base_url)
-
-        # GitHub App認証
-        app_id_str = os.getenv("GITHUB_APP_ID", "")
-        installation_id_str = os.getenv("GITHUB_APP_INSTALLATION_ID", "")
-
-        if app_id_str and installation_id_str:
+        def build_app_auth() -> GitHubAppAuth | None:
+            app_id_str = (os.getenv("GITHUB_APP_ID") or "").strip()
+            installation_id_str = (os.getenv("GITHUB_APP_INSTALLATION_ID") or "").strip()
+            if not (app_id_str and installation_id_str):
+                return None
             try:
                 app_id = int(app_id_str)
                 installation_id = int(installation_id_str)
-
-                return GitHubAppAuth(
-                    app_id=app_id,
-                    installation_id=installation_id,
-                    private_key=os.getenv("GITHUB_APP_PRIVATE_KEY"),
-                    private_key_path=os.getenv("GITHUB_APP_PRIVATE_KEY_PATH"),
-                    _base_url=base_url,
-                )
             except ValueError as e:
                 raise ValueError(
                     f"Invalid GITHUB_APP_ID or GITHUB_APP_INSTALLATION_ID: {e}"
                 ) from e
+            return GitHubAppAuth(
+                app_id=app_id,
+                installation_id=installation_id,
+                private_key=os.getenv("GITHUB_APP_PRIVATE_KEY"),
+                private_key_path=os.getenv("GITHUB_APP_PRIVATE_KEY_PATH"),
+                _base_url=base_url,
+            )
 
-        # いずれも設定されていない
+        if preference == "app":
+            app_auth = build_app_auth()
+            if app_auth and _github_app_auth_material_present(app_auth):
+                return app_auth
+            if token:
+                return GitHubTokenAuth(token=token, _base_url=base_url)
+            if app_auth:
+                return app_auth
+            raise ValueError(
+                "GitHub authentication not configured for GITHUB_AUTH_PREFERENCE=app. "
+                "Set GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, and "
+                "GITHUB_APP_PRIVATE_KEY or GITHUB_APP_PRIVATE_KEY_PATH "
+                "(or unset GITHUB_AUTH_PREFERENCE and use GITHUB_TOKEN)."
+            )
+
+        if token:
+            return GitHubTokenAuth(token=token, _base_url=base_url)
+
+        app_auth = build_app_auth()
+        if app_auth:
+            return app_auth
+
         raise ValueError(
             "GitHub authentication not configured. "
             "Set either GITHUB_TOKEN or (GITHUB_APP_ID + GITHUB_APP_INSTALLATION_ID)"
@@ -314,30 +333,11 @@ class GitHubConnectionBase(BaseConnection, ABC):
         extra: dict[str, Any],
         description: str,
     ) -> "GitHubConnectionBase":
-        """Airflow Connectionから適切なサブクラスを生成
+        """Airflow Connection から GitHub 接続を生成する。
 
-        Airflow Connectionのフィールドマッピング：
-        - password: Personal Access Token（Token認証）
-        - host: API base URL（例: api.github.com）
-        - extra.app_id + extra.installation_id: GitHub App認証
-
-        Args:
-            conn_id: Connection ID（ロギング用）
-            password: Personal Access Token
-            host: APIホスト
-            port: ポート（未使用）
-            schema: スキーマ（未使用）
-            login: ログイン（未使用）
-            extra: 追加設定（GitHub Apps認証用）
-            description: 説明
-
-        Returns:
-            GitHubConnectionBase: GitHubTokenAuth または GitHubAppAuth
-
-        Raises:
-            ValueError: いずれの認証情報も設定されていない場合
+        ``GITHUB_AUTH_PREFERENCE=app`` かつ鍵が揃っているときだけ password より App を優先する
+        （ワーカーに PAT が残っている場合の切替）。
         """
-        # Base URLの決定
         base_url = "https://api.github.com"
         if host:
             if not host.startswith(("http://", "https://")):
@@ -345,25 +345,23 @@ class GitHubConnectionBase(BaseConnection, ABC):
             else:
                 base_url = host
 
-        # Token認証を優先
-        if password:
-            return GitHubTokenAuth(
-                token=password,
-                _base_url=base_url,
-                description=description,
-            )
+        token = (password or "").strip()
+        preference = _github_auth_preference_from_env()
 
-        # GitHub Apps認証
         app_id = extra.get("app_id")
         installation_id = extra.get("installation_id")
         private_key = extra.get("private_key")
+        private_key_path = extra.get("private_key_path")
 
-        if app_id and installation_id:
+        def build_app_auth() -> GitHubAppAuth | None:
+            if not (app_id is not None and installation_id is not None):
+                return None
             try:
                 return GitHubAppAuth(
                     app_id=int(app_id),
                     installation_id=int(installation_id),
                     private_key=private_key,
+                    private_key_path=private_key_path,
                     _base_url=base_url,
                     description=description,
                 )
@@ -372,7 +370,35 @@ class GitHubConnectionBase(BaseConnection, ABC):
                     f"Invalid app_id or installation_id in Connection '{conn_id}': {e}"
                 ) from e
 
-        # いずれも設定されていない
+        if preference == "app":
+            app_auth = build_app_auth()
+            if app_auth and _github_app_auth_material_present(app_auth):
+                return app_auth
+            if token:
+                return GitHubTokenAuth(
+                    token=token,
+                    _base_url=base_url,
+                    description=description,
+                )
+            if app_auth:
+                return app_auth
+            raise ValueError(
+                f"Connection '{conn_id}' is not configured for GITHUB_AUTH_PREFERENCE=app. "
+                "Set extra.app_id, extra.installation_id, and extra.private_key "
+                "or extra.private_key_path (or password as PAT fallback)."
+            )
+
+        if token:
+            return GitHubTokenAuth(
+                token=token,
+                _base_url=base_url,
+                description=description,
+            )
+
+        app_auth = build_app_auth()
+        if app_auth:
+            return app_auth
+
         raise ValueError(
             f"Connection '{conn_id}' must have either password (token) "
             "or extra.app_id + extra.installation_id (GitHub App)"
@@ -1460,7 +1486,16 @@ class ConnectionRegistry:
             if "token" in config:
                 conn = GitHubTokenAuth(**config)
             elif "app_id" in config and "installation_id" in config:
-                conn = GitHubAppAuth(**config)
+                gh_cfg = dict(config)
+                try:
+                    gh_cfg["app_id"] = int(gh_cfg["app_id"])
+                    gh_cfg["installation_id"] = int(gh_cfg["installation_id"])
+                except (TypeError, ValueError) as e:
+                    raise ValueError(
+                        f"GitHub connection '{conn_id}': "
+                        "app_id and installation_id must be integers"
+                    ) from e
+                conn = GitHubAppAuth(**gh_cfg)
             else:
                 raise ValueError(
                     f"GitHub connection '{conn_id}' must have either 'token' or ('app_id' and 'installation_id')"
@@ -1604,10 +1639,18 @@ class ConnectionRegistry:
                     if default_value is not None:
                         return default_value
                     # 必須の環境変数が未設定
-                    raise ValueError(
+                    msg = (
                         f"Required environment variable '{var_name}' is not set. "
                         f"Please set {var_name} in your .env file or environment."
                     )
+                    if var_name.startswith("GITHUB_APP_"):
+                        msg += (
+                            " If GITHUB_APP_ID is in .env but still missing in Docker, "
+                            "put GITHUB_APP_ID and GITHUB_APP_INSTALLATION_ID above a multiline "
+                            "GITHUB_APP_PRIVATE_KEY block (broken .env parsing), or use "
+                            "GITHUB_APP_PRIVATE_KEY_PATH with a mounted PEM file."
+                        )
+                    raise ValueError(msg)
 
                 return value
 
@@ -1666,7 +1709,11 @@ class ConnectionRegistry:
 
         if not config:
             logger.warning(f"Empty configuration file: {path}")
+            cls.reset_all()
             return
+
+        # 再読み込み時に古い接続が残らないようにする
+        cls.reset_all()
 
         # 新しいリスト形式の処理
         if "connections" in config:

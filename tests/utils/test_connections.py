@@ -21,6 +21,12 @@ from nagare.utils.connections import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _clear_github_auth_preference_connections(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ホストの GITHUB_AUTH_PREFERENCE が接続テストに影響しないようにする"""
+    monkeypatch.delenv("GITHUB_AUTH_PREFERENCE", raising=False)
+
+
 class TestGitHubConnection:
     """GitHubConnection のテスト"""
 
@@ -48,6 +54,110 @@ class TestGitHubConnection:
         assert conn.app_id == 123456
         assert conn.installation_id == 789012
         assert conn.private_key == "test_key"
+
+    def test_from_env_token_wins_when_both_configured(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """既定では PAT が App より優先される"""
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_pat")
+        monkeypatch.setenv("GITHUB_APP_ID", "123456")
+        monkeypatch.setenv("GITHUB_APP_INSTALLATION_ID", "789012")
+        monkeypatch.setenv("GITHUB_APP_PRIVATE_KEY", "pem")
+
+        conn = GitHubConnection.from_env()
+
+        assert isinstance(conn, GitHubTokenAuth)
+        assert conn.token == "ghp_pat"
+
+    def test_from_env_preference_app_uses_app_when_complete(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """GITHUB_AUTH_PREFERENCE=app で鍵が揃っていれば PAT より App"""
+        monkeypatch.setenv("GITHUB_AUTH_PREFERENCE", "app")
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_pat")
+        monkeypatch.setenv("GITHUB_APP_ID", "123456")
+        monkeypatch.setenv("GITHUB_APP_INSTALLATION_ID", "789012")
+        monkeypatch.setenv("GITHUB_APP_PRIVATE_KEY", "pem")
+
+        conn = GitHubConnection.from_env()
+
+        assert isinstance(conn, GitHubAppAuth)
+        assert conn.installation_id == 789012
+
+    def test_from_env_preference_app_falls_back_to_token_when_app_incomplete(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """GITHUB_AUTH_PREFERENCE=app だが鍵なしのときは PAT にフォールバック"""
+        monkeypatch.setenv("GITHUB_AUTH_PREFERENCE", "app")
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_pat")
+        monkeypatch.setenv("GITHUB_APP_ID", "123456")
+        monkeypatch.setenv("GITHUB_APP_INSTALLATION_ID", "789012")
+        monkeypatch.delenv("GITHUB_APP_PRIVATE_KEY", raising=False)
+        monkeypatch.delenv("GITHUB_APP_PRIVATE_KEY_PATH", raising=False)
+
+        conn = GitHubConnection.from_env()
+
+        assert isinstance(conn, GitHubTokenAuth)
+
+    def test_from_env_preference_app_raises_when_no_fallback(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """GITHUB_AUTH_PREFERENCE=app で App も PAT も使えないときは ValueError"""
+        monkeypatch.setenv("GITHUB_AUTH_PREFERENCE", "app")
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("GITHUB_APP_ID", raising=False)
+        monkeypatch.delenv("GITHUB_APP_INSTALLATION_ID", raising=False)
+        monkeypatch.delenv("GITHUB_APP_PRIVATE_KEY", raising=False)
+        monkeypatch.delenv("GITHUB_APP_PRIVATE_KEY_PATH", raising=False)
+
+        with pytest.raises(ValueError, match="GITHUB_AUTH_PREFERENCE=app"):
+            GitHubConnection.from_env()
+
+    def test_from_airflow_extra_private_key_path(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Airflow extra の private_key_path で GitHub App を構築"""
+        conn = GitHubConnection.from_airflow_extra(
+            conn_id="gh_test",
+            password=None,
+            host=None,
+            port=None,
+            schema=None,
+            login=None,
+            extra={
+                "app_id": 111,
+                "installation_id": 222,
+                "private_key_path": "/secrets/app.pem",
+            },
+            description="",
+        )
+
+        assert isinstance(conn, GitHubAppAuth)
+        assert conn.private_key_path == "/secrets/app.pem"
+
+    def test_from_airflow_extra_preference_app(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """GITHUB_AUTH_PREFERENCE=app で password より App が優先"""
+        monkeypatch.setenv("GITHUB_AUTH_PREFERENCE", "app")
+
+        conn = GitHubConnection.from_airflow_extra(
+            conn_id="gh_test",
+            password="ghp_should_not_win",
+            host=None,
+            port=None,
+            schema=None,
+            login=None,
+            extra={
+                "app_id": 1,
+                "installation_id": 2,
+                "private_key": "fake-pem",
+            },
+            description="",
+        )
+
+        assert isinstance(conn, GitHubAppAuth)
+        assert conn.app_id == 1
 
     def test_from_env_with_custom_base_url(self, monkeypatch: pytest.MonkeyPatch):
         """環境変数からカスタムベースURLを読み取り"""
