@@ -70,8 +70,7 @@ cp .env.sample .env
 cp connections.yml.sample connections.yml
 ```
 
-このファイルでCI/CDプラットフォーム（GitHub/Bitrise/Xcode Cloud）の接続設定を管理します。
-使用するプラットフォームのセクションのコメントを外してください。
+このファイルでCI/CDプラットフォームの接続を管理する。GitHub はサンプル既定が **App**（REST 上限が緩いことが多い）。PAT のみなら `connections.yml.sample` のコメントどおり token ブロックへ差し替え、`.env` の `GITHUB_APP_*` は空にする。
 
 4. パスワードの生成（推奨）
 
@@ -88,42 +87,25 @@ cp connections.yml.sample connections.yml
 
 5. GitHub認証の設定
 
-**GitHub認証設定（必須）**:
+**必須。** PAT と GitHub App の二通り。[`connections.yml.sample`](connections.yml.sample) は既定で App（ユーザ単位 PAT より REST 上限に余裕が出やすい）。
 
-Nagareは2つの認証方式をサポートしています。**Personal Access Token（推奨）**を使用するか、GitHub Apps認証を選択できます。
+**`GITHUB_AUTH_PREFERENCE`（任意）**: 未設定なら従来どおり PAT が先。`app` は鍵が揃っているときだけ PAT より App を選ぶ（CI に `GITHUB_TOKEN` が残るときの逃げ道）。
 
-**方法A: Personal Access Token（推奨）** - 個人利用・小規模チーム向け
-1. [GitHub Settings → Developer settings → Personal access tokens → Tokens (classic)](https://github.com/settings/tokens)
-2. "Generate new token (classic)" をクリック
-3. 必要な権限を選択:
-   - ✅ `repo` - プライベートリポジトリへのアクセス
-   - ✅ `read:org` - 組織情報の読み取り
-   - ✅ `workflow` - GitHub Actionsワークフローへのアクセス
-4. トークンを生成し、**コピー**（後で確認できないため注意）
-5. `.env`ファイルにトークンを設定:
-   ```bash
-   GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxx
-   ```
-6. `connections.yml`のGitHubセクションのコメントを外す（既にデフォルトで有効）
+**方法A: Personal Access Token**（手早い検証向け）
 
-**方法B: GitHub Apps認証** - エンタープライズ・大規模チーム向け
-1. [GitHub Settings → Developer settings → GitHub Apps](https://github.com/settings/apps) で新規App作成
-2. Repository permissions設定:
-   - Actions: Read
-   - Metadata: Read
-   - Workflows: Read
-3. Private keyを生成してダウンロード
-4. `.env`ファイルにApp情報を設定:
-   ```bash
-   GITHUB_APP_ID=123456
-   GITHUB_APP_INSTALLATION_ID=789012
-   GITHUB_APP_PRIVATE_KEY_PATH=/path/to/private-key.pem
-   ```
-5. `connections.yml`のGitHub Appsセクションのコメントを外す
+[Classic PAT 作成](https://github.com/settings/tokens)。`repo` / `read:org`（組織リポ）/ `workflow`。`.env` に `GITHUB_TOKEN` を書き、`connections.yml` の GitHub を **token 行だけ**にする（サンプル既定の `app_id` 等は削除）。App 用の `GITHUB_APP_*` は空にする。
 
-**どちらを選ぶべき？**
-- 👤 **個人利用・小規模チーム**: Personal Access Token（シンプル、5分で設定完了）
-- 🏢 **エンタープライズ・大規模チーム**: GitHub Apps（セキュアな権限管理、監査ログ）
+**方法B: GitHub Apps**（本番・高頻度向け）
+
+[GitHub App 作成](https://github.com/settings/apps)。権限は Actions / Metadata / Workflows の Read から始め、プライベートで 403 なら **Contents: Read** を最小追加。PEM はリポジトリ外へ。Install 後の URL `.../installations/12345678` の末尾が Installation ID。
+
+`.env` に `GITHUB_APP_*` を入れ **`GITHUB_TOKEN` は空**（空でないと既定では PAT が勝つ）。どうしても PAT を残すなら `GITHUB_AUTH_PREFERENCE=app`。
+
+`connections.yml` の **先頭** `github` エントリをサンプルどおり App にするか、PAT なら `token` のみにする。**同一エントリに token と app を併記しない**（読み込みが token を先に採用するため）。
+
+**Airflow Connection のみ**: Password を空にし、Extra に `app_id` / `installation_id` / `private_key` または `private_key_path`。PAT を残して App を優先するならワーカーに `GITHUB_AUTH_PREFERENCE=app`。
+
+**どちらを選ぶか**: 監視対象や実行頻度が増えるほど App 有利。最小構成は PAT。
 
 **AIRFLOW_ADMIN_PASSWORD（必須）**:
 - Airflow管理画面にログインするためのパスワード

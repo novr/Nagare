@@ -35,14 +35,18 @@ connections:
   # ==========================================================================
   # GitHub接続設定
   # ==========================================================================
+  # 先頭が既定。token と app を同一エントリに書かない（読み込み側が token を先に採用するため）。
+  # 既定は App（多くのケースで PAT より REST 上限に余裕）。PAT のみなら token 行だけのブロックに差し替え。
+  # - conn_id: github
+  #   conn_type: github
+  #   token: ${GITHUB_TOKEN}
 
-  # GitHub接続（推奨：環境変数から読み込み）
   - conn_id: github
     conn_type: github
-    # Personal Access Token認証
-    # ✅ 推奨: 環境変数から読み込み（.env ファイルで管理）
-    token: ${GITHUB_TOKEN}
-    # GitHub Enterprise用のベースURL（オプション）
+    app_id: ${GITHUB_APP_ID}
+    installation_id: ${GITHUB_APP_INSTALLATION_ID}
+    private_key_path: ${GITHUB_APP_PRIVATE_KEY_PATH}
+    # ファイルマウントできないときだけ private_key: ${GITHUB_APP_PRIVATE_KEY} を検討（平文が環境に残る）。
     # base_url: ${GITHUB_API_URL:-https://api.github.com}
 
   # 複数のGitHub接続を定義する例
@@ -55,14 +59,6 @@ connections:
   #   conn_type: github
   #   # 読み取り専用トークン（より安全）
   #   token: ${GITHUB_READONLY_TOKEN}
-
-  # GitHub Apps認証の例（エンタープライズ向け）
-  # - conn_id: github_app
-  #   conn_type: github
-  #   app_id: ${GITHUB_APP_ID}
-  #   installation_id: ${GITHUB_APP_INSTALLATION_ID}
-  #   # private_keyに直接記載
-  #   # private_key: ${GITHUB_APP_PRIVATE_KEY}
 
   # ==========================================================================
   # Bitrise接続設定
