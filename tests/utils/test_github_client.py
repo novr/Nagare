@@ -3,6 +3,12 @@
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _clear_github_auth_preference(monkeypatch: pytest.MonkeyPatch) -> None:
+    """各テストで GITHUB_AUTH_PREFERENCE がホスト環境から漏れないようにする"""
+    monkeypatch.delenv("GITHUB_AUTH_PREFERENCE", raising=False)
+
+
 def test_github_client_init_with_token() -> None:
     """Personal Access Tokenで初期化できることを確認"""
     from nagare.utils.github_client import GitHubClient
