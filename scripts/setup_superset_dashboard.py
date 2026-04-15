@@ -915,8 +915,20 @@ def setup_dashboard(reset: bool = False) -> None:
             }
 
         ds_trend = _ds("vw_l2_repo_trend")
+        # Superset FilterBar: controlValues.enableEmptyFilter=True は空選択を必須扱い（*・赤枠）にする。
+        # 空欄で絞らない任意フィルタには False（getSelectExtraFormData は空のときフィルタなし）。
+        def _chart_ids_for_dataset_ids(ds_ids: set[int]) -> list[int]:
+            """このネイティブフィルタの列が存在するチャートだけに extra_form_data を付ける。
+
+            chartsInScope 未設定だと getAllActiveFilters が全スライスにマージし、
+            project_name 等が無い vw_l1_daily_overview / by_platform 等では句が無効化・
+            エラーになり L1 に反映されないように見える。
+            """
+            return sorted({s.id for s in slices if s.datasource_id in ds_ids})
+
         native_filters: list[dict[str, object]] = []
         if ds_trend:
+            repo_charts = _chart_ids_for_dataset_ids({ds_trend.id})
             native_filters.append(
                 {
                     "id": "NATIVE_FILTER-repo",
@@ -934,7 +946,7 @@ def setup_dashboard(reset: bool = False) -> None:
                         "ownState": {},
                     },
                     "controlValues": {
-                        "enableEmptyFilter": True,
+                        "enableEmptyFilter": False,
                         "defaultToFirstItem": False,
                         "multiSelect": True,
                         "searchAllOptions": True,
@@ -942,7 +954,9 @@ def setup_dashboard(reset: bool = False) -> None:
                     },
                     "cascadeParentIds": [],
                     "scope": {"rootPath": ["ROOT_ID"], "excluded": []},
+                    "chartsInScope": repo_charts,
                     "isInstant": True,
+                    "isRequired": False,
                     "description": (
                         "L2 系チャート用。空欄＝全リポジトリ（"
                         "凡例が多い場合はここで絞り込み）。"
@@ -952,6 +966,7 @@ def setup_dashboard(reset: bool = False) -> None:
             )
         ds_l1_pf = _ds("vw_l1_daily_overview_by_platform")
         if ds_l1_pf:
+            pf_charts = _chart_ids_for_dataset_ids({ds_l1_pf.id})
             native_filters.append(
                 {
                     "id": "NATIVE_FILTER-l1-platform",
@@ -969,7 +984,7 @@ def setup_dashboard(reset: bool = False) -> None:
                         "ownState": {},
                     },
                     "controlValues": {
-                        "enableEmptyFilter": True,
+                        "enableEmptyFilter": False,
                         "defaultToFirstItem": False,
                         "multiSelect": True,
                         "searchAllOptions": False,
@@ -977,7 +992,9 @@ def setup_dashboard(reset: bool = False) -> None:
                     },
                     "cascadeParentIds": [],
                     "scope": {"rootPath": ["ROOT_ID"], "excluded": []},
+                    "chartsInScope": pf_charts,
                     "isInstant": True,
+                    "isRequired": False,
                     "description": (
                         "空欄＝全系列表示。タブ「プラットフォーム別」の L1 のみ。"
                         "タブ「All」は platform 列がなく対象外。L2 は Repository で絞り込み。"
@@ -1005,6 +1022,8 @@ def setup_dashboard(reset: bool = False) -> None:
                     {"datasetId": ds_p.id, "column": {"name": "project_name"}}
                 )
         if project_targets:
+            proj_ds_ids = {int(t["datasetId"]) for t in project_targets}
+            proj_charts = _chart_ids_for_dataset_ids(proj_ds_ids)
             native_filters.append(
                 {
                     "id": "NATIVE_FILTER-project",
@@ -1017,7 +1036,7 @@ def setup_dashboard(reset: bool = False) -> None:
                         "ownState": {},
                     },
                     "controlValues": {
-                        "enableEmptyFilter": True,
+                        "enableEmptyFilter": False,
                         "defaultToFirstItem": False,
                         "multiSelect": True,
                         "searchAllOptions": True,
@@ -1025,7 +1044,9 @@ def setup_dashboard(reset: bool = False) -> None:
                     },
                     "cascadeParentIds": [],
                     "scope": {"rootPath": ["ROOT_ID"], "excluded": []},
+                    "chartsInScope": proj_charts,
                     "isInstant": True,
+                    "isRequired": False,
                     "description": (
                         "空欄＝絞りなし。(未所属) / プロジェクト名。"
                         "L2（リポジトリ粒度）およびタブ「プロジェクト別」の L1 に適用。"
@@ -1037,6 +1058,7 @@ def setup_dashboard(reset: bool = False) -> None:
 
         ds_l1_tag = _ds("vw_l1_daily_overview_by_tag")
         if ds_l1_tag:
+            tag_charts = _chart_ids_for_dataset_ids({ds_l1_tag.id})
             native_filters.append(
                 {
                     "id": "NATIVE_FILTER-l1-tag",
@@ -1054,7 +1076,7 @@ def setup_dashboard(reset: bool = False) -> None:
                         "ownState": {},
                     },
                     "controlValues": {
-                        "enableEmptyFilter": True,
+                        "enableEmptyFilter": False,
                         "defaultToFirstItem": False,
                         "multiSelect": True,
                         "searchAllOptions": True,
@@ -1062,7 +1084,9 @@ def setup_dashboard(reset: bool = False) -> None:
                     },
                     "cascadeParentIds": [],
                     "scope": {"rootPath": ["ROOT_ID"], "excluded": []},
+                    "chartsInScope": tag_charts,
                     "isInstant": True,
+                    "isRequired": False,
                     "description": (
                         "タブ「タグ別」の L1 のみ。空欄＝全系列。"
                         "ALL / ios 等を選択可。複数タグ割当リポジトリは実行数が重複しうる。"
