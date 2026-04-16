@@ -9,9 +9,13 @@ authors = [
 requires-python = ">=3.11,<3.12"
 # 本番環境（Docker）で必要な依存関係のみ
 # Airflow/Supersetはベースイメージに含まれるため除外
+#
+# apache-airflow 2.10.x は SQLAlchemy 2.x 未対応（<2.0）のため 1.4 系に合わせる。
+# streamlit が cachetools 7 を選ぶと google-auth（Airflow 同梱）の cachetools<6 と衝突するため上限を付ける。
 dependencies = [
     "psycopg2-binary>=2.9.9",
-    "sqlalchemy>=2.0,<3.0",
+    "sqlalchemy>=1.4.36,<2.0",
+    "cachetools>=5.5,<6",
     "pygithub>=2.5.0",
     "streamlit>=1.28.0",
     "pandas>=2.0.0",
