@@ -211,7 +211,17 @@ class XcodeCloudClient:
         Raises:
             XcodeCloudAPIException: APIエラー時
         """
-        url = f"{self.base_url}{endpoint}"
+        # links.next は完全な https URL。ベース URL と文字列一致しなくてもそのまま GET する。
+        # base_url + endpoint で二重連結したり、URL 已有の limit に params の limit がマージされ
+        # 「limit は1回だけ」になるのを防ぐ。
+        if endpoint.startswith("http://") or endpoint.startswith("https://"):
+            url = endpoint
+            request_params = None
+        else:
+            path = endpoint if endpoint.startswith("/") else f"/{endpoint}"
+            url = f"{self.base_url.rstrip('/')}{path}"
+            request_params = params
+
         headers = self._get_headers()
 
         try:
@@ -219,7 +229,7 @@ class XcodeCloudClient:
                 method=method,
                 url=url,
                 headers=headers,
-                params=params,
+                params=request_params,
                 json=json,
                 timeout=30,
             )
@@ -263,12 +273,13 @@ class XcodeCloudClient:
         Reference:
             https://developer.apple.com/documentation/appstoreconnectapi/list_apps
         """
-        apps = []
-        next_url = None
+        apps: list[dict[str, Any]] = []
         endpoint = "/apps"
+        # 初回のみ limit を付与。links.next の URL には既に limit が含まれるため、
+        # 2ページ目以降は params を空にしないと「limit は1回だけ」エラーになる。
+        params: dict[str, Any] = {"limit": limit}
 
         while True:
-            params = {"limit": limit}
             response = self._request("GET", endpoint, params=params)
 
             apps.extend(response.get("data", []))
@@ -278,8 +289,8 @@ class XcodeCloudClient:
             if not next_url:
                 break
 
-            # 次のページのエンドポイントを抽出
-            endpoint = next_url.replace(self.base_url, "")
+            endpoint = next_url
+            params = {}
 
         logger.info(f"Fetched {len(apps)} apps")
         return apps
@@ -328,8 +339,8 @@ class XcodeCloudClient:
             if not next_url:
                 break
 
-            endpoint = next_url.replace(self.base_url, "")
-            params = {}  # 次のURLには既にパラメータが含まれている
+            endpoint = next_url
+            params = {}
 
         logger.info(f"Fetched {len(builds)} builds for app {app_id}")
         return builds
