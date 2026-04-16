@@ -74,6 +74,9 @@ if connections_file and Path(connections_file).exists():
     except Exception as e:
         connection_load_error = f"設定ファイル読み込みエラー: {e}"
 
+# L1 トレンド（2カラム）のチャート高さ。未指定だと凡例込みで過大になりやすい
+_L1_TREND_CHART_HEIGHT_PX = 280
+
 # ページ設定
 st.set_page_config(
     page_title="Nagare 管理画面",
@@ -365,6 +368,11 @@ if page == "📊 メトリクス (L1/L2)":
                     ],
                     horizontal=True,
                     key="l1_platform_trend_mode",
+                    help=(
+                        "成功率は折れ線で各系列と ALL を並べて比較できます。"
+                        "実行数の積み上げ棒では ALL は他系列の合計と重なるため、"
+                        "「すべて」モードでは実行数から ALL 列のみ除外します。"
+                    ),
                 )
                 all_token = "ALL"
                 if l1_mode == "ALL（全体合計）のみ":
@@ -420,10 +428,16 @@ if page == "📊 メトリクス (L1/L2)":
                                 columns="_lbl",
                                 values="success_rate_pct",
                             )
-                            tr = disp.pivot(
-                                index="metric_date",
-                                columns="_lbl",
-                                values="total_runs",
+                            # 積み上げ実行数は ALL が部分集合の合計と二重になるため除外
+                            disp_runs = disp[disp["tag_slug"] != all_token]
+                            tr = (
+                                disp_runs.pivot(
+                                    index="metric_date",
+                                    columns="_lbl",
+                                    values="total_runs",
+                                )
+                                if not disp_runs.empty
+                                else pd.DataFrame()
                             )
                         else:
                             sr = pf.pivot(
@@ -431,33 +445,45 @@ if page == "📊 メトリクス (L1/L2)":
                                 columns=dim_col,
                                 values="success_rate_pct",
                             )
-                            tr = pf.pivot(
-                                index="metric_date",
-                                columns=dim_col,
-                                values="total_runs",
+                            pf_runs = pf[pf[dim_col] != all_token]
+                            tr = (
+                                pf_runs.pivot(
+                                    index="metric_date",
+                                    columns=dim_col,
+                                    values="total_runs",
+                                )
+                                if not pf_runs.empty
+                                else pd.DataFrame()
                             )
                         with l1_t_left:
                             st.markdown("**L1 成功率トレンド**")
-                            st.caption("成功率(%)")
-                            st.line_chart(sr)
+                            st.caption("成功率(%)（各系列と ALL）")
+                            st.line_chart(sr, height=_L1_TREND_CHART_HEIGHT_PX)
                         with l1_t_right:
                             st.markdown("**L1 実行数トレンド**")
-                            st.caption("実行数")
-                            st.bar_chart(tr)
+                            st.caption(
+                                "実行数（積み上げ・ALL 除く。全体合計は「ALL（全体合計）のみ」）"
+                            )
+                            if tr.empty or tr.shape[1] == 0:
+                                st.info("ALL 以外の系列がありません")
+                            else:
+                                st.bar_chart(tr, height=_L1_TREND_CHART_HEIGHT_PX)
                     else:
                         with l1_t_left:
                             st.markdown("**L1 成功率トレンド**")
                             st.line_chart(
                                 pf.set_index("metric_date")["success_rate_pct"].rename(
                                     "成功率(%)"
-                                )
+                                ),
+                                height=_L1_TREND_CHART_HEIGHT_PX,
                             )
                         with l1_t_right:
                             st.markdown("**L1 実行数トレンド**")
                             st.bar_chart(
                                 pf.set_index("metric_date")["total_runs"].rename(
                                     "実行数"
-                                )
+                                ),
+                                height=_L1_TREND_CHART_HEIGHT_PX,
                             )
 
         st.divider()
