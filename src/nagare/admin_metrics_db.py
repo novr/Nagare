@@ -3,13 +3,36 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
 from sqlalchemy import text
+from sqlalchemy.engine import Engine
 
 from nagare.admin_db import get_database_engine
+
+
+def _dataframe_from_sql(
+    engine: Engine,
+    statement: Any,
+    params: Mapping[str, Any] | None = None,
+) -> pd.DataFrame:
+    """SQLAlchemy 経由で SELECT 結果を DataFrame にする。
+
+    pandas 3.x の ``read_sql_query`` は ``con`` の型判定で SQLite 実装に落ち、
+    ``sqlalchemy.text()`` 実行時に *Query must be a string unless using sqlalchemy*
+    となることがあるため、pandas の SQL 層を使わない。
+    """
+    bind = dict(params) if params else {}
+    with engine.connect() as conn:
+        result = conn.execute(statement, bind)
+        columns: list[str] = list(result.keys())
+        rows = result.fetchall()
+    if not rows:
+        return pd.DataFrame(columns=columns)
+    return pd.DataFrame([tuple(row) for row in rows], columns=columns)
 
 
 def _jst_today() -> date:
@@ -42,8 +65,7 @@ def get_l1_daily_overview(days: int = 30) -> pd.DataFrame:
         ORDER BY metric_date ASC
         """
     )
-    with engine.connect() as conn:
-        return pd.read_sql_query(q, conn, params={"start": start})
+    return _dataframe_from_sql(engine, q, params={"start": start})
 
 
 @st.cache_data(ttl=60)
@@ -59,8 +81,7 @@ def get_l1_daily_overview_by_platform(days: int = 30) -> pd.DataFrame:
         ORDER BY metric_date ASC, platform ASC
         """
     )
-    with engine.connect() as conn:
-        return pd.read_sql_query(q, conn, params={"start": start})
+    return _dataframe_from_sql(engine, q, params={"start": start})
 
 
 @st.cache_data(ttl=60)
@@ -76,8 +97,7 @@ def get_l1_daily_overview_by_project(days: int = 30) -> pd.DataFrame:
         ORDER BY metric_date ASC, project_name ASC
         """
     )
-    with engine.connect() as conn:
-        return pd.read_sql_query(q, conn, params={"start": start})
+    return _dataframe_from_sql(engine, q, params={"start": start})
 
 
 @st.cache_data(ttl=60)
@@ -93,8 +113,7 @@ def get_l1_daily_overview_by_tag(days: int = 30) -> pd.DataFrame:
         ORDER BY metric_date ASC, tag_slug ASC
         """
     )
-    with engine.connect() as conn:
-        return pd.read_sql_query(q, conn, params={"start": start})
+    return _dataframe_from_sql(engine, q, params={"start": start})
 
 
 @st.cache_data(ttl=60)
@@ -108,8 +127,7 @@ def get_l1_repo_health() -> pd.DataFrame:
         ORDER BY success_rate_7d_pct ASC NULLS LAST, total_runs_7d DESC
         """
     )
-    with engine.connect() as conn:
-        return pd.read_sql_query(q, conn)
+    return _dataframe_from_sql(engine, q)
 
 
 @st.cache_data(ttl=60)
@@ -127,8 +145,7 @@ def get_l1_repo_deterioration() -> pd.DataFrame:
         ORDER BY deterioration_flag DESC, failed_runs_yesterday DESC NULLS LAST
         """
     )
-    with engine.connect() as conn:
-        return pd.read_sql_query(q, conn)
+    return _dataframe_from_sql(engine, q)
 
 
 @st.cache_data(ttl=60)
@@ -145,10 +162,9 @@ def get_l2_repo_trend(repo_full_name: str, days: int = 30) -> pd.DataFrame:
         ORDER BY metric_date ASC
         """
     )
-    with engine.connect() as conn:
-        return pd.read_sql_query(
-            q, conn, params={"repo": repo_full_name, "start": start}
-        )
+    return _dataframe_from_sql(
+        engine, q, params={"repo": repo_full_name, "start": start}
+    )
 
 
 @st.cache_data(ttl=60)
@@ -163,8 +179,7 @@ def get_l2_workflow_fail_top(repo_full_name: str) -> pd.DataFrame:
         LIMIT 20
         """
     )
-    with engine.connect() as conn:
-        return pd.read_sql_query(q, conn, params={"repo": repo_full_name})
+    return _dataframe_from_sql(engine, q, params={"repo": repo_full_name})
 
 
 @st.cache_data(ttl=60)
@@ -179,8 +194,7 @@ def get_l2_workflow_duration_top(repo_full_name: str) -> pd.DataFrame:
         LIMIT 20
         """
     )
-    with engine.connect() as conn:
-        return pd.read_sql_query(q, conn, params={"repo": repo_full_name})
+    return _dataframe_from_sql(engine, q, params={"repo": repo_full_name})
 
 
 @st.cache_data(ttl=60)
@@ -195,8 +209,7 @@ def get_l2_step_failure_heatmap(repo_full_name: str) -> pd.DataFrame:
         LIMIT 500
         """
     )
-    with engine.connect() as conn:
-        return pd.read_sql_query(q, conn, params={"repo": repo_full_name})
+    return _dataframe_from_sql(engine, q, params={"repo": repo_full_name})
 
 
 @st.cache_data(ttl=60)
@@ -211,8 +224,7 @@ def get_l2_failure_reason_breakdown(repo_full_name: str) -> pd.DataFrame:
         LIMIT 200
         """
     )
-    with engine.connect() as conn:
-        return pd.read_sql_query(q, conn, params={"repo": repo_full_name})
+    return _dataframe_from_sql(engine, q, params={"repo": repo_full_name})
 
 
 @st.cache_data(ttl=60)
@@ -227,10 +239,9 @@ def get_l2_retry_flake_trend(repo_full_name: str, days: int = 90) -> pd.DataFram
         ORDER BY run_date ASC
         """
     )
-    with engine.connect() as conn:
-        return pd.read_sql_query(
-            q, conn, params={"repo": repo_full_name, "start": start}
-        )
+    return _dataframe_from_sql(
+        engine, q, params={"repo": repo_full_name, "start": start}
+    )
 
 
 @st.cache_data(ttl=60)
@@ -246,8 +257,7 @@ def get_l2_action_candidates(repo_full_name: str) -> pd.DataFrame:
         LIMIT 20
         """
     )
-    with engine.connect() as conn:
-        return pd.read_sql_query(q, conn, params={"repo": repo_full_name})
+    return _dataframe_from_sql(engine, q, params={"repo": repo_full_name})
 
 
 def _tag_slugs_set(raw: object) -> set[str]:
